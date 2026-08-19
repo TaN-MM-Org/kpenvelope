@@ -1,5 +1,7 @@
 # kpenvelope
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22015270.svg)](https://doi.org/10.5281/zenodo.22015270) [![tests](https://github.com/TaN-MM-Org/kpenvelope/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/kpenvelope/actions)
+
 A six-band **k.p envelope-function solver** for wurtzite heterostructures,
 solved **self-consistently with Poisson's equation** on a 1D grid. Built
 for polarization-induced two-dimensional hole gases (GaN/AlN and related
