@@ -80,6 +80,12 @@ def solve_self_consistent(p, z, ps, n_states=6, mixing=0.3, tol=1e-5,
     Returns SelfConsistentResult. Convergence is measured as the maximum
     absolute change of V_h between iterations (eV).
     """
+    if not (p.eps_r == p.eps_r):   # NaN check without importing math
+        raise ValueError(
+            "this parameter set carries no vetted permittivity (eps_r is "
+            "NaN; barrier-only set). Supply a cited eps_r before running "
+            "a self-consistent Poisson solve."
+        )
     z = np.asarray(z, dtype=float)
     vh = np.zeros_like(z)
     density = np.zeros_like(z)
