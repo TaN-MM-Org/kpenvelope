@@ -15,7 +15,7 @@ from .hamiltonian import assemble_hamiltonian, HBAR2_OVER_2M0
 from .solver import solve_subbands
 from .selfconsistent import solve_self_consistent, SelfConsistentResult
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
