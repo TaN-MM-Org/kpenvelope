@@ -10,7 +10,7 @@ the balance between the fixed polarization charge and the gas itself.
 
 ## Status
 
-v0.2.0 (alpha). Implemented and tested:
+v0.2.1 (alpha). Implemented and tested:
 
 - six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
   discretized with symmetrized operator ordering so the matrix is exactly
