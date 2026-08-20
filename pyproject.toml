@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kpenvelope"
-version = "0.2.0"
+version = "0.2.1"
 description = "Six-band k.p envelope-function solver for wurtzite heterostructures, self-consistent with Poisson"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Tanvir M. Mahim", email = "tanvir.mahim@bracu.ac.bd" }]
 requires-python = ">=3.9"
+keywords = ["k.p", "envelope function", "wurtzite", "GaN", "2DHG", "subband", "semiconductor"]
 dependencies = ["numpy>=1.22"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -23,7 +24,10 @@ classifiers = [
 test = ["pytest"]
 
 [project.urls]
-Homepage = "https://tanvir-mahmud-mahim.github.io"
+Homepage = "https://tanvir-mahmud-mahim.github.io/software/"
+Repository = "https://github.com/TaN-MM-Org/kpenvelope"
+Issues = "https://github.com/TaN-MM-Org/kpenvelope/issues"
+Changelog = "https://github.com/TaN-MM-Org/kpenvelope/releases"
 
 [tool.setuptools.packages.find]
 where = ["src"]
