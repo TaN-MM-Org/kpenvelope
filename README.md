@@ -10,7 +10,7 @@ the balance between the fixed polarization charge and the gas itself.
 
 ## Status
 
-v0.2.1 (alpha). Implemented and tested:
+v0.3.0 (alpha). Implemented and tested:
 
 - six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
   discretized with symmetrized operator ordering so the matrix is exactly
@@ -21,6 +21,15 @@ v0.2.1 (alpha). Implemented and tested:
   edge masses, converging to charge neutrality
 - cited GaN and AlN parameter sets with closed-form verification
   (new in v0.2, see below)
+- **dispersion and mass utilities (new in v0.3)**: subband dispersions
+  along an in-plane path (`subband_dispersion`) and the local
+  finite-difference effective mass of any dispersion (`local_mass`),
+  because a hole mass is not one number. Asserted in the test suite: the
+  decoupled demo set returns exactly 1/|A| m0 at every momentum; applied
+  to the bulk Rinke 2008 GaN bands the utility reproduces the
+  quasi-cubic asymptotic masses 1.89 and 0.180 m0; and a locally flat
+  branch reports an infinite mass rather than an error, because a
+  diverging mass is physics.
 
 Not yet implemented, stated plainly because they matter physically:
 
