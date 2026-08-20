@@ -1,6 +1,6 @@
 # kpenvelope
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015269-blue)](https://doi.org/10.5281/zenodo.22015269) [![tests](https://github.com/TaN-MM-Org/kpenvelope/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/kpenvelope/actions)
+[![PyPI](https://img.shields.io/pypi/v/kpenvelope)](https://pypi.org/project/kpenvelope/) [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015269-blue)](https://doi.org/10.5281/zenodo.22015269) [![tests](https://github.com/TaN-MM-Org/kpenvelope/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/kpenvelope/actions)
 
 A six-band **k.p envelope-function solver** for wurtzite heterostructures,
 solved **self-consistently with Poisson's equation** on a 1D grid. Built
@@ -63,8 +63,10 @@ closed-form well solutions to test against.
 ## Install and use
 
 ```
-pip install -e .
+pip install kpenvelope
 ```
+
+For development, clone the repository and `pip install -e .[test]`.
 
 ```python
 import numpy as np
