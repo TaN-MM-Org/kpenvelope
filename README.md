@@ -111,6 +111,29 @@ non-parabolic. Together with the hard-wall boundary this is why the same
 warning stands: do not use these numbers in publications before the
 finite-barrier, dispersion-filled v0.3.
 
+## Subband character (new in v0.4)
+
+`band_character` resolves each envelope state into its heavy-hole,
+light-hole and crystal-field split-off fractions (basis populations in
+the Chuang-Chang basis), and `character_vs_k` tracks the composition
+along an in-plane path. Band mixing is the physics behind the
+"one subband, many masses" problem this package makes explicit: the
+top subband is pure HH at the zone center, and its mass moves as LH
+and CH weight grows with in-plane momentum.
+
+```python
+from kpenvelope import band_character, gan_rinke2008, solve_subbands
+
+energies, envelopes = solve_subbands(gan_rinke2008(), z, kx=0.3)
+fractions = band_character(envelopes, z)   # (n_states, 3): HH, LH, CH
+```
+
+The tests assert the exact zone-center block structure rather than an
+approximation: at kt = 0 the six-band Hamiltonian couples only LH and
+CH (through delta3), so every zone-center state has HH fraction exactly
+1 or exactly 0, and the LH states carry the small CH admixture the
+delta3 coupling demands.
+
 ## Methodological basis
 
 > T. M. Mahim, A. S. M. Mohsin and M. M. Rahman, "Origin of the
