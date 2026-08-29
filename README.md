@@ -123,6 +123,29 @@ package is the general-purpose tool; the paper repository reproduces the
 specific published study, including the finite-barrier physics that this
 package does not yet have.
 
+## Support and governance
+
+The package is written and maintained by Tanvir Mahmud Mahim
+(Department of Electrical and Electronic Engineering, BRAC University),
+who reviews every change and takes the final decision on scope and
+releases. There is no separate governance body; design questions are
+discussed in the open in issues and pull requests, and the standing
+rule of [CONTRIBUTING.md](CONTRIBUTING.md) binds the maintainer exactly
+as it binds contributors: a change that touches physics arrives with a
+test, and a constant arrives with its source.
+
+Support runs through the issue tracker at
+https://github.com/TaN-MM-Org/kpenvelope/issues. Usage questions are
+welcome there alongside bug reports; a docstring that left a unit or a
+sign convention unclear is treated as a documentation bug, not as user
+error. The maintainer aims to respond within a week.
+
+While the version is below 1.0 the API may still move between minor
+versions; such changes are called out in the release notes. The
+limitations named under Status are deliberate scope, recorded there
+precisely so that a user can tell a designed-out feature from an
+oversight.
+
 ## License
 
 Apache-2.0
