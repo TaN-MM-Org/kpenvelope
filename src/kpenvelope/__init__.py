@@ -11,15 +11,19 @@ Chuang and Chang, Phys. Rev. B 54, 2491 (1996).
 """
 from .params import (WurtziteParameters, aln_rinke2008, demo_single_band,
                      gan_rinke2008)
+from .character import (CHARACTER_GROUPS, band_character, character_vs_k,
+                        dominant_character)
 from .dispersion import local_mass, subband_dispersion
 from .hamiltonian import assemble_hamiltonian, HBAR2_OVER_2M0
 from .solver import solve_subbands
 from .selfconsistent import solve_self_consistent, SelfConsistentResult
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
     "subband_dispersion", "local_mass",
+    "band_character", "character_vs_k", "dominant_character",
+    "CHARACTER_GROUPS",
     "solve_self_consistent", "SelfConsistentResult", "HBAR2_OVER_2M0",
 ]
