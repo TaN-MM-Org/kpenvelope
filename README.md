@@ -40,7 +40,7 @@ energies, envelopes = solve_heterostructure(z, params, edge)
 
 ## Status
 
-v0.3.0 (alpha). Implemented and tested:
+v0.5.0 (alpha). Implemented and tested:
 
 - six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
   discretized with symmetrized operator ordering so the matrix is exactly
@@ -61,15 +61,18 @@ v0.3.0 (alpha). Implemented and tested:
   branch reports an infinite mass rather than an error, because a
   diverging mass is physics.
 
+- **finite barriers (new in v0.5)**: position-dependent material
+  parameters and band edge with the symmetrized Ben Daniel-Duke
+  discretization (see above). The bare `solve_subbands`/
+  `solve_self_consistent` path still uses hard walls at the grid ends;
+  use `solve_heterostructure` when the barrier matters.
+
 Not yet implemented, stated plainly because they matter physically:
 
-- **finite barriers.** Hard walls one grid spacing outside the grid ends.
-  A hard wall forces the envelope to vanish at the interface and pushes
-  the gas outward, which shifts subband energies and masses; a finite AlN
-  barrier treated as position-dependent material parameters is the v0.3
-  gate before research-grade use.
 - strain terms, full k-grid (non-parabolic) filling, spin splitting
-  analysis, transport lifetimes.
+  analysis, transport lifetimes, and a self-consistent loop on the
+  finite-barrier assembly (the current self-consistent solver remains
+  hard-wall).
 
 ## Cited parameter sets (new in v0.2)
 
@@ -137,9 +140,11 @@ same subband structure (two heavy branches filled, the light branch a
 minority). The difference comes from the filling model: this package
 fills parabolic edge-mass subbands, while the paper fills the computed
 non-parabolic dispersions, and the light branch is strongly
-non-parabolic. Together with the hard-wall boundary this is why the same
-warning stands: do not use these numbers in publications before the
-finite-barrier, dispersion-filled v0.3.
+non-parabolic. The finite-barrier assembly (v0.5) removes the hard-wall
+half of that caveat for fixed-potential runs; the self-consistent loop
+is still hard-wall and parabolic-filled, so the warning stands for
+self-consistent numbers: do not publish them without checking the
+barrier and filling model against your system.
 
 ## Subband character (new in v0.4)
 
@@ -173,8 +178,8 @@ delta3 coupling demands.
 
 and S. L. Chuang and C. S. Chang, Phys. Rev. B 54, 2491 (1996). This
 package is the general-purpose tool; the paper repository reproduces the
-specific published study, including the finite-barrier physics that this
-package does not yet have.
+specific published study, including the dispersion-filled self-consistent
+finite-barrier calculation that this package does not yet run end to end.
 
 ## Support and governance
 
