@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "scipy>=1.8"]
 
 [project.urls]
 Homepage = "https://tanvir-mahmud-mahim.github.io/software/"
