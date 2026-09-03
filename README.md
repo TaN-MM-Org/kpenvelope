@@ -8,6 +8,36 @@ for polarization-induced two-dimensional hole gases (GaN/AlN and related
 systems), where the confining potential is not imposed but emerges from
 the balance between the fixed polarization charge and the gas itself.
 
+## Finite barriers (new in v0.5)
+
+The gate this README used to name is closed: `assemble_heterostructure`
+makes the material parameters and the valence band edge functions of z
+with the symmetrized Ben Daniel-Duke discretization, so the matrix stays
+exactly Hermitian for arbitrary layer stacks and reduces exactly to the
+uniform assembly when every point carries the same material (asserted at
+machine precision). `layered_profile` builds per-point profiles from a
+layer stack; `solve_heterostructure` returns subbands and envelopes with
+the usual conventions. No default band offset is shipped on purpose:
+alignments are material- and strain-specific and must be supplied with a
+citation, like every other number in this package.
+
+Validated against closed forms: the decoupled single-band well reproduces
+the textbook finite-square-well transcendental levels with second-order
+grid convergence, the envelope decays in the barrier with the analytic
+decay constant to better than a percent, and the deep-barrier limit
+approaches the hard-wall solver.
+
+```python
+from kpenvelope import (gan_rinke2008, aln_rinke2008, layered_profile,
+                        solve_heterostructure)
+import numpy as np
+z = np.linspace(0.0, 30.0, 301)
+params, edge = layered_profile(z, [(10.0, aln_rinke2008(), -vbo),
+                                   (10.0, gan_rinke2008(), 0.0),
+                                   (10.0, aln_rinke2008(), -vbo)])
+energies, envelopes = solve_heterostructure(z, params, edge)
+```
+
 ## Status
 
 v0.3.0 (alpha). Implemented and tested:
