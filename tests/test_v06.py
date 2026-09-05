@@ -55,7 +55,10 @@ def test_hetero_self_consistency_reproduces_hard_wall_on_uniform_stack():
                                         tol=1e-6)
     assert np.abs(r_hw.energies - r_ht.energies).max() == 0.0
     assert np.abs(r_hw.occupations - r_ht.occupations).max() == 0.0
-    assert abs(r_ht.occupations.sum() - 0.05) == 0.0
+    # neutrality is enforced by a renormalizing multiply, which is exact
+    # only up to one rounding: assert to machine epsilon, not bitwise
+    # (0.05/3 * 3 rounds differently across platforms)
+    assert abs(r_ht.occupations.sum() - 0.05) < 1e-15
 
 
 def test_spin_splitting_vanishes_where_symmetry_demands():
