@@ -34,6 +34,11 @@ class WurtziteParameters:
         May be NaN for a set intended only as a barrier material; the
         self-consistent solver refuses to run on a NaN permittivity.
     reference : provenance of the numbers. Required, on purpose.
+    D1..D6 : optional Bir-Pikus deformation potentials (eV) for the
+        strain terms; None by default, and a strained assembly on a set
+        without them is refused. No values are shipped, on purpose:
+        supply them with a citation (e.g. Vurgaftman and Meyer,
+        J. Appl. Phys. 94, 3675 (2003)).
     """
 
     A1: float
@@ -47,6 +52,12 @@ class WurtziteParameters:
     delta3: float
     eps_r: float
     reference: str
+    D1: float = None
+    D2: float = None
+    D3: float = None
+    D4: float = None
+    D5: float = None
+    D6: float = None
 
 
 def demo_single_band(A: float = -2.0) -> WurtziteParameters:

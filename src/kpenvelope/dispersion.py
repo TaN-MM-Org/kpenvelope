@@ -83,3 +83,69 @@ def local_mass(kts, energies):
         masses = np.abs(HBAR2_OVER_2M0 * (dk2 if E.ndim == 1 else
                                           dk2[:, None]) / dE)
     return k_mid, masses
+
+
+def spin_splitting(energies):
+    """Pairwise splittings of Kramers-related subband pairs.
+
+    energies : descending subband energies at one k (as returned
+    everywhere in this package). Returns E[0]-E[1], E[2]-E[3], ... --
+    zero for every pair at k_t = 0 (time reversal) and at every k in a
+    structure with inversion-symmetric confinement, nonzero at finite
+    k_t under an asymmetric potential (Rashba-type splitting of the
+    2DHG); both statements are asserted in the tests rather than
+    stated.
+    """
+    e = np.asarray(energies, dtype=float)
+    n_pairs = e.size // 2
+    return e[0:2 * n_pairs:2] - e[1:2 * n_pairs:2]
+
+
+def splitting_vs_k(p, z, kts, theta=0.0, potential=None, n_pairs=2):
+    """Spin splitting of the top ``n_pairs`` subband pairs along an
+    in-plane path: `subband_dispersion` + `spin_splitting` in one call.
+    Returns shape (len(kts), n_pairs)."""
+    disp = subband_dispersion(p, z, kts, theta=theta, potential=potential,
+                              n_states=2 * n_pairs)
+    return np.stack([spin_splitting(row) for row in disp])
+
+
+def group_velocity(kts, energies):
+    """dE/dk along the path, by central differences (eV nm; divide by
+    hbar for a velocity). Input as from `subband_dispersion`:
+    energies shape (len(kts), n_states). Exactly 2 c A k for the
+    parabolic demo set, asserted in the tests."""
+    kts = np.asarray(kts, dtype=float)
+    E = np.asarray(energies, dtype=float)
+    return np.gradient(E, kts, axis=0, edge_order=2)
+
+
+def dos_from_dispersion(kts, energies, e_grid):
+    """Two-dimensional density of states of isotropic, monotone
+    subband dispersions (states nm^-2 eV^-1 per spin-resolved branch).
+
+    For a hole subband E_n(k_t) decreasing from its edge, the exact 2D
+    relation is rho_n(E) = k/(2 pi) |dk/dE|; evaluated here by
+    differentiating the occupied-area function N_n(E) = k*(E)^2/(4 pi)
+    on ``e_grid``.  A non-monotone dispersion is refused (its DOS needs
+    the full k-grid machinery of `fill_subbands_kgrid`, not this
+    shortcut) -- stated plainly rather than silently interpolated.
+    Exactly (1/|A|)/(4 pi hbar^2/2m0) for the parabolic demo set,
+    asserted in the tests.
+
+    Returns shape (len(e_grid), n_states).
+    """
+    kts = np.asarray(kts, dtype=float)
+    E = np.asarray(energies, dtype=float)
+    e_grid = np.asarray(e_grid, dtype=float)
+    out = np.zeros((e_grid.size, E.shape[1]))
+    for n in range(E.shape[1]):
+        en = E[:, n]
+        if np.any(np.diff(en) > 1e-12):
+            raise ValueError(
+                f"subband {n} is not monotone decreasing along the "
+                "path; use fill_subbands_kgrid for its thermodynamics")
+        kstar = np.interp(-e_grid, -en, kts, left=0.0, right=kts[-1])
+        N = kstar ** 2 / (4.0 * np.pi)
+        out[:, n] = -np.gradient(N, e_grid)
+    return out

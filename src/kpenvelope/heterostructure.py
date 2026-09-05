@@ -68,7 +68,7 @@ def layered_profile(z, layers):
 
 def assemble_heterostructure(z, params_list, band_edge=None,
                              kx: float = 0.0, ky: float = 0.0,
-                             potential=None):
+                             potential=None, strain_list=None):
     """Dense 6N x 6N envelope Hamiltonian with position-dependent
     material parameters and band edge (Ben Daniel-Duke symmetrized).
 
@@ -76,7 +76,11 @@ def assemble_heterostructure(z, params_list, band_edge=None,
     point; band_edge: valence band edge shift per point (eV, valence
     electron convention), optional; potential: optional hole potential
     V_h(z) in eV, entering as -V_h on the diagonal exactly as in the
-    uniform assembly.
+    uniform assembly; strain_list: optional per-point symmetric 3 x 3
+    strain tensors (or one tensor for all points) -- pseudomorphic
+    stacks strain each layer differently, which is why this is
+    per-point. Each strained point's parameter set must carry cited
+    D1..D6.
     """
     z = np.asarray(z, dtype=float)
     n = z.size
@@ -91,6 +95,19 @@ def assemble_heterostructure(z, params_list, band_edge=None,
             raise ValueError("band_edge must have one value per grid point")
 
     blocks = [bulk_blocks(p, kx, ky) for p in params_list]
+    if strain_list is not None:
+        from .strain import strain_blocks
+        s = np.asarray(strain_list, dtype=float)
+        if s.shape == (3, 3):
+            strains = [s] * n
+        elif s.shape == (n, 3, 3):
+            strains = list(s)
+        else:
+            raise ValueError("strain_list must be one 3x3 tensor or one "
+                             "per grid point")
+        blocks = [(H0 + strain_blocks(p, e), H1, H2)
+                  for (H0, H1, H2), p, e in zip(blocks, params_list,
+                                                strains)]
     H = np.zeros((6 * n, 6 * n), dtype=complex)
     idx = lambda i: slice(6 * i, 6 * i + 6)
     inv_dz2 = 1.0 / (dz * dz)
@@ -118,7 +135,8 @@ def assemble_heterostructure(z, params_list, band_edge=None,
 
 
 def solve_heterostructure(z, params_list, band_edge=None, kx: float = 0.0,
-                          ky: float = 0.0, potential=None, n_states: int = 8):
+                          ky: float = 0.0, potential=None, n_states: int = 8,
+                          strain_list=None):
     """Top valence states of a layered heterostructure.
 
     Same return convention as :func:`~kpenvelope.solver.solve_subbands`:
@@ -126,7 +144,8 @@ def solve_heterostructure(z, params_list, band_edge=None, kx: float = 0.0,
     unit total probability).
     """
     z = np.asarray(z, dtype=float)
-    H = assemble_heterostructure(z, params_list, band_edge, kx, ky, potential)
+    H = assemble_heterostructure(z, params_list, band_edge, kx, ky,
+                                 potential, strain_list=strain_list)
     vals, vecs = np.linalg.eigh(H)
     order = np.argsort(vals)[::-1][:n_states]
     dz = z[1] - z[0]

@@ -68,11 +68,15 @@ def bulk_blocks(p, kx: float, ky: float):
     return H0, H1, H2
 
 
-def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0, potential=None):
+def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0,
+                         potential=None, strain=None):
     """Dense 6N x 6N envelope Hamiltonian on grid z (uniform, nm).
 
     potential : optional array of the HOLE potential energy V_h(z) in eV;
         it enters the valence-electron Hamiltonian as -V_h on the diagonal.
+    strain : optional symmetric 3 x 3 strain tensor (dimensionless);
+        adds the Bir-Pikus matrix of :func:`~kpenvelope.strain.strain_blocks`
+        to every grid point. The parameter set must carry cited D1..D6.
     Hard-wall boundaries at both ends of the grid (v0.1 limitation; a
     finite barrier treated as a position-dependent material is the v0.2
     gate, and matters: a hard wall pushes the gas away from the interface).
@@ -84,6 +88,9 @@ def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0, potential=None)
         raise ValueError("z grid must be uniform")
 
     H0, H1, H2 = bulk_blocks(p, kx, ky)
+    if strain is not None:
+        from .strain import strain_blocks
+        H0 = H0 + strain_blocks(p, strain)
     H = np.zeros((6 * n, 6 * n), dtype=complex)
 
     idx = lambda i: slice(6 * i, 6 * i + 6)
