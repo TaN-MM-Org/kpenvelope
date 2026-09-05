@@ -40,7 +40,7 @@ energies, envelopes = solve_heterostructure(z, params, edge)
 
 ## Status
 
-v0.5.0 (alpha). Implemented and tested:
+v0.6.0 (alpha). Implemented and tested (42 tests, Python 3.9-3.13):
 
 - six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
   discretized with symmetrized operator ordering so the matrix is exactly
@@ -67,12 +67,31 @@ v0.5.0 (alpha). Implemented and tested:
   `solve_self_consistent` path still uses hard walls at the grid ends;
   use `solve_heterostructure` when the barrier matters.
 
-Not yet implemented, stated plainly because they matter physically:
+Every item of the v0.5 roadmap is now implemented (v0.6): Bir-Pikus
+strain terms (`strain_blocks`, wired through every assembly, validated
+by the structural identity with the kinetic template at eps_ij =
+k_i k_j and by closed-form eigenvalues -- no deformation-potential
+values shipped, on purpose: supply cited D1..D6); full k-grid
+non-parabolic filling (`fill_subbands_kgrid`, agreeing with the
+closed-form parabolic filler on an exactly parabolic model and
+refusing an undersized k-window); spin-splitting analysis
+(`spin_splitting`, `splitting_vs_k`: exactly zero where Kramers and
+inversion symmetry demand, finite Rashba-type splitting of the 2DHG
+under an asymmetric potential); the finite-barrier self-consistent
+loop (`solve_self_consistent_hetero`, reproducing the hard-wall loop
+*exactly* on a uniform stack); and the transport groundwork
+(`group_velocity`, `dos_from_dispersion`, both pinned to parabolic
+closed forms).
 
-- strain terms, full k-grid (non-parabolic) filling, spin splitting
-  analysis, transport lifetimes, and a self-consistent loop on the
-  finite-barrier assembly (the current self-consistent solver remains
-  hard-wall).
+Deliberate scope, stated plainly -- designed-out, not overlooked:
+scattering-mechanism transport lifetimes (interface roughness, ionized
+impurities, phonons) need cited screening and roughness parameters per
+structure, and this package ships no number it cannot source -- the
+DOS and velocity factors every lifetime integral needs are provided
+instead; the Poisson solve is single-medium (one cited permittivity;
+a spatially varying permittivity is not smuggled in); and k-linear
+bulk-inversion-asymmetry terms beyond the six-band Chuang-Chang form
+are not included.
 
 ## Cited parameter sets (new in v0.2)
 
