@@ -149,3 +149,61 @@ def dos_from_dispersion(kts, energies, e_grid):
         N = kstar ** 2 / (4.0 * np.pi)
         out[:, n] = -np.gradient(N, e_grid)
     return out
+
+
+def dipole_matrix(z, envelopes):
+    """Intersubband dipole matrix z_fi = <f| z |i> (nm), summed over
+    the six band components with the solver's normalization,
+
+        z_fi = sum_m integral F_m^f(z)* z F_m^i(z) dz,
+
+    by the same uniform-grid quadrature the solver normalizes with.
+    Hermitian by construction (asserted). Exact facts the test suite
+    pins rather than states: for the decoupled hard-wall well the
+    off-diagonal element is the infinite-well closed form
+    z_12 = 16 L / (9 pi^2), the diagonal is the well center L/2, and
+    same-parity transitions vanish; in a symmetric six-band well the
+    parity selection rule survives the band mixing.
+    """
+    z = np.asarray(z, dtype=float)
+    env = np.asarray(envelopes)
+    dz = z[1] - z[0]
+    n = env.shape[0]
+    out = np.empty((n, n), dtype=complex)
+    for f in range(n):
+        for i in range(f, n):
+            val = (np.conj(env[f]) * z[None, :] * env[i]).sum() * dz
+            out[f, i] = val
+            out[i, f] = np.conj(val)
+    return out
+
+
+def oscillator_strengths(energies, dip, mass_ratio):
+    """Intersubband oscillator strengths from the ground subband, in
+    the hole convention of this package (energies descending):
+
+        f_(1 -> i) = (m*/m0) (E_1 - E_i) |z_1i|^2 / c,
+
+    with c = hbar^2/2m0 in eV nm^2, so the Thomas-Reiche-Kuhn sum rule
+    reads sum_i f_(1->i) = 1 for a single parabolic band of mass
+    m* = mass_ratio * m0 -- asserted in the tests against the
+    hard-wall demo set, together with the closed-form
+    f_12 = 256/(27 pi^2) of the infinite well. The demo set is
+    six-fold degenerate, so individual elements within a degenerate
+    multiplet are basis-dependent; the MULTIPLET-SUMMED strengths are
+    the invariant quantities and are what the closed forms pin.
+
+    energies : (n,) descending eV (as returned everywhere here);
+    dip : (n, n) dipole matrix from `dipole_matrix`;
+    mass_ratio : the confinement-direction effective mass ratio
+        m*/m0 of the band (for the decoupled demo set,
+        1/|A|). For coupled six-band states no single mass exists and
+        the sum rule is not 1; the strengths remain well-defined
+        matrix elements. Returns (n,) with f_11 = 0.
+    """
+    e = np.asarray(energies, dtype=float)
+    d = np.asarray(dip)
+    f = float(mass_ratio) * (e[0] - e) * np.abs(d[0, :]) ** 2 \
+        / HBAR2_OVER_2M0
+    f[0] = 0.0
+    return f

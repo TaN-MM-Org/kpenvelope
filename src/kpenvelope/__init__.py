@@ -13,7 +13,8 @@ from .params import (WurtziteParameters, aln_rinke2008, demo_single_band,
                      gan_rinke2008)
 from .character import (CHARACTER_GROUPS, band_character, character_vs_k,
                         dominant_character)
-from .dispersion import (dos_from_dispersion, group_velocity, local_mass,
+from .dispersion import (dipole_matrix, dos_from_dispersion,
+                         group_velocity, local_mass, oscillator_strengths,
                          spin_splitting, splitting_vs_k, subband_dispersion)
 from .hamiltonian import assemble_hamiltonian, HBAR2_OVER_2M0
 from .heterostructure import (assemble_heterostructure, layered_profile,
@@ -24,12 +25,13 @@ from .selfconsistent import (fill_subbands_kgrid, solve_self_consistent,
                              SelfConsistentResult)
 from .strain import strain_blocks
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
     "subband_dispersion", "local_mass", "spin_splitting",
     "splitting_vs_k", "group_velocity", "dos_from_dispersion",
+    "dipole_matrix", "oscillator_strengths",
     "strain_blocks", "fill_subbands_kgrid", "solve_self_consistent_hetero",
     "assemble_heterostructure", "layered_profile", "solve_heterostructure",
     "band_character", "character_vs_k", "dominant_character",
