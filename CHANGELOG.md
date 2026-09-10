@@ -4,6 +4,20 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.7.0 - 2026-09-10
+
+- Intersubband optics: `dipole_matrix` (six-component dipole matrix
+  elements <f|z|i> on the solver's own grid, Hermitian by
+  construction) and `oscillator_strengths` (ground-subband oscillator
+  strengths in the package's hole convention).
+- Anchors: infinite-well closed forms z12 = 16L/(9 pi^2) and
+  f12 = 256/(27 pi^2) on the hard-wall demo set (multiplet-summed,
+  since the demo set is six-fold degenerate and only multiplet sums
+  are basis-invariant); Thomas-Reiche-Kuhn f-sum rule to a fraction
+  of a percent; parity selection rule at 1e-12; coordinate-origin
+  gauge invariance of off-diagonal elements on the coupled Rinke 2008
+  GaN well.
+
 ## v0.6.0 - 2026-09-05
 
 - Bir-Pikus strain terms (`strain_blocks`, `strain=` on every

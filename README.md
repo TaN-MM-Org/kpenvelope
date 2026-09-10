@@ -40,7 +40,7 @@ energies, envelopes = solve_heterostructure(z, params, edge)
 
 ## Status
 
-v0.6.0 (alpha). Implemented and tested (42 tests, Python 3.9-3.13):
+v0.7.0 (alpha). Implemented and tested (47 tests, Python 3.9-3.13):
 
 - six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
   discretized with symmetrized operator ordering so the matrix is exactly
@@ -82,6 +82,27 @@ loop (`solve_self_consistent_hetero`, reproducing the hard-wall loop
 *exactly* on a uniform stack); and the transport groundwork
 (`group_velocity`, `dos_from_dispersion`, both pinned to parabolic
 closed forms).
+
+**Intersubband optics (new in v0.7)**: `dipole_matrix` computes the
+intersubband dipole matrix elements z_mn = <m|z|n> from any solver's
+envelopes (trapezoidal inner products on the solver's own grid, all
+spinor components summed, Hermiticity enforced by construction), and
+`oscillator_strengths` converts the ground-subband dipole column into
+dimensionless oscillator strengths
+f_(1->n) = (m*/m0) (E_1 - E_n) |z_1n|^2 / (hbar^2/2m0)
+(hole convention, energies descending) -- the quantities that set
+intersubband absorption spectra and the design of QWIPs and
+polaritonic devices. Anchors, asserted not stated: on a
+hard-wall well the multiplet-summed dipole and oscillator strength
+reproduce the textbook closed forms z12 = 16 L / (9 pi^2) and
+f12 = 256 / (27 pi^2); the Thomas-Reiche-Kuhn f-sum rule
+sum_n f_1n = 1 is verified to a fraction of a percent with basis-size
+convergence; parity forbids z13 on a symmetric well (found at 1e-12);
+and shifting the coordinate origin changes no off-diagonal element
+(gauge identity, checked on the coupled Rinke 2008 GaN well). For the
+shipped six-fold-degenerate demo set the invariant quantities are the
+multiplet-summed ones, and the docstrings say so rather than letting a
+user read meaning into basis-dependent individual elements.
 
 Deliberate scope, stated plainly -- designed-out, not overlooked:
 scattering-mechanism transport lifetimes (interface roughness, ionized
