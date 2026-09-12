@@ -4,6 +4,36 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.8.0 - 2026-09-12
+
+Experimental-conditions release: the two knobs every measurement
+actually has -- a temperature and lab units -- plus an honest
+convergence report.
+
+- Finite-temperature subband filling: `fill_subbands_thermal` (the
+  closed form n_i = dos_i kT ln(1 + exp((E_i - E_F)/kT)) for 2D
+  parabolic subbands, anchored against direct numerical integration
+  of the Fermi-Dirac occupation and against the T = 0 filler in the
+  cold limit), and a `temperature_K` parameter on
+  `solve_self_consistent`, `solve_self_consistent_hetero` and
+  `fill_subbands_kgrid` (Fermi-Dirac occupation factor on the
+  k-grid, agreeing with the closed-form filler on an exactly
+  parabolic model). The default 0 reproduces the historical cold
+  filling exactly -- the same code path, asserted bit for bit. The
+  Boltzmann constant in eV/K is computed from the two exact SI
+  defining constants, not typed by hand (`KB_EV_PER_K`).
+- Lab units in and out: `sheet_density_from_cm2` /
+  `sheet_density_to_cm2` (exact powers of ten; the single most
+  common way to be wrong by orders of magnitude when driving the
+  solver from measured numbers).
+- `SelfConsistentResult.converged`: an iteration-starved run now
+  reports its failure instead of hiding it in a residual the caller
+  must remember to inspect.
+- The k-grid filler's undersized-window refusal extends to finite
+  temperature (Fermi tail reaching the grid edge).
+- README rewritten: organized by what the package does rather than
+  by release history, in plainer language, same facts.
+
 ## v0.7.0 - 2026-09-10
 
 - Intersubband optics: `dipole_matrix` (six-component dipole matrix

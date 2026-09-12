@@ -2,214 +2,156 @@
 
 [![PyPI](https://img.shields.io/pypi/v/kpenvelope)](https://pypi.org/project/kpenvelope/) [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22015269-blue)](https://doi.org/10.5281/zenodo.22015269) [![tests](https://github.com/TaN-MM-Org/kpenvelope/actions/workflows/ci.yml/badge.svg)](https://github.com/TaN-MM-Org/kpenvelope/actions)
 
-A six-band **k.p envelope-function solver** for wurtzite heterostructures,
-solved **self-consistently with Poisson's equation** on a 1D grid. Built
-for polarization-induced two-dimensional hole gases (GaN/AlN and related
-systems), where the confining potential is not imposed but emerges from
-the balance between the fixed polarization charge and the gas itself.
+A solver for the quantum states of holes confined in thin
+semiconductor layers (wurtzite crystals such as GaN and AlN). It
+computes the energy levels and wavefunctions from the standard
+six-band k.p model of Chuang and Chang, solved together with the
+electrostatics of the charge itself, so the confining potential is
+not guessed -- it emerges from the balance between the fixed
+interface charge and the hole gas. Built for polarization-induced
+two-dimensional hole gases, and usable for any layered wurtzite
+structure you can supply cited parameters for.
 
-## Finite barriers (new in v0.5)
-
-The gate this README used to name is closed: `assemble_heterostructure`
-makes the material parameters and the valence band edge functions of z
-with the symmetrized Ben Daniel-Duke discretization, so the matrix stays
-exactly Hermitian for arbitrary layer stacks and reduces exactly to the
-uniform assembly when every point carries the same material (asserted at
-machine precision). `layered_profile` builds per-point profiles from a
-layer stack; `solve_heterostructure` returns subbands and envelopes with
-the usual conventions. No default band offset is shipped on purpose:
-alignments are material- and strain-specific and must be supplied with a
-citation, like every other number in this package.
-
-Validated against closed forms: the decoupled single-band well reproduces
-the textbook finite-square-well transcendental levels with second-order
-grid convergence, the envelope decays in the barrier with the analytic
-decay constant to better than a percent, and the deep-barrier limit
-approaches the hard-wall solver.
-
-```python
-from kpenvelope import (gan_rinke2008, aln_rinke2008, layered_profile,
-                        solve_heterostructure)
-import numpy as np
-z = np.linspace(0.0, 30.0, 301)
-params, edge = layered_profile(z, [(10.0, aln_rinke2008(), -vbo),
-                                   (10.0, gan_rinke2008(), 0.0),
-                                   (10.0, aln_rinke2008(), -vbo)])
-energies, envelopes = solve_heterostructure(z, params, edge)
-```
-
-## Status
-
-v0.7.0 (alpha). Implemented and tested (47 tests, Python 3.9-3.13):
-
-- six-band wurtzite valence Hamiltonian (standard Chuang-Chang form),
-  discretized with symmetrized operator ordering so the matrix is exactly
-  Hermitian for position-dependent parameters
-- envelope eigen-solution at arbitrary in-plane k
-- Gauss-law hole potential from the density profile
-- self-consistent loop with T = 0 subband filling using numeric in-plane
-  edge masses, converging to charge neutrality
-- cited GaN and AlN parameter sets with closed-form verification
-  (new in v0.2, see below)
-- **dispersion and mass utilities (new in v0.3)**: subband dispersions
-  along an in-plane path (`subband_dispersion`) and the local
-  finite-difference effective mass of any dispersion (`local_mass`),
-  because a hole mass is not one number. Asserted in the test suite: the
-  decoupled demo set returns exactly 1/|A| m0 at every momentum; applied
-  to the bulk Rinke 2008 GaN bands the utility reproduces the
-  quasi-cubic asymptotic masses 1.89 and 0.180 m0; and a locally flat
-  branch reports an infinite mass rather than an error, because a
-  diverging mass is physics.
-
-- **finite barriers (new in v0.5)**: position-dependent material
-  parameters and band edge with the symmetrized Ben Daniel-Duke
-  discretization (see above). The bare `solve_subbands`/
-  `solve_self_consistent` path still uses hard walls at the grid ends;
-  use `solve_heterostructure` when the barrier matters.
-
-Every item of the v0.5 roadmap is now implemented (v0.6): Bir-Pikus
-strain terms (`strain_blocks`, wired through every assembly, validated
-by the structural identity with the kinetic template at eps_ij =
-k_i k_j and by closed-form eigenvalues -- no deformation-potential
-values shipped, on purpose: supply cited D1..D6); full k-grid
-non-parabolic filling (`fill_subbands_kgrid`, agreeing with the
-closed-form parabolic filler on an exactly parabolic model and
-refusing an undersized k-window); spin-splitting analysis
-(`spin_splitting`, `splitting_vs_k`: exactly zero where Kramers and
-inversion symmetry demand, finite Rashba-type splitting of the 2DHG
-under an asymmetric potential); the finite-barrier self-consistent
-loop (`solve_self_consistent_hetero`, reproducing the hard-wall loop
-*exactly* on a uniform stack); and the transport groundwork
-(`group_velocity`, `dos_from_dispersion`, both pinned to parabolic
-closed forms).
-
-**Intersubband optics (new in v0.7)**: `dipole_matrix` computes the
-intersubband dipole matrix elements z_mn = <m|z|n> from any solver's
-envelopes (trapezoidal inner products on the solver's own grid, all
-spinor components summed, Hermiticity enforced by construction), and
-`oscillator_strengths` converts the ground-subband dipole column into
-dimensionless oscillator strengths
-f_(1->n) = (m*/m0) (E_1 - E_n) |z_1n|^2 / (hbar^2/2m0)
-(hole convention, energies descending) -- the quantities that set
-intersubband absorption spectra and the design of QWIPs and
-polaritonic devices. Anchors, asserted not stated: on a
-hard-wall well the multiplet-summed dipole and oscillator strength
-reproduce the textbook closed forms z12 = 16 L / (9 pi^2) and
-f12 = 256 / (27 pi^2); the Thomas-Reiche-Kuhn f-sum rule
-sum_n f_1n = 1 is verified to a fraction of a percent with basis-size
-convergence; parity forbids z13 on a symmetric well (found at 1e-12);
-and shifting the coordinate origin changes no off-diagonal element
-(gauge identity, checked on the coupled Rinke 2008 GaN well). For the
-shipped six-fold-degenerate demo set the invariant quantities are the
-multiplet-summed ones, and the docstrings say so rather than letting a
-user read meaning into basis-dependent individual elements.
-
-Deliberate scope, stated plainly -- designed-out, not overlooked:
-scattering-mechanism transport lifetimes (interface roughness, ionized
-impurities, phonons) need cited screening and roughness parameters per
-structure, and this package ships no number it cannot source -- the
-DOS and velocity factors every lifetime integral needs are provided
-instead; the Poisson solve is single-medium (one cited permittivity;
-a spatially varying permittivity is not smuggled in); and k-linear
-bulk-inversion-asymmetry terms beyond the six-band Chuang-Chang form
-are not included.
-
-## Cited parameter sets (new in v0.2)
-
-- `gan_rinke2008()`: the consistent GW-based GaN valence set of Rinke et
-  al., Phys. Rev. B 77, 075202 (2008) (A1..A6, Delta_CR = 10 meV,
-  Delta_SO = 17 meV, delta2 = delta3 = Delta_SO/3), as tabulated in
-  Extended Data Table 1 of Chang et al., Nature Electronics 9, 346 (2026)
-  and used in the source paper below. eps_r = 10.4 (E parallel to c) from
-  Barker and Ilegems, Phys. Rev. B 7, 743 (1973).
-- `aln_rinke2008()`: the matching AlN set (Delta_CR = -295 meV from Rinke
-  et al.; Delta_SO = 22 meV from de Carvalho et al., Appl. Phys. Lett.
-  97, 232101 (2010)), intended as a barrier material. Its permittivity is
-  deliberately NaN, and the self-consistent solver refuses to run on it,
-  because no vetted value is shipped and none is needed for a barrier.
-
-The test-suite locks every number and checks the GaN set against closed
-forms: the zone-center splittings come out at 5.20 and 21.80 meV (against
-accepted experimental values near 5-6 and 22 meV), and the asymptotic
-in-plane masses at m0/|A2+A4-A5| = 1.89 m0 and m0/|A2+A4+A5| = 0.18 m0,
-the quasi-cubic values quoted in the source paper's Supplemental
-Material.
-
-For any other material or parameterization, populate
-`WurtziteParameters` from the literature (e.g. Vurgaftman and Meyer,
-J. Appl. Phys. 94, 3675 (2003)) and record the source in the mandatory
-`reference` field. The shipped `demo_single_band()` set is a decoupled,
-non-physical configuration used by the test-suite, chosen because it has
-closed-form well solutions to test against.
-
-## Install and use
+## Install
 
 ```
 pip install kpenvelope
 ```
 
-For development, clone the repository and `pip install -e .[test]`.
+For development: clone the repository and `pip install -e .[test]`.
+
+## Quick start
 
 ```python
 import numpy as np
-from kpenvelope import gan_rinke2008, solve_self_consistent
+from kpenvelope import (gan_rinke2008, sheet_density_from_cm2,
+                        solve_self_consistent)
 
-p = gan_rinke2008()                      # cited set; or your own WurtziteParameters
-z = np.linspace(0.0, 6.0, 97)            # nm, from the interface
-res = solve_self_consistent(p, z, ps=0.46)   # ps in nm^-2; 4.6e13 cm^-2 = 0.46
-# res.energies, res.masses, res.density, res.potential, res.occupations
+p = gan_rinke2008()                        # cited GaN parameter set
+z = np.linspace(0.0, 6.0, 97)              # grid in nm, from the interface
+ps = sheet_density_from_cm2(4.6e13)        # measured density, lab units in
+res = solve_self_consistent(p, z, ps, temperature_K=300.0)
+# res.energies, res.masses, res.density, res.occupations, res.converged
 ```
 
-Convention: valence-electron energies, holes occupy the highest
-eigenvalues; energies in eV, lengths in nm, sheet densities in nm^-2.
+Conventions, stated once: energies in eV on the valence-electron
+scale (holes occupy the highest eigenvalues), lengths in nm, sheet
+densities in nm^-2. `sheet_density_from_cm2` / `sheet_density_to_cm2`
+convert to and from the cm^-2 numbers a lab quotes, exactly.
 
-## Verification
+## What it can do
 
-The test-suite checks Hermiticity with every coupling switched on, the
-decoupled square-well limit against the analytic spectrum, the uniform
-slab against the analytic Gauss-law potential, convergence plus exact
-charge neutrality of the self-consistent loop, and (new in v0.2) the
-cited GaN set against the closed-form quasi-cubic splittings and masses
-above.
+**Energy levels and wavefunctions.** `solve_subbands` solves the
+six-band problem on a 1D grid at any in-plane momentum, with hard
+walls at the grid ends. `solve_heterostructure` lifts that
+restriction: layered stacks with position-dependent material
+parameters and band offsets (built with `layered_profile`), using the
+symmetrized discretization that keeps the problem exactly Hermitian
+for any profile. Strain enters through the Bir-Pikus terms
+(`strain_blocks`), per layer, when you supply cited deformation
+potentials.
 
-One comparison against the source paper is on record and stated honestly:
-a hard-wall self-consistent run at the measured sheet density
-(4.6e13 cm^-2, 97 points over 6 nm) puts the gas centroid at 0.62 nm
-against 0.568 nm for the hard-wall row of the paper's Table S1, with the
-same subband structure (two heavy branches filled, the light branch a
-minority). The difference comes from the filling model: this package
-fills parabolic edge-mass subbands, while the paper fills the computed
-non-parabolic dispersions, and the light branch is strongly
-non-parabolic. The finite-barrier assembly (v0.5) removes the hard-wall
-half of that caveat for fixed-potential runs; the self-consistent loop
-is still hard-wall and parabolic-filled, so the warning stands for
-self-consistent numbers: do not publish them without checking the
-barrier and filling model against your system.
+**Self-consistency with the charge.** `solve_self_consistent`
+(hard-wall) and `solve_self_consistent_hetero` (finite barriers)
+iterate the quantum problem with Gauss's law until the potential and
+the charge agree, at your measured sheet density and temperature
+(`temperature_K`; the default 0 reproduces the historical cold
+filling exactly). The result carries a `converged` flag, so an
+iteration-starved run reports its failure instead of hiding it.
+Filling uses either parabolic subbands (closed-form, including the
+finite-temperature closed form) or the full computed dispersion on a
+k-grid (`fill_subbands_kgrid`), which refuses a momentum window the
+occupied states outgrow.
 
-## Subband character (new in v0.4)
+**What the states are made of.** `band_character` resolves each
+state into heavy-hole, light-hole and split-off fractions, and
+`character_vs_k` tracks how the composition changes with momentum --
+the physics behind "one subband, many masses": the top subband is
+pure heavy-hole at zero momentum, and its mass moves as other
+components mix in.
 
-`band_character` resolves each envelope state into its heavy-hole,
-light-hole and crystal-field split-off fractions (basis populations in
-the Chuang-Chang basis), and `character_vs_k` tracks the composition
-along an in-plane path. Band mixing is the physics behind the
-"one subband, many masses" problem this package makes explicit: the
-top subband is pure HH at the zone center, and its mass moves as LH
-and CH weight grows with in-plane momentum.
+**Numbers an experiment measures.** `subband_dispersion` and
+`local_mass` give the energy-versus-momentum curves and the local
+effective mass (a hole mass is not one number, and a flat band
+honestly reports an infinite mass). `spin_splitting` /
+`splitting_vs_k` quantify the splitting an asymmetric potential
+induces. `group_velocity` and `dos_from_dispersion` are the
+ingredients every transport estimate needs. `dipole_matrix` and
+`oscillator_strengths` give the intersubband optical matrix elements
+and dimensionless strengths that set absorption spectra and detector
+design.
 
-```python
-from kpenvelope import band_character, gan_rinke2008, solve_subbands
+## Cited parameter sets
 
-energies, envelopes = solve_subbands(gan_rinke2008(), z, kx=0.3)
-fractions = band_character(envelopes, z)   # (n_states, 3): HH, LH, CH
-```
+No physical number in this package is made up, and none is accepted
+without a source -- the `reference` field of `WurtziteParameters` is
+mandatory.
 
-The tests assert the exact zone-center block structure rather than an
-approximation: at kt = 0 the six-band Hamiltonian couples only LH and
-CH (through delta3), so every zone-center state has HH fraction exactly
-1 or exactly 0, and the LH states carry the small CH admixture the
-delta3 coupling demands.
+- `gan_rinke2008()`: the GW-based GaN valence set of Rinke et al.,
+  Phys. Rev. B 77, 075202 (2008) (A1..A6, Delta_CR = 10 meV,
+  Delta_SO = 17 meV), as tabulated in Extended Data Table 1 of Chang
+  et al., Nature Electronics 9, 346 (2026). eps_r = 10.4 (field along
+  the c axis) from Barker and Ilegems, Phys. Rev. B 7, 743 (1973).
+- `aln_rinke2008()`: the matching AlN set (Delta_CR = -295 meV from
+  Rinke et al.; Delta_SO = 22 meV from de Carvalho et al., Appl.
+  Phys. Lett. 97, 232101 (2010)), intended as a barrier material. Its
+  permittivity is deliberately NaN and the self-consistent solver
+  refuses to run on it: no vetted value is shipped, and none is
+  needed for a barrier.
+- `demo_single_band()`: a synthetic, decoupled set the test suite
+  uses because it has exact textbook solutions. Labeled non-physical.
 
-## Methodological basis
+For any other material, populate `WurtziteParameters` from the
+literature (e.g. Vurgaftman and Meyer, J. Appl. Phys. 94, 3675
+(2003)) and record the source. No default band offset is shipped
+either: alignments are material- and strain-specific, so
+`layered_profile` takes them from you, with a citation.
+
+## How it is checked
+
+Every physics claim in the test suite (54 tests, Python 3.9-3.13, run
+in CI on every push) is anchored to a closed form, an exact identity,
+or two independent code paths agreeing -- never to a stored number:
+
+- the assembled matrix is exactly Hermitian with every coupling on,
+  and the layered assembly reduces to the uniform one at machine
+  precision when every layer is the same material;
+- the decoupled well reproduces the textbook square-well levels (hard
+  wall and finite barrier, including the analytic decay into the
+  barrier);
+- the cited GaN set lands on its closed-form splittings (5.20 and
+  21.80 meV) and asymptotic masses (1.89 and 0.18 m0);
+- the finite-temperature filling matches direct numerical integration
+  of the Fermi-Dirac occupation (two independent code paths) and
+  reduces to the cold filling as T goes to 0;
+- filling conserves charge exactly, the k-grid filler agrees with the
+  closed-form filler on an exactly parabolic model, and the strain
+  terms are validated by a structural identity with the kinetic
+  template;
+- the intersubband dipoles reproduce the textbook closed forms, obey
+  the f-sum rule, respect parity selection, and are invariant under a
+  shift of the coordinate origin.
+
+One comparison against the source paper is on record and stated
+honestly: a hard-wall run at the measured density puts the gas
+centroid at 0.62 nm against the paper's 0.568 nm, with the same
+subband structure; the difference is the filling model (parabolic
+here, computed-dispersion there). Do not publish self-consistent
+numbers without checking the barrier and filling model against your
+own system.
+
+## Honest limits
+
+Deliberate scope -- designed out with reasons, not overlooked:
+scattering lifetimes (roughness, impurities, phonons) need cited
+screening and roughness parameters per structure, and this package
+ships no number it cannot source, so it provides the DOS and velocity
+factors every lifetime integral needs instead; the Poisson solve uses
+one cited permittivity (not a spatially varying profile); and
+k-linear bulk-inversion-asymmetry terms beyond the six-band
+Chuang-Chang model are not included.
+
+## Associated paper
 
 > T. M. Mahim, A. S. M. Mohsin and M. M. Rahman, "Origin of the
 > conflicting hole masses in the GaN/AlN two-dimensional hole gas"
@@ -217,33 +159,30 @@ delta3 coupling demands.
 > https://github.com/Tanvir-Mahmud-Mahim/gan-2dhg-masses-lifetimes
 
 and S. L. Chuang and C. S. Chang, Phys. Rev. B 54, 2491 (1996). This
-package is the general-purpose tool; the paper repository reproduces the
-specific published study, including the dispersion-filled self-consistent
-finite-barrier calculation that this package does not yet run end to end.
+package is the general-purpose tool; the paper repository reproduces
+the specific published study.
 
 ## Support and governance
 
-The package is written and maintained by Tanvir Mahmud Mahim
-(Department of Electrical and Electronic Engineering, BRAC University),
-who reviews every change and takes the final decision on scope and
-releases. There is no separate governance body; design questions are
-discussed in the open in issues and pull requests, and the standing
-rule of [CONTRIBUTING.md](CONTRIBUTING.md) binds the maintainer exactly
-as it binds contributors: a change that touches physics arrives with a
+Written and maintained by Tanvir Mahmud Mahim (Department of
+Electrical and Electronic Engineering, BRAC University), who reviews
+every change and takes the final decision on scope and releases.
+Design questions are discussed in the open in issues and pull
+requests, and the standing rule of
+[CONTRIBUTING.md](CONTRIBUTING.md) binds the maintainer exactly as it
+binds contributors: a change that touches physics arrives with a
 test, and a constant arrives with its source.
 
-Support runs through the issue tracker at
-https://github.com/TaN-MM-Org/kpenvelope/issues. Usage questions are
-welcome there alongside bug reports; a docstring that left a unit or a
-sign convention unclear is treated as a documentation bug, not as user
-error. The maintainer aims to respond within a week.
-
-While the version is below 1.0 the API may still move between minor
-versions; such changes are called out in the release notes. The
-limitations named under Status are deliberate scope, recorded there
-precisely so that a user can tell a designed-out feature from an
-oversight.
+Support runs through the
+[issue tracker](https://github.com/TaN-MM-Org/kpenvelope/issues).
+Usage questions are welcome alongside bug reports; a docstring that
+left a unit or a sign convention unclear is treated as a
+documentation bug, not user error. While the version is below 1.0
+the API may still move between minor versions; such changes are
+called out in the release notes.
 
 ## License
 
-Apache-2.0
+Apache-2.0. Every release is archived on Zenodo under the concept DOI
+[10.5281/zenodo.22015269](https://doi.org/10.5281/zenodo.22015269),
+which always resolves to the latest version.
