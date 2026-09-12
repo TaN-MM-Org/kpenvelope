@@ -20,19 +20,23 @@ from .hamiltonian import assemble_hamiltonian, HBAR2_OVER_2M0
 from .heterostructure import (assemble_heterostructure, layered_profile,
                               solve_heterostructure)
 from .solver import solve_subbands
-from .selfconsistent import (fill_subbands_kgrid, solve_self_consistent,
+from .selfconsistent import (KB_EV_PER_K, fill_subbands_kgrid,
+                             fill_subbands_thermal, solve_self_consistent,
                              solve_self_consistent_hetero,
                              SelfConsistentResult)
 from .strain import strain_blocks
+from .units import sheet_density_from_cm2, sheet_density_to_cm2
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
     "subband_dispersion", "local_mass", "spin_splitting",
     "splitting_vs_k", "group_velocity", "dos_from_dispersion",
     "dipole_matrix", "oscillator_strengths",
-    "strain_blocks", "fill_subbands_kgrid", "solve_self_consistent_hetero",
+    "strain_blocks", "fill_subbands_kgrid", "fill_subbands_thermal",
+    "KB_EV_PER_K", "sheet_density_from_cm2", "sheet_density_to_cm2",
+    "solve_self_consistent_hetero",
     "assemble_heterostructure", "layered_profile", "solve_heterostructure",
     "band_character", "character_vs_k", "dominant_character",
     "CHARACTER_GROUPS",
