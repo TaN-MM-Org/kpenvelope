@@ -136,7 +136,12 @@ or two independent code paths agreeing -- never to a stored number:
   template;
 - the intersubband dipoles reproduce the textbook closed forms, obey
   the f-sum rule, respect parity selection, and are invariant under a
-  shift of the coordinate origin.
+  shift of the coordinate origin;
+- the depolarization geometry integral matches an independent
+  quadrature over the analytic well wavefunctions, is exactly
+  unchanged by a shift of the origin, and scales exactly with the
+  well width; the shift formula's defining identity holds to machine
+  precision.
 
 One comparison against the source paper is on record and stated
 honestly: a hard-wall run at the measured density puts the gas
