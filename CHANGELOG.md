@@ -4,6 +4,35 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.9.0 - 2026-09-13
+
+Physics upgrade: the collective intersubband physics between the band
+structure and the spectrometer.
+
+- `depolarization_shift`: the measured intersubband resonance of a
+  doped well sits ABOVE the subband spacing by the depolarization
+  shift, E_tilde = E sqrt(1 + alpha) with alpha = 2 e^2 n_s S /
+  (eps0 eps_r E) and S the envelope geometry integral (Allen, Tsui
+  and Vinter, Solid State Commun. 20, 425 (1976); Ando, Fowler and
+  Stern, Rev. Mod. Phys. 54, 437 (1982)) -- the correction every
+  intersubband absorption experiment must apply before comparing
+  with a band-structure calculation. Spinor-summed overlap density,
+  so it applies to any solver state here. The excitonic final-state
+  correction is deliberately omitted, stated with the reason (it
+  needs an exchange-correlation model this package does not ship).
+- `overlap_geometry_integral`: the geometry integral S on its own.
+- `isb_lineshape`: oscillator-strength-weighted unit-area Lorentzian
+  absorption shape at your measured linewidth; the absolute 2D
+  absorbance prefactor needs experiment geometry and is deliberately
+  not guessed.
+- Anchors: S from solver envelopes against independent adaptive
+  quadrature over the analytic infinite-well wavefunctions (two code
+  paths); exact origin invariance of S (orthogonality); exact linear
+  width scaling; alpha exactly linear in n_s and inversely
+  proportional to eps_r, zero-density limit exact; the defining
+  identity E_shifted = E sqrt(1 + alpha) at machine precision; the
+  lineshape integrating to the strength sum by quadrature.
+
 ## v0.8.0 - 2026-09-12
 
 Experimental-conditions release: the two knobs every measurement

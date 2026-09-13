@@ -79,7 +79,13 @@ induces. `group_velocity` and `dos_from_dispersion` are the
 ingredients every transport estimate needs. `dipole_matrix` and
 `oscillator_strengths` give the intersubband optical matrix elements
 and dimensionless strengths that set absorption spectra and detector
-design.
+design -- and, new in v0.9, `depolarization_shift` applies the
+collective correction between the two: a doped well's measured
+resonance sits above the subband spacing by the depolarization shift
+(Allen/Tsui/Vinter 1976; Ando/Fowler/Stern 1982), the effect every
+absorption experiment must subtract before comparing with the band
+structure, with `isb_lineshape` giving the strength-weighted
+spectrum at your measured linewidth.
 
 ## Cited parameter sets
 
@@ -109,7 +115,7 @@ either: alignments are material- and strain-specific, so
 
 ## How it is checked
 
-Every physics claim in the test suite (54 tests, Python 3.9-3.13, run
+Every physics claim in the test suite (57 tests, Python 3.9-3.13, run
 in CI on every push) is anchored to a closed form, an exact identity,
 or two independent code paths agreeing -- never to a stored number:
 
