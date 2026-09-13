@@ -26,14 +26,17 @@ from .selfconsistent import (KB_EV_PER_K, fill_subbands_kgrid,
                              SelfConsistentResult)
 from .strain import strain_blocks
 from .units import sheet_density_from_cm2, sheet_density_to_cm2
+from .isb import (depolarization_shift, isb_lineshape,
+                  overlap_geometry_integral)
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
     "subband_dispersion", "local_mass", "spin_splitting",
     "splitting_vs_k", "group_velocity", "dos_from_dispersion",
     "dipole_matrix", "oscillator_strengths",
+    "depolarization_shift", "isb_lineshape", "overlap_geometry_integral",
     "strain_blocks", "fill_subbands_kgrid", "fill_subbands_thermal",
     "KB_EV_PER_K", "sheet_density_from_cm2", "sheet_density_to_cm2",
     "solve_self_consistent_hetero",
