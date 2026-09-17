@@ -87,6 +87,41 @@ absorption experiment must subtract before comparing with the band
 structure, with `isb_lineshape` giving the strength-weighted
 spectrum at your measured linewidth.
 
+## Calibrate the numbers it refuses to ship
+
+The band offset of YOUR heterostructure and the sheet density in
+YOUR well are exactly the numbers no package should invent -- and
+both are routinely inferred from the same measured intersubband
+resonance. The `lab` tools close that loop through the package's own
+solver, pure NumPy:
+
+```python
+from kpenvelope import (fit_band_offset, offset_sensitivity,
+                        sheet_density_from_shift)
+
+# The offset that makes the calculated spacing match your resonance
+# (you supply the profile shape; the scale is calibrated):
+fit = fit_band_offset(z, params_list, band_edge_unit, e_meas_ev=0.0042,
+                      bracket=(0.4, 1.5), sigma_e_ev=1e-4)
+print(fit["offset_ev"], "+/-", fit["sigma_offset_ev"])
+
+# The sheet density from the measured depolarization-shifted
+# resonance -- an exact closed-form inversion, not a fit:
+inv = sheet_density_from_shift(z, env_i, env_j, e_i, e_j,
+                               e_meas_ev=0.21, eps_r=10.4)
+```
+
+Both refuse rather than guess: a bracket that does not straddle the
+measured spacing is refused with the calculated values at both ends;
+a transition that barely feels the offset is refused (a deep-well
+measurement cannot calibrate a barrier height it never probes --
+`offset_sensitivity` answers that before the measurement); and a
+resonance at or below the bare spacing is refused, because the
+depolarization shift only pushes the resonance up. One convention
+worth knowing: at k = 0 the solver's states come in exactly
+degenerate Kramers pairs, so the first intersubband spacing is
+between states 0 and 2 -- the tools' default.
+
 ## Cited parameter sets
 
 No physical number in this package is made up, and none is accepted
@@ -115,7 +150,7 @@ either: alignments are material- and strain-specific, so
 
 ## How it is checked
 
-Every physics claim in the test suite (57 tests, Python 3.9-3.13, run
+Every physics claim in the test suite (62 tests, Python 3.9-3.13, run
 in CI on every push) is anchored to a closed form, an exact identity,
 or two independent code paths agreeing -- never to a stored number:
 

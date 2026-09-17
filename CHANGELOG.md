@@ -4,6 +4,31 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.10.0 - 2026-09-17
+
+Lab adaptability: calibrate, from your own measured resonance, the
+two numbers this package refuses to ship.
+
+- `lab.fit_band_offset`: the band-offset scale that makes the
+  calculated subband spacing match a measured resonance, by
+  bracketing bisection through the package's own
+  `solve_heterostructure`, with the error bar from the exact
+  sensitivity dE/d(offset); refuses a bracket that does not straddle
+  the measurement (naming the calculated values at both ends) and a
+  transition insensitive to the offset. Kramers degeneracy at k = 0
+  is documented and defaulted around (states (0, 2)).
+- `lab.offset_sensitivity`: that sensitivity on its own, so the
+  refusal can be anticipated before the measurement.
+- `lab.sheet_density_from_shift`: the exact closed-form inverse of
+  `depolarization_shift` (the relation is exactly linear in n_s),
+  with exact error propagation and a refusal of a resonance at or
+  below the bare spacing.
+- Anchors: the offset round-trips through the public solver to 1e-6
+  and its error bar matches an actual re-fit at one sigma; the
+  density round trip is exact to 1e-10 with linearity in n_s exact to
+  1e-12 and the derivative checked by finite differences; the exact
+  k = 0 Kramers degeneracy asserted; every refusal pinned.
+
 ## v0.9.0 - 2026-09-13
 
 Physics upgrade: the collective intersubband physics between the band
