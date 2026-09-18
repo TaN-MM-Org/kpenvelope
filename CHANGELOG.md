@@ -4,6 +4,26 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.11.0 - 2026-09-18
+
+A stated limit overcome, and a future-proofing pass.
+
+- `rashba.rashba_hamiltonian` / `rashba_splitting` / `rashba_spins`:
+  the k-linear Rashba term of wurtzite structures,
+  alpha c_hat . (sigma x k) (Stefanowicz et al., PRB 89, 205201
+  (2014)), for the conduction-band companion problem -- with NO
+  default coefficient, on purpose: your alpha arrives with its
+  citation, the same rule as every constant here. The valence-band
+  k-linear terms remain deliberately not shipped (no vetted
+  coefficients in our sources).
+- CI now also runs on Python 3.14.
+- Anchors: the splitting is exactly 2 alpha k by two code paths
+  (closed form and full diagonalisation); the chiral spin texture is
+  exact (in-plane, perpendicular to k, unit length, opposite
+  branches); Kramers degeneracy at k = 0 exact and its undefined
+  direction refused; units internally consistent to 1e-19 eV;
+  missing references refused.
+
 ## v0.10.0 - 2026-09-17
 
 Lab adaptability: calibrate, from your own measured resonance, the

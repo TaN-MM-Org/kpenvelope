@@ -122,6 +122,25 @@ worth knowing: at k = 0 the solver's states come in exactly
 degenerate Kramers pairs, so the first intersubband spacing is
 between states 0 and 2 -- the tools' default.
 
+## The k-linear Rashba term, with your coefficient
+
+Wurtzite crystals lack inversion symmetry, so carriers feel a
+k-linear spin-orbit term of the universal form
+alpha (sigma_x k_y - sigma_y k_x) -- one of this package's stated
+limits until now. `rashba_hamiltonian`, `rashba_splitting` and
+`rashba_spins` ship that term for the conduction-band companion
+problem with its exact structure asserted as identities (splitting
+exactly 2 alpha k; spins exactly in-plane, perpendicular to k, and
+opposite between branches; exact Kramers degeneracy at k = 0). No
+coefficient ships as a default, on purpose: you pass your sample's
+alpha with a citation (for orientation, the measured bulk n-GaN
+value is 4.5 +/- 1 meV A, Stefanowicz et al., PRB 89, 205201 (2014),
+and GaN/AlGaN two-dimensional electron gases show about 5.5-6 meV A,
+PRB 74, 033302 and 74, 113308 (2006)). The valence-band k-linear
+terms have a different, parameter-set-specific structure whose
+vetted coefficients our sources do not provide; they remain
+deliberately not shipped.
+
 ## Cited parameter sets
 
 No physical number in this package is made up, and none is accepted
@@ -150,7 +169,7 @@ either: alignments are material- and strain-specific, so
 
 ## How it is checked
 
-Every physics claim in the test suite (62 tests, Python 3.9-3.13, run
+Every physics claim in the test suite (67 tests, Python 3.9-3.14, run
 in CI on every push) is anchored to a closed form, an exact identity,
 or two independent code paths agreeing -- never to a stored number:
 
@@ -194,8 +213,10 @@ screening and roughness parameters per structure, and this package
 ships no number it cannot source, so it provides the DOS and velocity
 factors every lifetime integral needs instead; the Poisson solve uses
 one cited permittivity (not a spatially varying profile); and
-k-linear bulk-inversion-asymmetry terms beyond the six-band
-Chuang-Chang model are not included.
+while the conduction-band k-linear Rashba term now ships (with your
+cited coefficient), the valence-band k-linear terms beyond the
+six-band Chuang-Chang model remain not included -- no vetted
+coefficients in our sources.
 
 ## Associated paper
 
