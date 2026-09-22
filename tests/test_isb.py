@@ -87,7 +87,8 @@ def test_lineshape_sum_rule_and_peaks():
     g = 0.004
     E = np.linspace(-4.0, 4.6, 400001)
     A = isb_lineshape(Ei, fi, g, E)
-    total = np.trapezoid(A, E)
+    trapezoid = getattr(np, "trapezoid", None) or np.trapz  # NumPy < 2
+    total = trapezoid(A, E)
     assert abs(total - fi.sum()) < 1e-3               # tail-truncation only
     # peaks at the transition energies
     assert abs(E[np.argmax(A)] - Ei[0]) < 2 * (E[1] - E[0])

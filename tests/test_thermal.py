@@ -120,3 +120,16 @@ def test_sheet_density_conversions_are_exact():
     arr = np.array([1e12, 1e13, 1e14])
     assert np.array_equal(sheet_density_from_cm2(arr),
                           arr * 1e-14)
+
+
+def test_max_iter_below_one_refused():
+    """max_iter = 0 used to crash with UnboundLocalError; it is now a
+    clear ValueError in both self-consistent loops."""
+    from kpenvelope import solve_self_consistent_hetero
+    p = demo_single_band()
+    z = np.linspace(0.0, 6.0, 20)
+    with pytest.raises(ValueError, match="max_iter"):
+        solve_self_consistent(p, z, 0.05, max_iter=0)
+    with pytest.raises(ValueError, match="max_iter"):
+        solve_self_consistent_hetero(z, [p] * z.size, None, 0.05,
+                                     eps_r=p.eps_r, max_iter=0)

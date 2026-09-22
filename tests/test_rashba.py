@@ -68,3 +68,11 @@ def test_refusals():
         rashba_splitting(np.inf, 0.1, REF)
     with pytest.raises(ValueError, match="nm"):
         rashba_splitting(ALPHA, -0.1, REF)
+
+
+def test_zero_alpha_spin_direction_refused():
+    """With alpha = 0 the two branches are degenerate at every k, so no
+    spin direction is defined; before v0.11.1 rashba_spins returned
+    spins along z, contradicting the in-plane texture it documents."""
+    with pytest.raises(ValueError, match="degenerate"):
+        rashba_spins(0.0, 0.3, 0.1, REF)
