@@ -85,7 +85,8 @@ def rashba_spins(alpha_evnm, kx, ky, reference):
     plane, perpendicular to k, with the two branches opposite; the
     tests assert spin . k = 0 and |spin| = 1 to machine precision.
     Refuses k = 0, where the branches are exactly degenerate and no
-    direction is defined (Kramers).
+    direction is defined (Kramers), and alpha = 0, where they are
+    degenerate at every k.
     """
     a = _check(alpha_evnm, reference)
     kx, ky = float(kx), float(ky)
@@ -93,6 +94,9 @@ def rashba_spins(alpha_evnm, kx, ky, reference):
         raise ValueError("at k = 0 the two branches are exactly "
                          "degenerate (Kramers) and no spin direction "
                          "is defined; evaluate at finite k")
+    if a == 0.0:
+        raise ValueError("alpha = 0: the two branches are degenerate "
+                         "at every k and no spin direction is defined")
     h = rashba_hamiltonian(a, kx, ky, reference)
     e, v = np.linalg.eigh(h)
     sx = np.array([[0.0, 1.0], [1.0, 0.0]])

@@ -46,7 +46,7 @@ class SelfConsistentResult:
 def _inplane_masses(p, z, potential, energies0, n_states, dk=0.02):
     """Numeric in-plane effective masses at the subband edge along kx.
 
-    m*/m0 = (hbar^2/2m0) * (2 dk^2) / (E(0) - E(dk)) for a band curving
+    m*/m0 = (hbar^2/2m0) * dk^2 / (E(0) - E(dk)) for a band curving
     downward from the valence edge (hole mass positive).
     """
     e_k, _ = solve_subbands(p, z, kx=dk, ky=0.0, potential=potential,
@@ -153,6 +153,8 @@ def solve_self_consistent(p, z, ps, n_states=6, mixing=0.3, tol=1e-5,
     Returns SelfConsistentResult; its `converged` flag records whether
     the residual dropped below tol within max_iter iterations.
     """
+    if int(max_iter) < 1:
+        raise ValueError("max_iter must be at least 1")
     if not (p.eps_r == p.eps_r):   # NaN check without importing math
         raise ValueError(
             "this parameter set carries no vetted permittivity (eps_r is "
@@ -293,6 +295,8 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
     neutrality.
     """
     from .heterostructure import solve_heterostructure
+    if int(max_iter) < 1:
+        raise ValueError("max_iter must be at least 1")
     if not (eps_r == eps_r):
         raise ValueError("eps_r is NaN; supply a cited permittivity")
     z = np.asarray(z, dtype=float)

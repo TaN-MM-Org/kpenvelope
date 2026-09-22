@@ -55,8 +55,10 @@ def fit_band_offset(z, params_list, band_edge_unit, e_meas_ev,
 
     The offset profile is `offset * band_edge_unit`: you supply the
     SHAPE (which layers are barriers, in the package's valence-electron
-    convention -- e.g. 1.0 on barrier points, 0.0 in the well) and the
-    measured spacing; this returns the offset scale in eV.
+    convention, where a hole barrier has a LOWER band edge -- e.g. -1.0
+    on barrier points and 0.0 in the well, so that a positive offset
+    scale confines the holes in the well) and the measured spacing;
+    this returns the offset scale in eV.
 
     z : uniform grid (nm). params_list : per-point parameter sets, as
         `solve_heterostructure` takes them.

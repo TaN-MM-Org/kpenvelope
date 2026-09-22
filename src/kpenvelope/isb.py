@@ -23,14 +23,14 @@ than hidden: it requires an exchange-correlation model this package
 does not ship.
 
 Anchors asserted in the tests rather than stated: the geometry
-integral S computed from solver envelopes matches an independent
-adaptive quadrature over the analytic infinite-well wavefunctions;
-S is exactly invariant under a shift of the coordinate origin
-(orthogonality makes the inner integral vanish at both ends); S
-scales exactly linearly with the well width; alpha is exactly linear
-in the sheet density with the zero-density limit exact; and the
-lineshape helper integrates to the oscillator-strength sum by
-quadrature.
+integral S computed on the grid from the analytic infinite-well
+wavefunctions matches an independent adaptive quadrature of the same
+functions (to 1e-3 relative); S is invariant under a shift of the
+coordinate origin (orthogonality makes the inner integral vanish at
+both ends; asserted to 1e-12); S doubles when the well width doubles
+(to 1e-3 relative); alpha is linear in the sheet density (to 1e-12
+relative) with the zero-density limit exact; and the lineshape helper
+integrates to the oscillator-strength sum by quadrature (to 1e-3).
 """
 from __future__ import annotations
 

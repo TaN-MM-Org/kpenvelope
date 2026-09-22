@@ -33,7 +33,7 @@ from .rashba import (rashba_hamiltonian, rashba_spins,
 from .isb import (depolarization_shift, isb_lineshape,
                   overlap_geometry_integral)
 
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
