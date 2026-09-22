@@ -4,6 +4,82 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.11.1 - 2026-09-22
+
+Bug fixes, dependency and CI checks, and a README rewrite.
+
+### Fixed
+
+- `rashba_spins` with `alpha_evnm = 0` returned spins along z
+  ((0, 0, 1) and (0, 0, -1)), contradicting its documented in-plane
+  texture. With alpha = 0 the two branches are degenerate at every k
+  and no direction is defined; it now raises `ValueError`.
+- `solve_self_consistent` and `solve_self_consistent_hetero` crashed
+  with `UnboundLocalError` for `max_iter=0`; both now raise
+  `ValueError("max_iter must be at least 1")`.
+- `fit_band_offset` docstring: the suggested offset shape (+1.0 on
+  barrier points) made the barriers attract the holes in this
+  package's valence-electron convention. It now says -1.0 on barrier
+  points. No code change.
+- Docstrings corrected: `_inplane_masses` (a stray factor 2 in the
+  formula; the code was right), `units` (the cm^-2 round trip can
+  differ in the last bit; it is not always exact), `isb` (the
+  geometry-integral anchor uses analytic well functions, not solver
+  envelopes, and the width-scaling test uses a 1e-3 tolerance).
+
+### Tests
+
+- New: `test_zero_alpha_spin_direction_refused` (test_rashba.py) and
+  `test_max_iter_below_one_refused` (test_thermal.py). 69 tests.
+- `test_lineshape_sum_rule_and_peaks` used `numpy.trapezoid`, which
+  needs NumPy >= 2.0; it now falls back to `numpy.trapz`. The whole
+  suite passes on Python 3.10 with NumPy 1.22.0 and SciPy 1.8.0, the
+  oldest versions pyproject.toml allows.
+
+### Changed
+
+- CI: Python 3.10 added to the matrix (3.9 to 3.14), and a new
+  `oldest-dependencies` job (Python 3.10, NumPy 1.22.0, SciPy 1.8.0).
+- README rewritten for non-specialists: runnable examples with their
+  real output, a list of refusals, and the checks with the tolerances
+  the tests actually use.
+
+### Known limitation, now documented (no code change)
+
+- The parabolic filling inside `solve_self_consistent` and
+  `solve_self_consistent_hetero` takes each state's mass from one
+  momentum step (0.02 nm^-1). In an asymmetric well the two states of
+  a Kramers pair split linearly in momentum, so they get different
+  masses (one can be `inf`) and different occupations, although they
+  should fill equally. In README example 2 (hard-wall GaN,
+  4.6e13 cm^-2) the second pair gets `inf` / 0.144 m0 and
+  0 / 0.605e13 cm^-2. Averaging over each pair would restore equal
+  filling but, at the same potential, puts about 2.2e13 cm^-2 into
+  the second pair against about 0.7e13 cm^-2 from
+  `fill_subbands_kgrid`, because the parabolic model itself misses how
+  the top subband gets heavier away from k = 0. The results are
+  therefore left unchanged in this patch release; the README (example
+  2 and Limits) now describes this, notes that the pair totals also
+  depend on the step size, and points to `fill_subbands_kgrid` for
+  occupations.
+
+### Corrections to earlier notes
+
+- v0.7.0: the parity selection rule is asserted to 1e-9 nm, not 1e-12.
+- v0.8.0: the closed-form finite-temperature filling is checked
+  against quadrature as a formula in the test, not by calling
+  `fill_subbands_thermal`; the cm^-2 conversions are single
+  multiplications and their round trip is not exact for every value.
+- v0.9.0: the geometry integral is checked on analytic infinite-well
+  functions sampled on the grid (not solver envelopes), and the width
+  scaling to a relative 1e-3, not exactly.
+- v0.10.0: "every refusal pinned" is too strong; the refusal of an
+  offset-insensitive transition and of a non-positive `sigma_e_ev`
+  have no test.
+- The v0.11.0 README said the tests run on "Python 3.9-3.14", but the
+  CI matrix has skipped Python 3.10 since v0.6.0 (whose note lists
+  3.9, 3.11, 3.12 and 3.13); 3.10 is tested from this release on.
+
 ## v0.11.0 - 2026-09-18
 
 A stated limit overcome, and a future-proofing pass.
