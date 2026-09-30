@@ -11,7 +11,10 @@ first-difference for terms linear in kz, which keeps the discrete matrix
 exactly Hermitian, including for position-dependent parameters.
 
 Off-diagonal phase conventions differ between papers; eigenvalues are
-invariant under those phase choices.
+invariant under those phase choices. The test suite checks the bulk
+eigenvalues against the block-diagonal 3 x 3 form of Chuang and Chang
+(their Eq. (45), whose entries depend only on |k_t|): every bulk level
+is two-fold degenerate and independent of the in-plane direction.
 
 Energies in eV, lengths in nm. Valence-electron energy convention: holes
 occupy the HIGHEST eigenvalues.
@@ -22,6 +25,47 @@ import numpy as np
 
 # hbar^2 / (2 m0) in eV nm^2
 HBAR2_OVER_2M0 = 0.0380998
+
+
+def check_grid(z):
+    """Return z as a float array after checking it is a usable grid:
+    one-dimensional, at least three finite points, strictly increasing
+    and uniform (new checks in v0.12.0: a decreasing grid used to give
+    NaN envelopes through a negative step)."""
+    z = np.asarray(z, dtype=float)
+    if z.ndim != 1 or z.size < 3:
+        raise ValueError("z must be a 1D grid of at least 3 points")
+    if not np.all(np.isfinite(z)):
+        raise ValueError("z grid must be finite")
+    dz = z[1] - z[0]
+    if not dz > 0.0:
+        raise ValueError("z grid must be strictly increasing")
+    if not np.allclose(np.diff(z), dz):
+        raise ValueError("z grid must be uniform")
+    return z
+
+
+def check_potential(potential, n):
+    """None, or a finite array with one value per grid point (new check
+    in v0.12.0: a longer array used to be silently truncated)."""
+    if potential is None:
+        return None
+    v = np.asarray(potential, dtype=float)
+    if v.shape != (n,):
+        raise ValueError(f"potential must have one value per grid point "
+                         f"({n}); got shape {v.shape}")
+    if not np.all(np.isfinite(v)):
+        raise ValueError("potential must be finite")
+    return v
+
+
+def check_n_states(n_states, n):
+    """1 <= n_states <= 6 N (new check in v0.12.0)."""
+    k = int(n_states)
+    if k != n_states or k < 1 or k > 6 * n:
+        raise ValueError(f"n_states must be an integer from 1 to 6 N = "
+                         f"{6 * n}; got {n_states!r}")
+    return k
 
 
 def bulk_blocks(p, kx: float, ky: float):
@@ -49,17 +93,22 @@ def bulk_blocks(p, kx: float, ky: float):
         [0, D, 0, 0, 0, lam0],
     ], dtype=complex)
 
-    # terms linear in kz: Ht = A6 k+ kz enters the (1,3)/(2,3) pattern
+    # terms linear in kz: H = A6 k+ kz. Upper block (rows 1-3):
+    # -H* at (1,3), H at (2,3); lower block (rows 4-6): H at (4,6),
+    # -H* at (5,6) (Chuang-Chang). Before v0.12.0 the lower block had
+    # H and H* swapped, which is invisible along kx (H real there) but
+    # broke the bulk Kramers degeneracy and the in-plane isotropy in
+    # every other direction; see CHANGELOG 0.12.0.
     Ht = c * p.A6 * kplus
     H1 = np.zeros((6, 6), dtype=complex)
     H1[0, 2] = -np.conj(Ht)
     H1[2, 0] = -Ht
     H1[1, 2] = Ht
     H1[2, 1] = np.conj(Ht)
-    H1[3, 5] = np.conj(Ht)
-    H1[5, 3] = Ht
-    H1[4, 5] = -Ht
-    H1[5, 4] = -np.conj(Ht)
+    H1[3, 5] = Ht
+    H1[5, 3] = np.conj(Ht)
+    H1[4, 5] = -np.conj(Ht)
+    H1[5, 4] = -Ht
 
     # kz^2 coefficients: lambda gains A1 kz^2, theta gains A3 kz^2
     lam2 = c * p.A1
@@ -77,15 +126,13 @@ def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0,
     strain : optional symmetric 3 x 3 strain tensor (dimensionless);
         adds the Bir-Pikus matrix of :func:`~kpenvelope.strain.strain_blocks`
         to every grid point. The parameter set must carry cited D1..D6.
-    Hard-wall boundaries at both ends of the grid (v0.1 limitation; a
-    finite barrier treated as a position-dependent material is the v0.2
-    gate, and matters: a hard wall pushes the gas away from the interface).
+    Hard-wall boundaries at both ends of the grid (for finite barriers
+    use `kpenvelope.heterostructure.assemble_heterostructure`).
     """
-    z = np.asarray(z, dtype=float)
+    z = check_grid(z)
     n = z.size
     dz = z[1] - z[0]
-    if not np.allclose(np.diff(z), dz):
-        raise ValueError("z grid must be uniform")
+    potential = check_potential(potential, n)
 
     H0, H1, H2 = bulk_blocks(p, kx, ky)
     if strain is not None:

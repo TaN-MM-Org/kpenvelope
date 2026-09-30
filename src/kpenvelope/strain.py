@@ -84,13 +84,14 @@ def strain_blocks(p, strain):
         [0, 0, 0, -np.conj(K), G, 0],
         [0, 0, 0, 0, 0, lam],
     ], dtype=complex)
-    # the H_t positions, exactly as in the kinetic H1 pattern
+    # the H_t positions, exactly as in the kinetic H1 pattern (lower
+    # block corrected in v0.12.0 together with the kinetic one)
     H[0, 2] += -np.conj(Ht)
     H[2, 0] += -Ht
     H[1, 2] += Ht
     H[2, 1] += np.conj(Ht)
-    H[3, 5] += np.conj(Ht)
-    H[5, 3] += Ht
-    H[4, 5] += -Ht
-    H[5, 4] += -np.conj(Ht)
+    H[3, 5] += Ht
+    H[5, 3] += np.conj(Ht)
+    H[4, 5] += -np.conj(Ht)
+    H[5, 4] += -Ht
     return 0.5 * (H + H.conj().T)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .hamiltonian import assemble_hamiltonian
+from .hamiltonian import assemble_hamiltonian, check_grid, check_n_states
 
 
 def solve_subbands(p, z, kx=0.0, ky=0.0, potential=None, n_states=8,
@@ -17,7 +17,8 @@ def solve_subbands(p, z, kx=0.0, ky=0.0, potential=None, n_states=8,
     strain : optional symmetric 3 x 3 tensor, passed to the assembly
         (requires cited D1..D6 on the parameter set).
     """
-    z = np.asarray(z, dtype=float)
+    z = check_grid(z)
+    n_states = check_n_states(n_states, z.size)
     H = assemble_hamiltonian(p, z, kx, ky, potential, strain=strain)
     vals, vecs = np.linalg.eigh(H)
     order = np.argsort(vals)[::-1][:n_states]

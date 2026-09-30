@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .hamiltonian import assemble_hamiltonian, bulk_blocks
+from .hamiltonian import (assemble_hamiltonian, bulk_blocks, check_grid,
+                          check_n_states, check_potential)
 
 
 def layered_profile(z, layers):
@@ -48,7 +49,7 @@ def layered_profile(z, layers):
 
     Returns (params_list, band_edge_array).
     """
-    z = np.asarray(z, dtype=float)
+    z = check_grid(z)
     dz = z[1] - z[0]
     total = sum(t for t, _, _ in layers)
     span = z[-1] - z[0]
@@ -82,11 +83,10 @@ def assemble_heterostructure(z, params_list, band_edge=None,
     per-point. Each strained point's parameter set must carry cited
     D1..D6.
     """
-    z = np.asarray(z, dtype=float)
+    z = check_grid(z)
     n = z.size
     dz = z[1] - z[0]
-    if not np.allclose(np.diff(z), dz):
-        raise ValueError("z grid must be uniform")
+    potential = check_potential(potential, n)
     if len(params_list) != n:
         raise ValueError("one parameter set per grid point required")
     if band_edge is not None:
@@ -143,7 +143,8 @@ def solve_heterostructure(z, params_list, band_edge=None, kx: float = 0.0,
     (energies descending in eV, envelopes (n_states, 6, N) normalized to
     unit total probability).
     """
-    z = np.asarray(z, dtype=float)
+    z = check_grid(z)
+    n_states = check_n_states(n_states, z.size)
     H = assemble_heterostructure(z, params_list, band_edge, kx, ky,
                                  potential, strain_list=strain_list)
     vals, vecs = np.linalg.eigh(H)
