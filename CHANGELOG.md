@@ -4,6 +4,129 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## v0.12.0 - 2026-09-30
+
+A fix to the Hamiltonian for in-plane momenta off the kx axis, a
+momentum-grid filling that is exact for parabolic subbands, a
+self-consistent loop that fills the full dispersion, and electrostatics
+for layered stacks (permittivity profile, position of the fixed sheet).
+
+### Fixed
+
+- **Six-band Hamiltonian, lower 3 x 3 block.** The term linear in kz,
+  H = (hbar^2/2m0) A6 k+ kz, appeared in rows 4-6 as H* at (4,6) and
+  -H at (5,6), where the Chuang-Chang matrix has H and -H*. Along kx
+  (ky = 0) H is real and both forms are identical, which is why every
+  earlier check (all of them along kx) passed. In any other in-plane
+  direction the bulk bands lost their two-fold (Kramers) degeneracy
+  and depended on the direction. The Bir-Pikus strain matrix copied
+  the same pattern, so a strain with a non-zero eps_yz also split the
+  bulk levels (eps_xx != eps_yy, eps_xy and eps_xz alone did not).
+  Both are corrected. The bulk eigenvalues
+  now equal, each twice, those of the block-diagonal 3 x 3 form of
+  Chuang and Chang (PRB 54, 2491 (1996), Eq. (45)), whose entries
+  depend only on |k_t|: agreement to 1e-12 eV at random directions for
+  the GaN and AlN sets. With the old matrix the largest deviation was
+  0.327 eV for GaN and 0.191 eV for AlN over the test's 40 random
+  samples (seed 12, k_t and k_z uniform in [0, 1.5] nm^-1), and
+  0.381 eV for GaN on a grid of k_t, k_z = 0, 0.05, ..., 1.5 nm^-1 and
+  19 directions from 0 to 90 degrees (at k_t = 1.5, k_z = 1.1 nm^-1,
+  45 degrees).
+- `fill_subbands_kgrid` integrated the step-like zero-temperature
+  occupation with the trapezoid rule, a first-order method. On the
+  exactly parabolic demo well of the new test (A = -2, 41-point grid
+  from 0 to 8 nm, 12 states, ps = 0.3 nm^-2, kmax = 2.6 nm^-1,
+  ntheta = 1, T = 0) the old per-state error was 4.17e-2 nm^-2 with
+  nk = 5 (the six second-level states left empty), 7.57e-3 nm^-2
+  (18 %) with nk = 23 and 1.76e-3 nm^-2 with nk = 41 (21 % of each
+  second-level state, 4 % of each first-level state). The error depends
+  on where the Fermi wavevector falls between grid points, so it also
+  changes with kmax. It now treats each branch as linear in k_t^2
+  between grid points and integrates the Fermi-Dirac factor exactly on
+  each segment: exact for parabolic subbands at any grid spacing, and
+  second order in the step otherwise.
+- Inputs that gave silent wrong answers are now refused with a
+  `ValueError`: a `potential` longer than the grid (it was silently
+  truncated; a shorter one raised `IndexError`), a decreasing grid (it
+  gave NaN envelopes), `n_states` above 6 N (fewer states were returned
+  without notice) or below 1, a grid of fewer than three points, and a
+  non-positive or non-finite `eps_r` in the Poisson step.
+
+### Added
+
+- `filling="kgrid"` on `solve_self_consistent` and
+  `solve_self_consistent_hetero` (with `kmax`, `nk`, `ntheta`): the
+  occupations and the hole density come from the states on a polar
+  momentum grid, each state's |F(z)|^2 weighted by its share of the
+  occupied momentum area. This removes the parabolic single-step mass
+  from the loop, and with it the artefact described under v0.11.1
+  (one Kramers partner with an infinite mass and no holes). On README
+  example 2 the partners now hold 1.974/1.964 and 0.352/0.311 e13
+  cm^-2 (pairs 3.938 and 0.662); the remaining difference within a
+  pair is the spin splitting of the two branches at finite momentum in
+  this asymmetric well, not an artefact. `ntheta` defaults to 1, exact because the
+  subbands depend only on |k_t| (asserted); a strain that breaks
+  in-plane isotropy requires an explicit `ntheta`.
+- `SelfConsistentResult.filling` and `.fermi_level` (the latter NaN for
+  the parabolic filling).
+- `solve_self_consistent_hetero(..., sheet_z=...)` and
+  `poisson.hole_potential(..., sheet_z=...)`: the position of the fixed
+  negative sheet charge. The default (None) keeps the historical
+  choice, the first grid point.
+- `eps_r` of `solve_self_consistent_hetero` and of
+  `poisson.hole_potential` may be one value per grid point: Gauss's
+  law is applied to the displacement field, so each layer carries its
+  own electric field.
+
+### Behaviour changes
+
+Results with ky = 0 and eps_yz = 0 are unchanged bit for bit. This
+covers README examples 1 to 7, every self-consistent result with the
+default parabolic filling (its mass step is along kx) and the
+calibration tools (k = 0). What changes:
+
+- Symmetric 5 nm hard-wall GaN well (51 points), k_t = 0.4 nm^-1 at
+  45 degrees: top four energies 5.245, 1.687, -2.217, -19.199 meV
+  before, 0.880, 0.880, -18.904, -18.904 meV now (the kx values);
+  spin splittings 3.558 and 16.983 meV before, 0 now. Along ky: 0.859
+  and -19.103 meV before (pairs degenerate), 0.880 and -18.904 meV now.
+- `character_vs_k` in that well along ky at 0.4 nm^-1: HH/LH/CH
+  0.6781/0.3159/0.0061 before, 0.6786/0.3149/0.0065 now.
+- `fill_subbands_kgrid` at the converged potential of README example
+  2 (defaults nk = 16, ntheta = 4): with kmax = 1.6 nm^-1 the old code
+  refused (its wrong ky-direction energies reached the grid edge);
+  with kmax = 2.5 nm^-1 it gave 1.9714, 1.9714, 0.3943, 0.2629 e13
+  cm^-2 per state (pairs 3.943 and 0.657), now 1.9659, 1.9552, 0.3590,
+  0.3199 (pairs 3.921 and 0.679). ntheta = 1 now gives the same
+  numbers as ntheta = 4.
+- The inputs listed under Fixed now raise instead of returning.
+
+### Tests
+
+- New file `tests/test_v012.py`, 14 tests: bulk eigenvalues against
+  the Chuang-Chang block-diagonal form (1e-12 eV); Kramers degeneracy
+  of the bulk bands with random strain and k (1e-12 eV); invariance
+  under a rotation of k and strain about c (1e-12 eV); subbands of an
+  asymmetric GaN/AlN stack independent of the in-plane direction
+  (1e-10 eV); no spin splitting in a symmetric well along any direction
+  (1e-9 eV); k-grid filling equal to the closed-form parabolic filler
+  at 5 and 23 grid points, T = 0 and 150 K (1e-9 nm^-2); second-order
+  error bound err (nk - 1)^2 < 1e-2 nm^-2 on a non-parabolic
+  two-branch dispersion against an independent root finder; the
+  k-resolved loop against the parabolic loop on the demo set (1e-8)
+  and Gauss's law on GaN (5e-6 eV); two-layer permittivity and
+  sheet-position closed forms; the sheet at the interface of a
+  5 nm AlN / 5 nm GaN stack; refusals. 83 tests in total.
+- All eight symmetry and filling tests fail on v0.11.1.
+
+### Known limitation, found and not changed
+
+- The default of `sheet_z` is still the first grid point, for backward
+  compatibility. On a stack whose grid starts inside a barrier this
+  puts the whole sheet field across the barrier (1.74 eV across 5 nm
+  AlN at 2e13 cm^-2 with eps_r = 10.4), and in the README's example 9
+  the loop then does not converge. Pass `sheet_z`.
+
 ## v0.11.1 - 2026-09-22
 
 Bug fixes, dependency and CI checks, and a README rewrite.

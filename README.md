@@ -132,7 +132,7 @@ Units and conventions, used everywhere:
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with kpenvelope 0.11.1. Numbers labelled illustrative are
+printed with kpenvelope 0.12.0. Numbers labelled illustrative are
 chosen for the example, not taken from a source.
 
 ### 1. Energy levels and what they are made of
@@ -217,11 +217,11 @@ second pair (at the same potential), further from the full-dispersion
 answer, because the top subband gets much heavier away from `k = 0`
 (example 3). Filling the full dispersion with `fill_subbands_kgrid` at
 the converged potential gives about 0.7e13 cm^-2 in the second pair.
-Use `fill_subbands_kgrid` for occupations you rely on, and do not
-publish self-consistent numbers without checking the barrier and
-filling model against your own system. Pass `temperature_K=` for a
-finite-temperature filling; the default 0 is the zero-temperature
-filling.
+For occupations you rely on, run the loop itself with the full
+dispersion (`filling="kgrid"`, example 8), and do not publish
+self-consistent numbers without checking the barrier and filling model
+against your own system. Pass `temperature_K=` for a finite-temperature
+filling; the default 0 is the zero-temperature filling.
 
 ### 3. One subband, many masses
 
@@ -402,7 +402,106 @@ two-dimensional electron gases show about 5.5-6 meV A (PRB 74, 033302
 and 74, 113308 (2006)). This term is for the conduction-band companion
 problem; see [Limits](#limits).
 
-### 8. Refusals
+### 8. The self-consistent hole gas, filled from the full dispersion
+
+```python
+import numpy as np
+from kpenvelope import (gan_rinke2008, sheet_density_from_cm2,
+                        sheet_density_to_cm2, solve_self_consistent)
+
+p = gan_rinke2008()
+z = np.linspace(0.0, 6.0, 97)
+ps = sheet_density_from_cm2(4.6e13)
+res = solve_self_consistent(p, z, ps, n_states=4, mixing=0.5, tol=2e-5,
+                            filling="kgrid", kmax=1.6, nk=16)
+
+print("converged:", res.converged, "after", res.iterations, "iterations")
+print("subband edges (meV):", np.round(res.energies * 1e3, 2))
+print("holes per state (1e13 cm^-2): ",
+      np.round(sheet_density_to_cm2(res.occupations) / 1e13, 3))
+pairs = res.occupations[0::2] + res.occupations[1::2]
+print("holes per Kramers pair (1e13 cm^-2):",
+      np.round(sheet_density_to_cm2(pairs) / 1e13, 3))
+print(f"Fermi level: {res.fermi_level * 1e3:.2f} meV")
+centroid = (z * res.density).sum() / res.density.sum()
+print(f"centre of the hole gas: {centroid:.2f} nm from the interface")
+```
+
+```
+converged: True after 21 iterations
+subband edges (meV): [-394.74 -394.74 -405.91 -405.91]
+holes per state (1e13 cm^-2):  [1.974 1.964 0.352 0.311]
+holes per Kramers pair (1e13 cm^-2): [3.938 0.662]
+Fermi level: -450.10 meV
+centre of the hole gas: 0.63 nm from the interface
+```
+
+This is example 2 again, but every iteration now solves the problem
+at 16 in-plane momenta from 0 to `kmax` = 1.6 nm^-1 and fills those
+computed energies, instead of treating each state as a parabola. The
+hole density is built from the wavefunctions at every one of those
+momenta, not only at `k = 0`. Each iteration needs 17 solutions
+instead of 2, so expect it to take several times longer than example
+2 (from under two minutes to a few minutes of CPU time in our runs,
+depending on the machine and its load). No state is left
+with an infinite mass and no holes any more. The two members of a pair
+still hold slightly different numbers of holes, and that is physical:
+in this lopsided well they split apart as the momentum grows
+(`splitting_vs_k` shows it), so they are filled to different momenta.
+`kmax` must lie beyond the last occupied momentum; if it does not, the
+solver stops and says so. Only one momentum direction is used, which is
+exact here because the subbands do not depend on the direction (a
+checked property). With a strain that makes the plane anisotropic you
+must pass `ntheta`.
+
+### 9. A barrier on the left: say where the fixed charge sits
+
+```python
+import numpy as np
+from kpenvelope import (gan_rinke2008, aln_rinke2008, layered_profile,
+                        solve_self_consistent_hetero)
+
+GaN, AlN = gan_rinke2008(), aln_rinke2008()
+z = np.linspace(0.0, 10.0, 51)            # 5 nm AlN, then 5 nm GaN
+# the -0.8 eV offset is illustrative, not a cited GaN/AlN value
+params, edge = layered_profile(z, [(5.0, AlN, -0.8), (5.0, GaN, 0.0)])
+# one permittivity per grid point; GaN's cited 10.4 is used everywhere
+# here because no vetted AlN value ships with the package
+eps = np.full(z.size, GaN.eps_r)
+
+for sheet in (None, 5.0):
+    r = solve_self_consistent_hetero(z, params, edge, ps=0.2, eps_r=eps,
+                                     n_states=4, mixing=0.4, tol=1e-6,
+                                     max_iter=60, sheet_z=sheet)
+    print(f"sheet_z = {sheet}: converged {r.converged} "
+          f"after {r.iterations} iterations")
+    if r.converged:
+        in_aln = r.density[z < 5.0].sum() * (z[1] - z[0]) / 0.2
+        centre = (z * r.density).sum() / r.density.sum()
+        print(f"  {100 * in_aln:.1f} % of the holes in the AlN, "
+              f"centre of the gas at {centre:.2f} nm")
+```
+
+```
+sheet_z = None: converged False after 60 iterations
+sheet_z = 5.0: converged True after 32 iterations
+  0.8 % of the holes in the AlN, centre of the gas at 5.62 nm
+```
+
+The holes are held by a fixed sheet of negative charge at the
+interface. `sheet_z` tells the solver where that sheet is. Without it
+the solver keeps its old assumption that the sheet sits at the first
+grid point, which is right when the grid starts at the interface (the
+hard-wall case) but not here: then the sheet's whole field, 1.74 eV
+across these 5 nm of AlN, lies inside the barrier. The far side of the
+barrier then looks more attractive to the holes than the GaN, and the
+loop does not settle (on a finer grid, 11 nm on 67 points, it ended
+with all the holes in the AlN after 200 iterations). With the sheet at the
+interface the gas sits in the GaN, against the barrier. `eps_r` may be
+one value per grid point, so a stack of layers with different
+permittivities is handled; supply a cited value for each layer.
+
+### 10. Refusals
 
 ```python
 import numpy as np
@@ -465,16 +564,26 @@ the synthetic demo set.
 
 **Self-consistency with the charge**
 
-- `solve_self_consistent(p, z, ps, ..., temperature_K)` -- hard walls;
-  `solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
-  ...)` -- finite barriers. Both return a `SelfConsistentResult` with
-  `z`, `potential`, `energies`, `envelopes`, `density`, `occupations`,
-  `masses`, `iterations`, `residual` and `converged` (False when the
-  loop ran out of iterations).
+- `solve_self_consistent(p, z, ps, ..., temperature_K, filling)` --
+  hard walls; `solve_self_consistent_hetero(z, params_list, band_edge,
+  ps, eps_r, ..., sheet_z)` -- finite barriers. Both return a
+  `SelfConsistentResult` with `z`, `potential`, `energies`,
+  `envelopes`, `density`, `occupations`, `masses`, `iterations`,
+  `residual`, `converged` (False when the loop ran out of iterations),
+  `filling` and `fermi_level`.
+- `filling="parabolic"` (default) treats each state as a parabola with
+  one mass; `filling="kgrid"` with `kmax` (and optionally `nk`,
+  `ntheta`) fills the computed dispersion on a momentum grid and builds
+  the hole density from the states at every grid momentum (example 8).
+- In the finite-barrier loop, `eps_r` may be one value per grid point,
+  and `sheet_z` says where the fixed negative charge that holds the gas
+  sits (example 9).
 - `fill_subbands_thermal(energies, masses, ps, temperature_K)` --
   Fermi-Dirac filling of parabolic subbands in closed form;
   `fill_subbands_kgrid(solve_at_k, ps, n_states, kmax, ...)` -- filling
-  from the full computed dispersion on a momentum grid.
+  from the full computed dispersion on a momentum grid (exact for
+  parabolic subbands at any grid spacing; without in-plane
+  anisotropic strain one direction, `ntheta=1`, is enough).
   `KB_EV_PER_K` is the Boltzmann constant in eV/K, computed from the
   exact SI values of k_B and e.
 - `sheet_density_from_cm2`, `sheet_density_to_cm2` -- lab units.
@@ -554,13 +663,20 @@ citation.
   a self-consistent solve is asked for;
 - a strained calculation is asked of a set without D1..D6, or the
   strain tensor is not a symmetric 3 x 3 tensor;
-- the grid is not uniform, the layer thicknesses do not add up to the
-  grid span (within half a grid step), or the per-point parameter,
-  band-edge or strain lists do not match the grid;
+- the grid is not uniform, not increasing or shorter than three
+  points, the layer thicknesses do not add up to the grid span (within
+  half a grid step), or the per-point parameter, band-edge, strain,
+  potential or permittivity arrays do not match the grid;
+- `n_states` is below 1 or above six times the number of grid points;
+- a permittivity is not a positive finite number, or `sheet_z` lies
+  outside the grid;
+- `filling="kgrid"` is asked for without `kmax`, or with a strain that
+  breaks in-plane isotropy and no `ntheta`;
 - a temperature is negative or not finite, or `max_iter` is below 1;
-- the momentum-grid filler finds holes still present at the edge of
-  its grid (at T = 0 an occupied state at `kmax`; at T > 0 an
-  occupation above 1e-4 on the outer ring) -- increase `kmax`;
+- the momentum-grid filler, or a loop with `filling="kgrid"`, finds
+  holes still present at the edge of its grid (at T = 0 an occupied
+  state at `kmax`; at T > 0 an occupation above 1e-4 on the outer
+  ring) -- increase `kmax`;
 - momenta are negative, or `local_mass` gets fewer than two points,
   momenta that do not increase, or a row count that does not match;
 - `dos_from_dispersion` gets a dispersion that does not fall
@@ -587,7 +703,7 @@ citation.
 
 ## How the results are checked
 
-69 automated tests run on every push and pull request, on Python 3.9,
+83 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -597,6 +713,17 @@ the tests use:
 
 **Matrix and solver**
 
+- The bulk energies equal, each twice, those of the block-diagonal
+  3 x 3 form of Chuang and Chang (Eq. (45) of their paper, whose
+  entries depend only on the size of the in-plane momentum) to
+  1e-12 eV, at random momenta in random directions, for the GaN and
+  AlN sets.
+- Every bulk level is two-fold degenerate (Kramers) for random
+  momenta with random strain, and rotating both about the c axis
+  changes no energy, to 1e-12 eV.
+- The subbands of an asymmetric GaN/AlN stack in a tilted potential are
+  the same in every in-plane direction to 1e-10 eV, and a symmetric
+  well has no spin splitting along any direction (1e-9 eV).
 - The assembled matrix is Hermitian with every coupling switched on
   (`numpy.allclose`), and a mixed AlN/GaN/AlN stack is Hermitian with
   a difference of exactly 0.
@@ -633,7 +760,20 @@ the tests use:
   1e-6 nm^-2; filling keeps the total to 1e-15 nm^-2 at 4.2, 77 and
   300 K; warming moves holes into lower subbands.
 - On the exactly parabolic demo set, the momentum-grid filler agrees
-  with the parabolic filler to 4e-3 nm^-2, at T = 0 and at 150 K.
+  with the closed-form parabolic filler to 1e-9 nm^-2 with only 5 or
+  23 momentum points, at T = 0 and 150 K, with two levels occupied.
+  On a non-parabolic two-branch dispersion its error, against an
+  independent root finder, stays below 1e-2 / (nk - 1)^2 nm^-2.
+- With `filling="kgrid"` the loop lands on the parabolic loop's state
+  on the demo set (to 1e-8), and on GaN its potential solves Gauss's
+  law for its own density (to 5e-6 eV) with the charge exact to
+  1e-12 nm^-2.
+- The Poisson step with two permittivities matches the two-layer
+  closed form to a relative 1e-3 (first order in the grid step); with
+  the fixed sheet moved to 1 nm it matches the closed form to 1e-12 eV
+  and the field left of the sheet is exactly zero. On a 5 nm AlN /
+  5 nm GaN stack the loop with `sheet_z` at the interface keeps more
+  than 95 % of the holes in the GaN.
 - The finite-barrier loop on a uniform stack gives exactly the same
   energies and occupations as the hard-wall loop.
 - `KB_EV_PER_K` matches the CODATA value 8.617333262e-5 eV/K to 1e-14.
@@ -686,8 +826,28 @@ the tests use:
 
 ## Corrections in earlier versions
 
-**0.11.1 (this release) fixed two problems and several documentation
-errors.**
+**0.12.0 (this release) fixed a sign error in the Hamiltonian.** In
+rows 4 to 6 of the six-band matrix, the term that couples the in-plane
+and growth-direction momenta (`A6`) was placed as its complex
+conjugate. Along `kx` that makes no difference, which is why every
+earlier check (all along `kx`) passed. In any other in-plane direction
+the results were wrong: in a symmetric 5 nm GaN well at 0.4 nm^-1 and
+45 degrees the old code gave a spin splitting of 17 meV where there
+must be none, and moved the top level from 0.88 to 5.25 meV. The
+strain matrix had the same fault for a shear strain `eps_yz`. Affected were
+`subband_dispersion`, `character_vs_k` and `splitting_vs_k` at an
+angle `theta` other than 0 or pi, anything at `ky` other than 0,
+`fill_subbands_kgrid` (it samples four directions by default), and
+strained calculations with a non-zero `eps_yz`. Results along `kx`
+without `eps_yz`, including every self-consistent run with the default
+filling and README examples 1 to 7, are unchanged. The momentum-grid filler was also made
+exact for parabolic subbands. On the demo well of the tests (two
+levels filled, T = 0) the old filler misplaced 1.8e-3 nm^-2 per state
+with 41 momentum points, 21 % of each upper-level state, and left the
+upper level empty with 5 points. Several inputs that gave silent wrong
+answers are now refused. [CHANGELOG.md](CHANGELOG.md) lists before and after numbers.
+
+**0.11.1 fixed two problems and several documentation errors.**
 
 - `rashba_spins` with `alpha = 0` returned spins along `z`, although
   its documentation promises in-plane spins. With `alpha = 0` the two
@@ -718,20 +878,31 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   computed. They need cited screening and roughness parameters for
   each structure, and this package ships no number it cannot source;
   it gives the density-of-states and velocity ingredients instead.
-- The Poisson step uses one permittivity for the whole structure, not
-  a profile that changes with position.
-- The filling inside both self-consistent loops
-  (`solve_self_consistent` and `solve_self_consistent_hetero`) treats
-  every state as a parabola, with one mass taken from a single small
-  momentum step (0.02 nm^-1) away from `k = 0`. In a lopsided
-  (asymmetric) well the two states of a Kramers pair split apart in
-  proportion to the momentum, and this one step then gives them
-  different masses, sometimes `inf`, and so different numbers of
-  holes, although by symmetry they should hold the same number. The
-  total per pair depends on that step too, and a parabola ignores how
-  the mass changes with momentum. For occupations you rely on, fill the full
-  dispersion with `fill_subbands_kgrid` at the converged potential
-  (example 2).
+- The default filling of both self-consistent loops is still the
+  parabolic one, kept so that earlier results do not change. It treats
+  every state as a parabola with one mass taken from a single small
+  momentum step (0.02 nm^-1) away from `k = 0`, which in a lopsided
+  well gives the two states of a Kramers pair different masses
+  (sometimes `inf`) and different numbers of holes (example 2). Use
+  `filling="kgrid"` (example 8) for occupations you rely on; it costs
+  `nk` extra solutions per iteration.
+- With `filling="kgrid"` the states are labelled by their energy order
+  at each momentum, so where two subbands cross, the holes of the two
+  labels are shared out by that order. The totals and the density do
+  not depend on the labels.
+- In the finite-barrier loop the fixed negative charge is one sheet at
+  `sheet_z`, and by default (for backward compatibility) it sits at the
+  first grid point. If your grid starts inside a barrier, pass the
+  interface position, or the full sheet field lies across the barrier
+  (example 9).
+- A permittivity profile changes only the electrostatics (Gauss's
+  law). Image-charge effects of a permittivity step on the holes are
+  not included. No permittivity is shipped for AlN.
+- Every solve builds and diagonalizes a dense matrix of size 6 N, so
+  the time grows as N^3. On one core of a shared, loaded test machine
+  one GaN solve took about 0.25 s at 97 points, 11 s at 301 points and
+  100 s at 601 points (times vary with the machine); loops and
+  momentum grids multiply that.
 - The Rashba term is for the conduction-band companion problem. The
   valence-band k-linear terms beyond the six-band Chuang-Chang model
   are not included: no vetted coefficients in our sources.
