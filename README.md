@@ -346,7 +346,11 @@ from a measured line in closed form: `sheet_density_from_shift` is the
 exact inverse of `depolarization_shift`, not a fit. With solver states
 (`solve_subbands`, `solve_heterostructure`) pass one state's `(6, N)`
 envelope; note that the two members of a Kramers pair are not unique,
-so pick states that are not degenerate with each other. Use states at
+so pick states that are not degenerate with each other. Which member
+of a pair the solver returns first can differ between computers, and
+S can differ with it: for HH1 -> HH2 of a tilted 6 nm GaN well, one
+HH2 member gives 0.10378 nm and the other 0. S summed over the two
+members of the upper pair is the same on every computer. Use states at
 zero in-plane momentum, where the solver's states are real. The
 result does not depend on the arbitrary phase of either state (since
 version 0.13.0; see [Corrections](#corrections-in-earlier-versions)).

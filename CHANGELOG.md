@@ -75,10 +75,10 @@ before do not change.
   equally valid eigenvector) changed S. For the two states of README
   example 5, S = 0.4503 nm and alpha = 2.311, but S = 0 and alpha = 0
   with i on the second state; for HH1 -> HH2 of a tilted 6 nm GaN
-  well at k = 0, 0.10378 nm and 0. It now uses
-  S = int dz |int^z lambda|^2, identical bit for bit for real states
-  and independent of either phase (both cases now give 0.4503 and
-  0.10378 nm). Tests:
+  well at k = 0 (S summed over the HH2 Kramers pair), 0.10378 nm and
+  0. It now uses S = int dz |int^z lambda|^2, identical bit for bit
+  for real states and independent of either phase (both cases now
+  give 0.4503 and 0.10378 nm). Tests:
   `test_geometry_integral_does_not_depend_on_eigenvector_phase`,
   `test_geometry_integral_phase_invariance_on_solver_states`.
 - **The self-consistent loops silently dropped the holes of occupied
