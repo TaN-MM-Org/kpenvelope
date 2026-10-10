@@ -78,11 +78,14 @@ def demo_single_band(A: float = -2.0) -> WurtziteParameters:
 def gan_rinke2008() -> WurtziteParameters:
     """GaN valence parameters of Rinke et al., Phys. Rev. B 77, 075202 (2008).
 
-    A1..A6 and the crystal-field splitting Delta_CR = 10 meV and spin-orbit
-    splitting Delta_SO = 17 meV are the consistent GW-based set of Rinke
-    et al., as tabulated in Extended Data Table 1 of Chang et al., Nature
-    Electronics 9, 346 (2026), and as used in the self-consistent analysis
-    of Mahim, Mohsin and Rahman (gan-2dhg-masses-lifetimes). The isotropic
+    A1..A6 are the GW-based set of Rinke et al. (their Table V). The
+    crystal-field splitting Delta_CR = 10 meV and spin-orbit splitting
+    Delta_SO = 17 meV are the values tabulated with them in Extended Data
+    Table 1 of Chang et al., Nature Electronics 9, 346 (2026); they are
+    not Rinke's own computed splittings (Rinke et al. compute Delta_CR =
+    34 meV and adopt 10 meV from Rodina et al. for their hole masses).
+    The whole set is as used in the self-consistent analysis of Mahim,
+    Mohsin and Rahman (gan-2dhg-masses-lifetimes). The isotropic
     quasi-cubic convention delta2 = delta3 = Delta_SO / 3 is applied.
 
     With these numbers the k = 0 splittings of the six-band Hamiltonian
@@ -104,10 +107,10 @@ def gan_rinke2008() -> WurtziteParameters:
         delta3=0.017 / 3.0,
         eps_r=10.4,
         reference=(
-            "A1-A6, Delta_CR = 0.010 eV, Delta_SO = 0.017 eV: P. Rinke "
-            "et al., Phys. Rev. B 77, 075202 (2008), as tabulated in "
-            "Extended Data Table 1 of C. F. C. Chang et al., Nature "
-            "Electronics 9, 346 (2026) and used in T. M. Mahim, "
+            "A1-A6: P. Rinke et al., Phys. Rev. B 77, 075202 (2008), "
+            "Table V; with Delta_CR = 0.010 eV and Delta_SO = 0.017 eV as "
+            "tabulated in Extended Data Table 1 of C. F. C. Chang et al., "
+            "Nature Electronics 9, 346 (2026); all as used in T. M. Mahim, "
             "A. S. M. Mohsin and M. M. Rahman (under review; code: "
             "github.com/Tanvir-Mahmud-Mahim/gan-2dhg-masses-lifetimes, "
             "doi:10.5281/zenodo.21798022). delta2 = delta3 = Delta_SO/3. "
