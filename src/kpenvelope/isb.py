@@ -13,10 +13,13 @@ form the shifted energy is
 
     E_tilde = E_ij sqrt(1 + alpha),
     alpha   = 2 e^2 n_s S / (eps0 eps_r E_ij),
-    S       = integral dz [ integral_{-inf}^{z} lambda(z') dz' ]^2,
+    S       = integral dz | integral_{-inf}^{z} lambda(z') dz' |^2,
 
 with lambda(z) the spinor-summed overlap density of the two envelope
-states and n_s the sheet density in the lower subband. S carries the
+states and n_s the sheet density in the lower subband (for real
+envelopes the modulus squared is the plain square of the textbook
+form; the modulus, new in v0.13.0, makes S independent of each
+eigenvector's arbitrary phase). S carries the
 whole geometry; no effective mass enters this form. The final-state
 (excitonic) correction beta is deliberately omitted, stated rather
 than hidden: it requires an exchange-correlation model this package
@@ -44,24 +47,46 @@ __all__ = ["overlap_geometry_integral", "depolarization_shift",
            "isb_lineshape"]
 
 
-def overlap_geometry_integral(z, env_i, env_j):
+def overlap_geometry_integral(z, env_i, env_j) -> float:
     """The depolarization geometry integral S (nm):
-    S = int dz [ int_{-inf}^{z} lambda ]^2 with
-    lambda(z) = sum_m Re[F_m^i(z)* F_m^j(z)] the spinor-summed
-    overlap density on the solver's own grid."""
+    S = int dz | int_{-inf}^{z} lambda |^2 with
+    lambda(z) = sum_m F_m^i(z)* F_m^j(z) the spinor-summed
+    overlap (transition) density on the solver's own grid.
+
+    For real envelopes this is the textbook
+    S = int dz [ int_{-inf}^{z} psi_i psi_j ]^2, bit for bit. The
+    modulus makes S independent of the arbitrary global phase of each
+    eigenvector, as a measurable shift must be. Before v0.13.0 the real
+    part Re[F^i* F^j] was used instead, so multiplying one state by a
+    phase factor (an equally valid eigenvector) changed S: by i turned
+    S, and with it the shift, into exactly 0.
+
+    The standard form was written for real envelope functions, and it
+    applies unchanged to a transition density with one phase along z,
+    as for the solver's states at k_t = 0 (they are real). A density
+    whose phase varies along z (states at finite in-plane momentum can
+    have one) is outside what this form is checked for here; use
+    k_t = 0 states.
+    """
     z = np.asarray(z, dtype=float)
     a = np.asarray(env_i)
     b = np.asarray(env_j)
     if a.shape != b.shape or a.ndim != 2 or a.shape[1] != z.size:
         raise ValueError("envelopes must both be (n_components, N) on "
                          "the given grid")
+    if z.size < 2:
+        raise ValueError("z must have at least two grid points")
     dz = z[1] - z[0]
-    lam = np.real(np.conj(a) * b).sum(axis=0)
+    lam = (np.conj(a) * b).sum(axis=0)
+    if np.iscomplexobj(lam):
+        inner = np.cumsum(lam) * dz
+        return float((np.abs(inner) ** 2).sum() * dz)
     inner = np.cumsum(lam) * dz
     return float((inner ** 2).sum() * dz)
 
 
-def depolarization_shift(z, env_i, env_j, e_i, e_j, n_sheet, eps_r):
+def depolarization_shift(z, env_i, env_j, e_i, e_j, n_sheet: float,
+                         eps_r: float) -> dict:
     """Depolarization-shifted intersubband energy (eV).
 
     z : uniform grid (nm). env_i, env_j : (6, N) envelope spinors of

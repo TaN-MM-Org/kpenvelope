@@ -25,15 +25,17 @@ from .selfconsistent import (KB_EV_PER_K, fill_subbands_kgrid,
                              solve_self_consistent_hetero,
                              SelfConsistentResult)
 from .strain import strain_blocks
-from .units import sheet_density_from_cm2, sheet_density_to_cm2
-from .lab import (fit_band_offset, offset_sensitivity,
-                  sheet_density_from_shift)
+from .units import (energy_from_wavenumber, energy_to_wavenumber,
+                    sheet_density_from_cm2, sheet_density_to_cm2)
+from .lab import (fit_band_offset, fit_sdh_mass, lk_thermal_factor,
+                  offset_sensitivity, sdh_frequency,
+                  sheet_density_from_sdh, sheet_density_from_shift)
 from .rashba import (rashba_hamiltonian, rashba_spins,
                      rashba_splitting)
 from .isb import (depolarization_shift, isb_lineshape,
                   overlap_geometry_integral)
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -50,5 +52,7 @@ __all__ = [
     "solve_self_consistent", "SelfConsistentResult", "HBAR2_OVER_2M0",
     "fit_band_offset", "offset_sensitivity",
     "sheet_density_from_shift",
+    "sheet_density_from_sdh", "sdh_frequency", "fit_sdh_mass",
+    "lk_thermal_factor", "energy_from_wavenumber", "energy_to_wavenumber",
     "rashba_hamiltonian", "rashba_splitting", "rashba_spins",
 ]

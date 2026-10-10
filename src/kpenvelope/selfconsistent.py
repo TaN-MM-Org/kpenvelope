@@ -29,6 +29,7 @@ the step-like occupation was used, which is only first order at T = 0.
 from __future__ import annotations
 
 import dataclasses
+import warnings
 
 import numpy as np
 
@@ -57,6 +58,10 @@ class SelfConsistentResult:
     converged: bool = True         # residual < tol at exit (new in v0.8)
     filling: str = "parabolic"     # "parabolic" or "kgrid" (new in v0.12)
     fermi_level: float = float("nan")  # eV; kgrid filling only (v0.12)
+    # False when the first state below the n_states computed ones lies
+    # above the Fermi level, so its holes are missing (new in v0.13;
+    # a RuntimeWarning is issued too)
+    n_states_sufficient: bool = True
 
 
 def _masses_from_step(energies0, e_k, dk=_DK):
@@ -79,14 +84,48 @@ def _inplane_masses(p, z, potential, energies0, n_states, dk=_DK):
     return _masses_from_step(energies0[:n_states], e_k[:n_states], dk)
 
 
-def _fill_subbands(energies, masses, ps):
-    """T = 0 filling of hole subbands with parabolic in-plane dispersion.
+def _check_ps(ps):
+    """A sheet density must be a finite number >= 0 (nm^-2). Before
+    v0.13.0 a negative one was filled without complaint
+    (`fill_subbands_thermal` returned [-0.1, -0] for ps = -0.1)."""
+    v = float(ps)
+    if not (np.isfinite(v) and v >= 0.0):
+        raise ValueError(
+            f"ps must be a finite sheet density >= 0 in nm^-2 "
+            f"(1e13 cm^-2 = 0.1 nm^-2); got {ps!r}")
+    return v
 
-    Holes fill from the highest valence energy downward. Each state is a
-    single spin-resolved branch with 2D DOS m/(2 pi hbar^2) = m/(m0) /
-    (4 pi (hbar^2/2m0)). Solves for E_F by bisection so occupations sum
-    to ps. Returns per-subband sheet densities (nm^-2).
-    """
+
+def _check_fill_inputs(energies, masses, ps, strict=True):
+    energies = np.asarray(energies, dtype=float)
+    masses = np.asarray(masses, dtype=float)
+    if energies.ndim != 1 or energies.size < 1:
+        raise ValueError("energies must be a 1D array of subband edges")
+    if masses.shape != energies.shape:
+        raise ValueError(
+            f"one mass per subband edge required: energies has shape "
+            f"{energies.shape}, masses {masses.shape}")
+    if not np.all(np.isfinite(energies)):
+        raise ValueError("energies must be finite")
+    ps = _check_ps(ps)
+    dos = (masses / HBAR2_OVER_2M0) / (4.0 * np.pi)
+    if strict and ps > 0.0 and not np.any(np.isfinite(dos) & (dos > 0.0)):
+        # before v0.13.0: all-zero occupations, a total of 0 instead of ps
+        raise ValueError(
+            "no subband has a finite positive mass, so none can hold "
+            f"holes and the requested ps = {ps!r} nm^-2 cannot be "
+            "placed. With the parabolic filling this happens when every "
+            "computed state rises over the 0.02 nm^-1 mass step (mass "
+            "inf): compute more states, or use filling=\"kgrid\"")
+    return energies, masses, ps
+
+
+def _fill_subbands_ef(energies, masses, ps, strict=False):
+    """`_fill_subbands` that also returns the Fermi level it found.
+    strict=True (the public filler) refuses a ps that does not fit;
+    inside the self-consistent loops (strict=False) the historical
+    behavior is kept, because a far-from-converged iteration can pass
+    through such states and recover."""
     dos = (masses / HBAR2_OVER_2M0) / (4.0 * np.pi)   # states nm^-2 eV^-1
     finite = np.isfinite(dos)
     dos_f = np.where(finite, dos, 0.0)
@@ -95,6 +134,12 @@ def _fill_subbands(energies, masses, ps):
         return (dos_f * np.clip(energies - ef, 0.0, None)).sum()
 
     lo, hi = energies.min() - 5.0, energies.max()
+    if strict and total(lo) < ps:
+        raise ValueError(
+            f"ps = {ps!r} nm^-2 does not fit into these subbands within "
+            "5 eV of their edges; the sheet density is unphysically "
+            "large for the model (check the units: 1e13 cm^-2 = "
+            "0.1 nm^-2)")
     for _ in range(200):
         mid = 0.5 * (lo + hi)
         if total(mid) > ps:
@@ -105,10 +150,22 @@ def _fill_subbands(energies, masses, ps):
     occ = dos_f * np.clip(energies - ef, 0.0, None)
     if occ.sum() > 0:
         occ = occ * (ps / occ.sum())      # exact neutrality after bisection
-    return occ
+    return occ, ef
 
 
-def fill_subbands_thermal(energies, masses, ps, temperature_K):
+def _fill_subbands(energies, masses, ps):
+    """T = 0 filling of hole subbands with parabolic in-plane dispersion.
+
+    Holes fill from the highest valence energy downward. Each state is a
+    single spin-resolved branch with 2D DOS m/(2 pi hbar^2) = m/(m0) /
+    (4 pi (hbar^2/2m0)). Solves for E_F by bisection so occupations sum
+    to ps. Returns per-subband sheet densities (nm^-2).
+    """
+    return _fill_subbands_ef(energies, masses, ps)[0]
+
+
+def fill_subbands_thermal(energies, masses, ps,
+                          temperature_K: float) -> np.ndarray:
     """Fermi-Dirac filling of parabolic hole subbands at temperature T.
 
     For a 2D parabolic subband the sheet density is available in closed
@@ -124,15 +181,31 @@ def fill_subbands_thermal(energies, masses, ps, temperature_K):
         excluded, as in the T = 0 filler.
     ps : total sheet density (nm^-2).  temperature_K : kelvin, >= 0.
 
+    Only the subbands passed in are filled: if the Fermi level found
+    lies below a subband you did not pass, that subband's holes are
+    missing from the result. The self-consistent loops check this for
+    you (they warn and set ``n_states_sufficient``, new in v0.13.0).
+
+    Refuses (new in v0.13.0) a negative or non-finite ps, energies and
+    masses of different shapes, and a positive ps when no subband has a
+    finite positive mass (before, that returned all zeros, so the
+    occupations did not add up to ps).
+
     Returns per-subband sheet densities (nm^-2).
     """
+    return _fill_thermal_ef(energies, masses, ps, temperature_K,
+                            strict=True)[0]
+
+
+def _fill_thermal_ef(energies, masses, ps, temperature_K, strict=False):
+    """`fill_subbands_thermal` that also returns the Fermi level.
+    strict as in `_fill_subbands_ef`."""
     T = float(temperature_K)
     if not (T >= 0.0) or not np.isfinite(T):
         raise ValueError("temperature_K must be finite and >= 0")
-    energies = np.asarray(energies, dtype=float)
-    masses = np.asarray(masses, dtype=float)
+    energies, masses, ps = _check_fill_inputs(energies, masses, ps, strict)
     if T == 0.0:
-        return _fill_subbands(energies, masses, ps)
+        return _fill_subbands_ef(energies, masses, ps, strict)
     kT = KB_EV_PER_K * T
     dos = (masses / HBAR2_OVER_2M0) / (4.0 * np.pi)
     finite = np.isfinite(dos)
@@ -146,16 +219,23 @@ def fill_subbands_thermal(energies, masses, ps, temperature_K):
 
     lo = energies.min() - 5.0 - 40.0 * kT
     hi = energies.max() + 40.0 * kT
+    if strict and occ_of(lo).sum() < ps:
+        raise ValueError(
+            f"ps = {ps!r} nm^-2 does not fit into these subbands within "
+            "5 eV of their edges; the sheet density is unphysically "
+            "large for the model (check the units: 1e13 cm^-2 = "
+            "0.1 nm^-2)")
     for _ in range(200):
         mid = 0.5 * (lo + hi)
         if occ_of(mid).sum() > ps:
             lo = mid
         else:
             hi = mid
-    occ = occ_of(0.5 * (lo + hi))
+    ef = 0.5 * (lo + hi)
+    occ = occ_of(ef)
     if occ.sum() > 0:
         occ = occ * (ps / occ.sum())
-    return occ
+    return occ, ef
 
 
 # --------------------------------------------------------------------
@@ -256,8 +336,9 @@ def _polar_grid(kmax, nk, ntheta):
     return kts, thetas
 
 
-def fill_subbands_kgrid(solve_at_k, ps, n_states, kmax, nk=16, ntheta=4,
-                        temperature_K=0.0):
+def fill_subbands_kgrid(solve_at_k, ps: float, n_states: int, kmax: float,
+                        nk: int = 16, ntheta: int = 4,
+                        temperature_K: float = 0.0) -> tuple:
     """Subband filling from the full in-plane dispersion -- no
     parabolic assumption -- at T = 0 or finite temperature.
 
@@ -293,13 +374,49 @@ def fill_subbands_kgrid(solve_at_k, ps, n_states, kmax, nk=16, ntheta=4,
     """
     T = _check_temperature(temperature_K)
     kts, thetas = _polar_grid(kmax, nk, ntheta)
+    ps = _check_ps(ps)
+    n = int(n_states)
+    if n != n_states or n < 1:
+        raise ValueError(f"n_states must be a positive integer; got "
+                         f"{n_states!r}")
     E = np.empty((n_states, kts.size, thetas.size))
+    e_next = None
     for i, kt in enumerate(kts):
         for j, th in enumerate(thetas):
-            e = solve_at_k(kt * np.cos(th), kt * np.sin(th))
+            e = np.asarray(solve_at_k(kt * np.cos(th), kt * np.sin(th)),
+                           dtype=float)
+            if e.ndim != 1 or e.size < n_states:
+                raise ValueError(
+                    f"solve_at_k must return at least n_states = "
+                    f"{n_states} energies; got shape {e.shape}")
+            if i == 0 and j == 0 and e.size > n_states:
+                e_next = float(e[n_states])
             E[:, i, j] = e[:n_states]
     w, ef = _kgrid_fill(E, kts, ps, T)
+    if e_next is not None and _next_state_occupied(e_next, ef, T):
+        _warn_truncated(n_states, e_next, ef, stacklevel=3)
     return w.sum(axis=(1, 2)), ef
+
+
+def _next_state_occupied(e_next, ef, T):
+    """Would the first state below the computed ones hold holes? At
+    T = 0 when its edge lies above E_F; at T > 0 when its hole factor
+    at the edge exceeds 1e-4 (the threshold of the k-grid edge check)."""
+    if not np.isfinite(ef):
+        return False
+    return bool(_hole_factor(np.asarray(e_next), ef, T) > 1e-4) \
+        if T > 0.0 else bool(e_next > ef)
+
+
+def _warn_truncated(n_states, e_next, ef, stacklevel):
+    warnings.warn(
+        f"only n_states = {n_states} states were filled, but state "
+        f"{n_states} (counting from 0; edge {e_next:.6g} eV) lies above "
+        f"the Fermi level {ef:.6g} eV and would hold holes too: the "
+        "occupations and the hole density leave its holes out. "
+        "Increase n_states (by an even number, so Kramers pairs stay "
+        "whole) until this warning disappears.",
+        RuntimeWarning, stacklevel=stacklevel)
 
 
 # --------------------------------------------------------------------
@@ -344,11 +461,13 @@ def _parabolic_state(solve, z, vh, ps, n_states, T):
     energies, envelopes = solve(vh, 0.0, 0.0)
     e_k, _ = solve(vh, _DK, 0.0)
     masses = _masses_from_step(energies, e_k)
-    occ = fill_subbands_thermal(energies, masses, ps, T)
+    occ, ef = _fill_thermal_ef(energies, masses, ps, T)
     density = np.zeros_like(z)
     for i in range(n_states):
         density += occ[i] * (np.abs(envelopes[i]) ** 2).sum(axis=0)
-    return energies, envelopes, masses, occ, density, float("nan")
+    # the reported fermi_level stays NaN for this filling (as before);
+    # the internal one is used for the n_states check only
+    return energies, envelopes, masses, occ, density, float("nan"), ef
 
 
 def _kgrid_state(solve, z, vh, ps, n_states, T, grid):
@@ -374,7 +493,22 @@ def _kgrid_state(solve, z, vh, ps, n_states, T, grid):
     density = np.einsum("nij,nijz->z", w, P)
     e_k, _ = solve(vh, _DK, 0.0)
     masses = _masses_from_step(energies, e_k)
-    return energies, envelopes, masses, occ, density, float(ef)
+    return energies, envelopes, masses, occ, density, float(ef), float(ef)
+
+
+def _check_loop_inputs(ps, mixing, tol):
+    """Checks shared by both self-consistent loops (new in v0.13.0)."""
+    ps = _check_ps(ps)
+    m = float(mixing)
+    if not (np.isfinite(m) and m > 0.0):
+        raise ValueError(f"mixing must be a finite number > 0 (the "
+                         f"fraction of the new density taken each "
+                         f"iteration, e.g. 0.3); got {mixing!r}")
+    t = float(tol)
+    if not (np.isfinite(t) and t > 0.0):
+        raise ValueError(f"tol must be a finite number > 0 (eV); got "
+                         f"{tol!r}")
+    return ps
 
 
 def _loop(solve, z, ps, eps_r, n_states, mixing, tol, max_iter, T,
@@ -397,19 +531,36 @@ def _loop(solve, z, ps, eps_r, n_states, mixing, tol, max_iter, T,
         if residual < tol:
             break
     # final consistent (unmixed) state at the converged potential
-    energies, envelopes, masses, occ, density, ef = state(vh)
+    energies, envelopes, masses, occ, density, ef, ef_check = state(vh)
+    if ps > 0.0 and not occ.sum() > 0.0:
+        warnings.warn(
+            "no computed state holds any holes at the final potential "
+            "(with the parabolic filling: every state has an infinite "
+            "step mass), so the occupations do not add up to ps; "
+            "increase n_states or use filling=\"kgrid\"",
+            RuntimeWarning, stacklevel=3)
+    # is the first state below the computed ones occupied? (v0.13.0)
+    sufficient = True
+    if n_states < 6 * z.size:
+        e_next = float(solve(vh, 0.0, 0.0, n_states + 1)[0][n_states])
+        if _next_state_occupied(e_next, ef_check, T):
+            sufficient = False
+            _warn_truncated(n_states, e_next, ef_check, stacklevel=4)
     return SelfConsistentResult(z=z, potential=vh, energies=energies,
                                 envelopes=envelopes, density=density,
                                 occupations=occ, masses=masses,
                                 iterations=it, residual=residual,
                                 converged=bool(residual < tol),
-                                filling=filling, fermi_level=ef)
+                                filling=filling, fermi_level=ef,
+                                n_states_sufficient=sufficient)
 
 
-def solve_self_consistent(p, z, ps, n_states=6, mixing=0.3, tol=1e-5,
-                          max_iter=80, temperature_K=0.0,
-                          filling="parabolic", kmax=None, nk=24,
-                          ntheta=None):
+def solve_self_consistent(p, z, ps: float, n_states: int = 6,
+                          mixing: float = 0.3, tol: float = 1e-5,
+                          max_iter: int = 80, temperature_K: float = 0.0,
+                          filling: str = "parabolic", kmax=None,
+                          nk: int = 24,
+                          ntheta=None) -> SelfConsistentResult:
     """Iterate k.p and Poisson to self-consistency at sheet density ps.
 
     p : WurtziteParameters.  z : uniform grid from the interface (nm).
@@ -427,13 +578,26 @@ def solve_self_consistent(p, z, ps, n_states=6, mixing=0.3, tol=1e-5,
         the unstrained subbands depend only on |k_t|. The result then
         also carries ``fermi_level``.
 
+    n_states : number of states (spin-resolved, so Kramers pairs count
+        twice) that are solved for and filled. It must reach every
+        occupied subband. Since v0.13.0 the loop checks this at the
+        converged potential: if the first state below the computed ones
+        lies above the Fermi level (T = 0), or has a hole factor above
+        1e-4 at its edge (T > 0), its holes are missing from the
+        occupations and the density, so a RuntimeWarning is issued and
+        ``n_states_sufficient`` is False. Increase n_states then.
+
     Returns SelfConsistentResult; its `converged` flag records whether
     the residual dropped below tol within max_iter iterations. The
     `masses` field is always the one-step edge mass, whatever the
     filling.
+
+    Refuses (new in v0.13.0) a negative or non-finite ps, a mixing or
+    tol that is not a finite number above 0.
     """
     if int(max_iter) < 1:
         raise ValueError("max_iter must be at least 1")
+    ps = _check_loop_inputs(ps, mixing, tol)
     if not (p.eps_r == p.eps_r):   # NaN check without importing math
         raise ValueError(
             "this parameter set carries no vetted permittivity (eps_r is "
@@ -444,20 +608,22 @@ def solve_self_consistent(p, z, ps, n_states=6, mixing=0.3, tol=1e-5,
     grid = _check_filling(filling, kmax, nk, ntheta, None)
     z = np.asarray(z, dtype=float)
 
-    def solve(vh, kx, ky):
+    def solve(vh, kx, ky, n=n_states):
         return solve_subbands(p, z, kx=kx, ky=ky, potential=vh,
-                              n_states=n_states)
+                              n_states=n)
 
     return _loop(solve, z, ps, p.eps_r, n_states, mixing, tol,
                  int(max_iter), T, filling, grid, None)
 
 
-def solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
-                                 n_states=6, mixing=0.3, tol=1e-5,
-                                 max_iter=80, strain_list=None,
-                                 temperature_K=0.0, filling="parabolic",
-                                 kmax=None, nk=24, ntheta=None,
-                                 sheet_z=None):
+def solve_self_consistent_hetero(z, params_list, band_edge, ps: float,
+                                 eps_r, n_states: int = 6,
+                                 mixing: float = 0.3, tol: float = 1e-5,
+                                 max_iter: int = 80, strain_list=None,
+                                 temperature_K: float = 0.0,
+                                 filling: str = "parabolic", kmax=None,
+                                 nk: int = 24, ntheta=None,
+                                 sheet_z=None) -> SelfConsistentResult:
     """Self-consistent k.p + Poisson loop on the *finite-barrier*
     heterostructure assembly -- the hard-wall restriction of
     `solve_self_consistent`, lifted.
@@ -480,6 +646,10 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
         at that interface: if the grid starts inside a barrier, the
         default puts the full sheet field across that barrier.
 
+    n_states : as in `solve_self_consistent`, including the v0.13.0
+        check that it reaches every occupied subband (RuntimeWarning
+        and ``n_states_sufficient`` False otherwise).
+
     Anchors in the tests: a uniform stack with zero offset reproduces
     the hard-wall solver's self-consistent state (the assemblies are
     identical there, asserted at machine precision elsewhere), the
@@ -489,6 +659,7 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
     from .heterostructure import solve_heterostructure
     if int(max_iter) < 1:
         raise ValueError("max_iter must be at least 1")
+    ps = _check_loop_inputs(ps, mixing, tol)
     z = np.asarray(z, dtype=float)
     if np.ndim(eps_r) == 0 and not (eps_r == eps_r):
         raise ValueError("eps_r is NaN; supply a cited permittivity")
@@ -496,9 +667,9 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps, eps_r,
     T = _check_temperature(temperature_K)
     grid = _check_filling(filling, kmax, nk, ntheta, strain_list)
 
-    def solve(vh, kx, ky):
+    def solve(vh, kx, ky, n=n_states):
         return solve_heterostructure(z, params_list, band_edge, kx, ky,
-                                     potential=vh, n_states=n_states,
+                                     potential=vh, n_states=n,
                                      strain_list=strain_list)
 
     return _loop(solve, z, ps, eps_r, n_states, mixing, tol,

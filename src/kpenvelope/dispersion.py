@@ -120,7 +120,7 @@ def group_velocity(kts, energies):
     return np.gradient(E, kts, axis=0, edge_order=2)
 
 
-def dos_from_dispersion(kts, energies, e_grid):
+def dos_from_dispersion(kts, energies, e_grid) -> np.ndarray:
     """Two-dimensional density of states of isotropic, monotone
     subband dispersions (states nm^-2 eV^-1 per spin-resolved branch).
 
@@ -133,11 +133,31 @@ def dos_from_dispersion(kts, energies, e_grid):
     Exactly (1/|A|)/(4 pi hbar^2/2m0) for the parabolic demo set,
     asserted in the tests.
 
+    Energies below the end of the path (below E_n(kts[-1])) are outside
+    what the path describes, so the result there is NaN, as it is at a
+    grid point whose difference stencil reaches such an energy (new in
+    v0.13.0). Before, the occupied area was held at its value at
+    kts[-1], which returned a DOS of exactly 0 there: a plausible
+    looking gap where the band in fact continues. Above the subband
+    edge the DOS is 0, correctly.
+
     Returns shape (len(e_grid), n_states).
     """
     kts = np.asarray(kts, dtype=float)
     E = np.asarray(energies, dtype=float)
     e_grid = np.asarray(e_grid, dtype=float)
+    if kts.ndim != 1 or kts.size < 2:
+        raise ValueError("kts must be a 1D array of at least two points")
+    if np.any(np.diff(kts) <= 0.0) or kts[0] < 0.0:
+        raise ValueError("kts must be non-negative and strictly "
+                         "increasing")
+    if E.ndim != 2 or E.shape[0] != kts.size:
+        raise ValueError(
+            f"energies must have shape (len(kts), n_states) = "
+            f"({kts.size}, n), as from subband_dispersion; got {E.shape}")
+    if e_grid.ndim != 1 or e_grid.size < 2:
+        raise ValueError("e_grid must be a 1D array of at least two "
+                         "energies")
     out = np.zeros((e_grid.size, E.shape[1]))
     for n in range(E.shape[1]):
         en = E[:, n]
@@ -148,6 +168,12 @@ def dos_from_dispersion(kts, energies, e_grid):
         kstar = np.interp(-e_grid, -en, kts, left=0.0, right=kts[-1])
         N = kstar ** 2 / (4.0 * np.pi)
         out[:, n] = -np.gradient(N, e_grid)
+        beyond = e_grid < en[-1]
+        if np.any(beyond):
+            reach = beyond.copy()
+            reach[1:] |= beyond[:-1]
+            reach[:-1] |= beyond[1:]
+            out[reach, n] = np.nan
     return out
 
 

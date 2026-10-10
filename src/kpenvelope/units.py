@@ -13,7 +13,10 @@ trip (1.2345e13 cm^-2), each with ==.
 """
 from __future__ import annotations
 
-__all__ = ["sheet_density_from_cm2", "sheet_density_to_cm2"]
+import numpy as np
+
+__all__ = ["sheet_density_from_cm2", "sheet_density_to_cm2",
+           "energy_from_wavenumber", "energy_to_wavenumber"]
 
 
 def sheet_density_from_cm2(ps_cm2):
@@ -24,3 +27,27 @@ def sheet_density_from_cm2(ps_cm2):
 def sheet_density_to_cm2(ps_nm2):
     """Sheet density in cm^-2 from a value in nm^-2 (x 1e14)."""
     return ps_nm2 * 1e14
+
+
+# h c / e in eV m, from the exact 2019 SI values of h, c and e
+_HC_EV_M = 6.62607015e-34 * 299792458.0 / 1.602176634e-19
+
+
+def energy_from_wavenumber(nu_cm1):
+    """Photon energy in eV from a wavenumber in cm^-1 (new in v0.13.0).
+
+    Infrared spectrometers (FTIR) report intersubband lines in cm^-1;
+    the package works in eV. E = h c nu, with h, c and e exact in the
+    2019 SI, so 1000 cm^-1 = 0.12398419843320026 eV. Scalar or array.
+    """
+    nu = np.asarray(nu_cm1, dtype=float)
+    out = nu * (_HC_EV_M * 100.0)
+    return float(out) if out.ndim == 0 else out
+
+
+def energy_to_wavenumber(e_ev):
+    """Wavenumber in cm^-1 of a photon energy in eV (new in v0.13.0);
+    the inverse of `energy_from_wavenumber`."""
+    e = np.asarray(e_ev, dtype=float)
+    out = e / (_HC_EV_M * 100.0)
+    return float(out) if out.ndim == 0 else out

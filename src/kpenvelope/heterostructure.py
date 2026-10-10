@@ -39,7 +39,7 @@ from .hamiltonian import (assemble_hamiltonian, bulk_blocks, check_grid,
                           check_n_states, check_potential)
 
 
-def layered_profile(z, layers):
+def layered_profile(z, layers) -> tuple:
     """Build per-point (params, band_edge) profiles from a layer stack.
 
     layers: sequence of (thickness_nm, params, band_edge_eV) from the
@@ -47,21 +47,42 @@ def layered_profile(z, layers):
     are assigned by their coordinate; the total thickness must cover the
     grid within half a grid spacing.
 
+    A grid point that sits on an interface belongs to the layer on its
+    right. "On" allows for rounding: a point within 1e-9 grid steps of
+    an interface counts as on it (the tolerance `poisson.sheet_mask`
+    uses for the same reason). Before v0.13.0 the comparison was exact,
+    so whenever the running sum of the thicknesses rounded up past the
+    grid point (for example 2.7 + 3.4 = 6.1000000000000005 against the
+    point 6.1), that point went to the left layer instead, and a layer
+    gained or lost one grid point depending on where it sat in the
+    stack.
+
     Returns (params_list, band_edge_array).
     """
     z = check_grid(z)
     dz = z[1] - z[0]
-    total = sum(t for t, _, _ in layers)
+    try:
+        thicknesses = [float(t) for t, _, _ in layers]
+    except (TypeError, ValueError):
+        raise ValueError("layers must be a sequence of (thickness_nm, "
+                         "params, band_edge_eV) triples") from None
+    if not thicknesses:
+        raise ValueError("layers must contain at least one layer")
+    if not all(np.isfinite(t) and t >= 0.0 for t in thicknesses):
+        raise ValueError("every layer thickness must be finite and "
+                         f"not negative (nm); got {thicknesses}")
+    total = sum(thicknesses)
     span = z[-1] - z[0]
     if abs(total - span) > 0.51 * dz:
         raise ValueError(
             f"layer thicknesses sum to {total} nm but the grid spans "
             f"{span} nm; they must agree to within half a grid spacing")
-    edges = np.cumsum([0.0] + [t for t, _, _ in layers]) + z[0]
+    edges = np.cumsum([0.0] + thicknesses) + z[0]
+    tol = 1e-9 * dz
     params_list = []
     band_edge = np.empty(z.size)
     for i, zi in enumerate(z):
-        k = int(np.searchsorted(edges[1:-1], zi, side="right"))
+        k = int(np.searchsorted(edges[1:-1], zi + tol, side="right"))
         params_list.append(layers[k][1])
         band_edge[i] = layers[k][2]
     return params_list, band_edge
