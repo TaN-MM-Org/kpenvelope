@@ -9,7 +9,9 @@ from kpenvelope import demo_single_band, solve_self_consistent
 
 p = demo_single_band()
 z = np.linspace(0.0, 6.0, 120)
-res = solve_self_consistent(p, z, ps=0.046, n_states=4)
+# every demo level is six-fold degenerate, so 6 states hold the whole
+# first level (with 4, kpenvelope 0.13.0 warns that two are missing)
+res = solve_self_consistent(p, z, ps=0.046, n_states=6)
 print(f"converged in {res.iterations} iterations, residual {res.residual:.2e} eV")
 print("subband edges (eV):", np.round(res.energies, 4))
 print("edge masses (m0):", np.round(res.masses, 3))
