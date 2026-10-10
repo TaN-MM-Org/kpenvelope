@@ -738,10 +738,12 @@ No physical number in this package is made up, and none is accepted
 without a source: the `reference` field of `WurtziteParameters` is
 mandatory.
 
-- `gan_rinke2008()`: the GW-based GaN valence set of Rinke et al.,
-  Phys. Rev. B 77, 075202 (2008) (A1..A6, Delta_CR = 10 meV,
-  Delta_SO = 17 meV), as tabulated in Extended Data Table 1 of Chang
-  et al., Nature Electronics 9, 346 (2026). eps_r = 10.4 (field along
+- `gan_rinke2008()`: the GW-based GaN valence parameters A1..A6 of
+  Rinke et al., Phys. Rev. B 77, 075202 (2008), with Delta_CR = 10 meV
+  and Delta_SO = 17 meV, all as tabulated in Extended Data Table 1 of
+  Chang et al., Nature Electronics 9, 346 (2026). The two splittings
+  are not Rinke's own results: Rinke et al. compute a crystal-field
+  splitting of 34 meV and use 10 meV from other work. eps_r = 10.4 (field along
   the c axis) from Barker and Ilegems, Phys. Rev. B 7, 743 (1973).
 - `aln_rinke2008()`: the matching AlN set (Delta_CR = -295 meV from
   Rinke et al.; Delta_SO = 22 meV from de Carvalho et al., Appl.

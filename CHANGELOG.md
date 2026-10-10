@@ -4,6 +4,27 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.13.1 (2026-10-10)
+
+Citation correction and packaging.
+
+### Fixed (documentation)
+
+- `gan_rinke2008`: the crystal-field splitting (10 meV) and spin-orbit
+  splitting (17 meV) were credited to Rinke et al., Phys. Rev. B 77,
+  075202 (2008). Rinke et al. give A1..A6 (their Table V, matched
+  exactly), but compute a crystal-field splitting of 34 meV and take
+  10 meV from other work; 17 meV does not appear there. The docstring,
+  the `reference` string and the README now credit the two splittings
+  to Extended Data Table 1 of Chang et al., Nature Electronics 9, 346
+  (2026), where the whole set is tabulated. The numbers are unchanged.
+- Packaging: the license is now given as the SPDX expression
+  `license = "Apache-2.0"` with `license-files = ["LICENSE"]`, and the
+  old license table and license classifier are gone. Building no longer
+  prints setuptools' deprecation warnings (their support ends on
+  2027-02-18). Building from source now needs setuptools 77 or newer;
+  installing the package is unchanged.
+
 ## 0.13.0 (2026-10-10)
 
 Five silent errors fixed, each with a test that fails on 0.12.0, and
