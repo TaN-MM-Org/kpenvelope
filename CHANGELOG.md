@@ -4,6 +4,144 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.13.0 (2026-10-10)
+
+Five silent errors fixed, each with a test that fails on 0.12.0, and
+tools to read Shubnikov-de Haas (SdH) measurements: the density from
+an oscillation frequency and the cyclotron mass from the temperature
+damping, with honest error bars. Results of calls that were correct
+before do not change.
+
+### Added
+
+- `sheet_density_from_sdh(frequency_T, branches=..., sigma_frequency_T)`
+  and `sdh_frequency(n_sheet, branches=...)`: the Onsager relation
+  F = hbar A / (2 pi e) (L. Onsager, Phil. Mag. 43, 1006 (1952)). One
+  spin-resolved branch holding n holes per area encloses
+  A = 4 pi^2 n, so F = (h/e) n for any contour shape. `branches` (how
+  many spin-resolved branches share the oscillating contour) is a
+  required keyword: a wrong default would be a factor of two.
+  `H_OVER_E_T_NM2` (in `kpenvelope.lab`) is h/e from the exact 2019 SI
+  values. Checked against the Fermi wavevector of exactly parabolic
+  subbands filled by `fill_subbands_kgrid` (relative 1e-9) and against
+  `scipy.constants`.
+- `fit_sdh_mass(temperatures_K, amplitudes, field_T, sigma_amplitudes)`
+  and `lk_thermal_factor`: the cyclotron mass from the
+  Lifshitz-Kosevich factor X / sinh(X),
+  X = 2 pi^2 k_B T m* / (hbar e B) (I. M. Lifshitz and A. M. Kosevich,
+  Sov. Phys. JETP 2, 636 (1956); D. Shoenberg, Magnetic Oscillations in
+  Metals, Cambridge University Press (1984)). Weighted least squares
+  with the amplitude refitted, error bars from the exact Jacobian
+  (absolute with amplitude errors, scaled by the residual scatter
+  without), and a reduced chi-square as a model test. It refuses data
+  that do not fall with temperature, a mass error as large as the
+  mass, and any fit whose chi-square does not rise by 0.7 to 1.3 units
+  at one sigma on either side (the error bar would not be honest).
+  `LK_TESLA_PER_KELVIN` = 14.6932 T/K is computed from the exact k_B,
+  h and e and the package's own hbar^2/2m0. Checked against
+  `scipy.optimize.curve_fit` (values to 1e-7, error bars to 1e-4,
+  weighted and unweighted), against noise-free data (1e-9) and by a
+  400-sample Monte Carlo (the spread of the masses equals the reported
+  error bar to 12 %; mean reduced chi-square 1 to 0.1).
+- `energy_from_wavenumber`, `energy_to_wavenumber`: eV and the cm^-1
+  of infrared spectrometers, with h c / e from the exact SI values
+  (1000 cm^-1 = 0.12398419843320026 eV, checked against
+  `scipy.constants`).
+- `SelfConsistentResult.n_states_sufficient` (see Fixed).
+- README example 11 (SdH density, mass and predicted frequencies);
+  example 5 also prints the line in cm^-1.
+
+### Fixed
+
+- **`layered_profile` put interface points into the wrong layer when
+  the thicknesses did not add up exactly in floating point.** A point
+  on an interface belongs to the layer on its right, but the test was
+  an exact comparison with the running sum of thicknesses, and
+  2.7 + 3.4 = 6.1000000000000005 lies above the grid point 6.1. In a
+  sweep of 32 three-layer stacks on a 0.1 nm grid, 10 grid points were
+  in the wrong layer. A 3.4 nm GaN well between AlN barriers
+  (offset -0.5 eV, 95 points over 9.4 nm) had 34 points and a top
+  level of 1.978 meV when it started at 2.0 nm, but 33 points and
+  1.234 meV when it started at 2.7 nm. Points within 1e-9 grid steps
+  of an interface now count as on it (the tolerance
+  `poisson.sheet_mask` already used): 34 points and 1.978 meV in both
+  places. Grids whose interfaces were assigned correctly are
+  unchanged (README examples 6 and 9 and every existing test).
+  Tests: `test_layered_profile_matches_exact_assignment`,
+  `test_translated_well_has_the_same_levels`.
+- **The depolarization geometry integral depended on the arbitrary
+  phase of an eigenvector.** `overlap_geometry_integral` took the real
+  part of the transition density, so multiplying one state by i (an
+  equally valid eigenvector) changed S. For the two states of README
+  example 5, S = 0.4503 nm and alpha = 2.311, but S = 0 and alpha = 0
+  with i on the second state; for HH1 -> HH2 of a tilted 6 nm GaN
+  well at k = 0, 0.10378 nm and 0. It now uses
+  S = int dz |int^z lambda|^2, identical bit for bit for real states
+  and independent of either phase (both cases now give 0.4503 and
+  0.10378 nm). Tests:
+  `test_geometry_integral_does_not_depend_on_eigenvector_phase`,
+  `test_geometry_integral_phase_invariance_on_solver_states`.
+- **The self-consistent loops silently dropped the holes of occupied
+  states beyond `n_states`.** Only the computed states were filled,
+  with no check that the next state down lay below the Fermi level.
+  README example 2 (GaN, 4.6e13 cm^-2, hard walls, `n_states=4`)
+  ended with its parabolic Fermi level at -606.5 meV, below the edge
+  of the uncomputed third pair at -458.9 meV. With 8 states, 0.79e13
+  of the 4.6e13 cm^-2 sit in the third and fourth pairs and the gas
+  center moves from 0.62 to 0.76 nm. On a synthetic demo well with
+  two filled six-fold levels (eps_r = 1000, 0.6 nm^-2), 6 states gave
+  0.1 nm^-2 per state where 12 give 0.0779 and 0.0221. Both loops now
+  check the next state at the converged potential (above the Fermi
+  level at T = 0; hole factor above 1e-4 at T > 0, the threshold of
+  the k-grid edge check), issue a `RuntimeWarning` naming the fix, and
+  set `n_states_sufficient = False`. `fill_subbands_kgrid` does the
+  same when `solve_at_k` returns more energies than it fills. The
+  returned numbers are unchanged. README examples 2 and 9 now use 8
+  and 12 states, and `examples/demo_well.py` 6 instead of 4 (its
+  levels are six-fold, so 4 states put 0.0115 nm^-2 into each of 4
+  states instead of 0.0077 into each of 6). Tests:
+  `test_loop_warns_when_occupied_states_were_not_computed`,
+  `test_loop_warns_with_kgrid_filling_too`,
+  `test_gan_hard_wall_example_needs_more_than_four_states`,
+  `test_fill_kgrid_warns_when_given_more_energies_than_it_fills`.
+- **`fill_subbands_thermal` returned occupations that did not add up
+  to `ps`.** With no finite mass it returned [0, 0] for 0.1 nm^-2
+  (T = 0 and 77 K); for ps = -0.1 it returned [-0.1, -0]; and for a
+  ps whose Fermi level lies more than 5 eV down (1e3 nm^-2 in the
+  test) the bisection stopped at its bound and the rescaling to ps
+  hid it ([500.5, 499.5]). All three are now refused with a
+  `ValueError`. Inside the self-consistent loops the historical
+  behavior is kept for intermediate iterations (a far-from-converged
+  iteration can pass through such a state, as the unsettled loop of
+  `test_hetero_loop_with_the_sheet_at_the_interface` does), and a
+  final state without
+  holes gives a `RuntimeWarning`. Test:
+  `test_thermal_filler_refuses_what_it_cannot_fill`.
+- **`dos_from_dispersion` returned a density of states of 0 below the
+  end of the momentum path.** The occupied area was held at its value
+  at the last momentum, so energies below E(kts[-1]) showed a gap
+  (0.0 where the demo set has the constant 1.044 nm^-2 eV^-1). They
+  now give NaN, as does any grid point whose difference stencil
+  reaches them. Test: `test_dos_is_nan_beyond_the_path`.
+
+### Changed
+
+- New input checks with plain messages: both self-consistent loops
+  refuse a negative or non-finite `ps` and a `mixing` or `tol` that is
+  not a positive finite number; `layered_profile` refuses negative or
+  non-finite thicknesses and an empty stack; `dos_from_dispersion`
+  refuses arrays of the wrong shape; `fill_subbands_thermal` refuses
+  energies and masses of different shapes; `fill_subbands_kgrid`
+  refuses a non-integer `n_states` and a `solve_at_k` that returns
+  fewer energies than `n_states`. Test: `test_loop_input_checks` and
+  the tests above.
+- Type hints on the public functions touched in this release.
+- Five existing tests that pin results of runs with too few states
+  (unchanged results) now ignore the new warning, with a comment.
+- README: examples 2, 5 and 9 updated and example 11 added (outputs
+  produced by this version), the "refuses" and "checked" lists, the
+  limits, and a plain-language account of these corrections.
+
 ## v0.12.0 - 2026-09-30
 
 A fix to the Hamiltonian for in-plane momenta off the kx axis, a

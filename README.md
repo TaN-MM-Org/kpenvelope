@@ -24,6 +24,9 @@ numbers for. It answers questions such as:
   depolarization shift that a doped layer adds?
 - Which band offset, or which sheet density, reproduces my measured
   absorption line?
+- What hole density and mass do my magnetotransport (Shubnikov-de Haas)
+  measurements give, with error bars, and which frequencies should the
+  computed hole gas show?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -101,6 +104,11 @@ says why, instead of returning a number that looks fine but is not.
   second calculation.
 - **Lorentzian** -- the standard bell-like shape of a broadened
   absorption line.
+- **Shubnikov-de Haas (SdH) oscillations** -- oscillations of the
+  resistance in a magnetic field `B`, periodic in `1/B`. Each subband
+  gives one **frequency** (in tesla), set by its hole density. The
+  oscillations fade as the temperature rises, at a rate set by the
+  **cyclotron mass**.
 
 ## Install, units and conventions
 
@@ -116,8 +124,8 @@ Units and conventions, used everywhere:
 
 - Energies in eV, lengths in nm, momenta in nm^-1, sheet densities in
   nm^-2, volume densities in nm^-3, masses in units of `m0`,
-  temperatures in kelvin, Rashba coefficients in eV nm
-  (1 meV A = 1e-4 eV nm).
+  temperatures in kelvin, magnetic fields in tesla, Rashba coefficients
+  in eV nm (1 meV A = 1e-4 eV nm).
 - Energies are on the **valence-electron scale**: holes fill the
   **highest** eigenvalues first, and results are sorted from the
   highest energy down. A hole barrier is therefore a region with a
@@ -125,6 +133,9 @@ Units and conventions, used everywhere:
 - Laboratories quote sheet densities in cm^-2.
   `sheet_density_from_cm2` multiplies by 1e-14 and
   `sheet_density_to_cm2` by 1e14 (so 4.6e13 cm^-2 = 0.46 nm^-2).
+  Infrared spectrometers report lines in cm^-1:
+  `energy_from_wavenumber` and `energy_to_wavenumber` convert with the
+  exact SI value of h c / e (1000 cm^-1 = 0.12398 eV).
 - In the hard-wall solvers the walls sit one grid step outside the
   first and last grid points, so a grid from 0 to `L` behaves like a
   well of width `L + 2 dz`.
@@ -132,7 +143,7 @@ Units and conventions, used everywhere:
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with kpenvelope 0.12.0. Numbers labelled illustrative are
+printed with kpenvelope 0.13.0. Numbers labeled illustrative are
 chosen for the example, not taken from a source.
 
 ### 1. Energy levels and what they are made of
@@ -172,9 +183,10 @@ from kpenvelope import (gan_rinke2008, sheet_density_from_cm2,
 p = gan_rinke2008()
 z = np.linspace(0.0, 6.0, 97)             # nm, z = 0 is the interface
 ps = sheet_density_from_cm2(4.6e13)       # 4.6e13 cm^-2 -> 0.46 nm^-2
-res = solve_self_consistent(p, z, ps, n_states=4, mixing=0.5, tol=2e-5)
+res = solve_self_consistent(p, z, ps, n_states=8, mixing=0.5, tol=2e-5)
 
 print("converged:", res.converged, "after", res.iterations, "iterations")
+print("enough states:", res.n_states_sufficient)
 print("subband edges (meV):", np.round(res.energies * 1e3, 2))
 print("edge masses (m0):   ", np.round(res.masses, 3))
 print("holes per subband (1e13 cm^-2):",
@@ -184,40 +196,46 @@ print(f"centre of the hole gas: {centroid:.2f} nm from the interface")
 ```
 
 ```
-converged: True after 22 iterations
-subband edges (meV): [-394.38 -394.38 -405.54 -405.54]
-edge masses (m0):    [0.453 0.449   inf 0.144]
-holes per subband (1e13 cm^-2): [2.007 1.988 0.    0.605]
-centre of the hole gas: 0.62 nm from the interface
+converged: True after 20 iterations
+enough states: True
+subband edges (meV): [-402.37 -402.37 -413.58 -413.58 -548.47 -548.47 -559.02 -559.02]
+edge masses (m0):    [0.445 0.442   inf 0.17  0.604 0.601   inf 0.206]
+holes per subband (1e13 cm^-2): [1.622 1.61  0.    0.581 0.356 0.355 0.    0.076]
+centre of the hole gas: 0.76 nm from the interface
 ```
 
 The 4.6e13 cm^-2 density is the measured value used by the source
 study (see [Where it comes from](#where-it-comes-from)). This run uses
 hard walls and fills the subbands with parabolic masses measured at
-the subband edge. The source paper reports a centre of 0.568 nm for its
-hard-wall case, with the same subband structure; the difference comes
-from the filling model (parabolic here, the computed dispersion
-there). The test suite only checks that the centre lies between 0.4
-and 0.8 nm.
+the subband edge. The source paper reports a center of 0.568 nm for its
+hard-wall case, filled from the computed dispersion instead; example 8
+shows how much the filling model matters here.
+
+`n_states` counts single states, so a Kramers pair counts twice, and it
+must reach every subband that holds holes. Since version 0.13.0 the
+loop checks this at the end: if the next state down lies above the
+Fermi level, it warns (`RuntimeWarning`) and sets
+`res.n_states_sufficient` to False. With this filling 4 states are not
+enough here. Version 0.12.0 printed this example with `n_states=4`,
+without a warning, and the third and fourth pairs, which hold
+0.79e13 cm^-2 above, were left out.
 
 Read the masses and the per-state holes with care. States 2 and 3 are
 a Kramers pair, so by symmetry they should hold the same number of
-holes; here one gets a mass of `inf` and no holes, the other 0.144 m0
-and all of the pair's holes. That split is an artefact of how the
-loop measures a mass: it takes one small step in momentum
-(0.02 nm^-1) away from `k = 0`. In this lopsided well the two states
-of a pair move apart in proportion to the momentum, so over that one
-step one state rises (read as an infinite mass) and the other falls
-too fast (read as too light a mass), and both numbers change if the
-step changes. So do the totals per pair (here about 4.0e13 cm^-2 in
-the top pair and 0.6e13 cm^-2 in the second), because the lighter
-mass sets how many holes the pair takes. Averaging the step over each pair would give both states the same
-mass, but with one mass per state it puts about 2.2e13 cm^-2 into the
-second pair (at the same potential), further from the full-dispersion
-answer, because the top subband gets much heavier away from `k = 0`
-(example 3). Filling the full dispersion with `fill_subbands_kgrid` at
-the converged potential gives about 0.7e13 cm^-2 in the second pair.
-For occupations you rely on, run the loop itself with the full
+holes; here one gets a mass of `inf` and no holes, the other 0.17 m0
+and all of the pair's holes (states 6 and 7 likewise). That split is
+an artifact of how the loop measures a mass: it takes one small step
+in momentum (0.02 nm^-1) away from `k = 0`. In this lopsided well the
+two states of a pair move apart in proportion to the momentum, so over
+that one step one state rises (read as an infinite mass) and the other
+falls too fast (read as too light a mass), and both numbers change if
+the step changes. So do the totals per pair (here 3.23, 0.58, 0.71 and
+0.08 in units of 1e13 cm^-2), because the lighter mass sets how many
+holes the pair takes. The too-light masses also pull the Fermi level
+far down, into the third and fourth pairs. Filling the full dispersion
+with `fill_subbands_kgrid` at the same converged potential gives 4.01
+and 0.59 (1e13 cm^-2) in the first two pairs and nothing in the
+others. For occupations you rely on, run the loop itself with the full
 dispersion (`filling="kgrid"`, example 8), and do not publish
 self-consistent numbers without checking the barrier and filling model
 against your own system. Pass `temperature_K=` for a finite-temperature
@@ -292,7 +310,7 @@ it is not a real material.
 ```python
 import numpy as np
 from kpenvelope import (HBAR2_OVER_2M0, depolarization_shift,
-                        sheet_density_from_shift)
+                        energy_to_wavenumber, sheet_density_from_shift)
 
 # Two subbands of an ideal 8 nm well, written down directly
 # (illustrative: mass 0.5 m0, permittivity 10, 0.05 nm^-2 of carriers).
@@ -307,6 +325,8 @@ out = depolarization_shift(z, env1, env2, E1, E2, n_sheet=0.05, eps_r=10.0)
 print(f"subband spacing   {out['E_bare'] * 1e3:.2f} meV")
 print(f"shifted resonance {out['E_shifted'] * 1e3:.2f} meV "
       f"(alpha = {out['alpha']:.3f})")
+print(f"  which an infrared spectrometer reports as "
+      f"{energy_to_wavenumber(out['E_shifted']):.1f} cm^-1")
 
 inv = sheet_density_from_shift(z, env1, env2, E1, E2,
                                e_meas_ev=out["E_shifted"], eps_r=10.0)
@@ -316,6 +336,7 @@ print(f"density recovered from the resonance: {inv['n_sheet']:.6f} nm^-2")
 ```
 subband spacing   35.25 meV
 shifted resonance 64.15 meV (alpha = 2.311)
+  which an infrared spectrometer reports as 517.4 cm^-1
 density recovered from the resonance: 0.050000 nm^-2
 ```
 
@@ -325,7 +346,11 @@ from a measured line in closed form: `sheet_density_from_shift` is the
 exact inverse of `depolarization_shift`, not a fit. With solver states
 (`solve_subbands`, `solve_heterostructure`) pass one state's `(6, N)`
 envelope; note that the two members of a Kramers pair are not unique,
-so pick states that are not degenerate with each other.
+so pick states that are not degenerate with each other. Use states at
+zero in-plane momentum, where the solver's states are real. The
+result does not depend on the arbitrary phase of either state (since
+version 0.13.0; see [Corrections](#corrections-in-earlier-versions)).
+A measured line in cm^-1 goes in through `energy_from_wavenumber`.
 
 ### 6. Calibrating a band offset from a measured spacing
 
@@ -449,7 +474,9 @@ still hold slightly different numbers of holes, and that is physical:
 in this lopsided well they split apart as the momentum grows
 (`splitting_vs_k` shows it), so they are filled to different momenta.
 `kmax` must lie beyond the last occupied momentum; if it does not, the
-solver stops and says so. Only one momentum direction is used, which is
+solver stops and says so. Four states are enough here: the loop checks
+that the next state down lies below the Fermi level, and would warn
+otherwise. Only one momentum direction is used, which is
 exact here because the subbands do not depend on the direction (a
 checked property). With a strain that makes the plane anisotropic you
 must pass `ntheta`.
@@ -471,7 +498,7 @@ eps = np.full(z.size, GaN.eps_r)
 
 for sheet in (None, 5.0):
     r = solve_self_consistent_hetero(z, params, edge, ps=0.2, eps_r=eps,
-                                     n_states=4, mixing=0.4, tol=1e-6,
+                                     n_states=12, mixing=0.4, tol=1e-6,
                                      max_iter=60, sheet_z=sheet)
     print(f"sheet_z = {sheet}: converged {r.converged} "
           f"after {r.iterations} iterations")
@@ -484,8 +511,8 @@ for sheet in (None, 5.0):
 
 ```
 sheet_z = None: converged False after 60 iterations
-sheet_z = 5.0: converged True after 32 iterations
-  0.8 % of the holes in the AlN, centre of the gas at 5.62 nm
+sheet_z = 5.0: converged True after 30 iterations
+  0.8 % of the holes in the AlN, centre of the gas at 5.75 nm
 ```
 
 The holes are held by a fixed sheet of negative charge at the
@@ -495,9 +522,12 @@ grid point, which is right when the grid starts at the interface (the
 hard-wall case) but not here: then the sheet's whole field, 1.74 eV
 across these 5 nm of AlN, lies inside the barrier. The far side of the
 barrier then looks more attractive to the holes than the GaN, and the
-loop does not settle (on a finer grid, 11 nm on 67 points, it ended
-with all the holes in the AlN after 200 iterations). With the sheet at the
-interface the gas sits in the GaN, against the barrier. `eps_r` may be
+loop does not settle (its last iteration has 67 % of the holes in the
+AlN). With the sheet at the
+interface the gas sits in the GaN, against the barrier. Version 0.12.0
+printed this example with 4 states, which leave out the third pair;
+the loop now warns about that (see example 2). With 8 states the
+converged run is already complete, but the unsettled one is not. `eps_r` may be
 one value per grid point, so a stack of layers with different
 permittivities is handled; supply a cited value for each layer.
 
@@ -535,6 +565,67 @@ Rashba coefficient without a source:
 The script `examples/demo_well.py` runs the self-consistent loop on
 the synthetic demo set.
 
+### 11. Density and mass from Shubnikov-de Haas measurements
+
+```python
+import numpy as np
+from kpenvelope import (fit_sdh_mass, sdh_frequency, sheet_density_from_cm2,
+                        sheet_density_from_sdh)
+
+# Illustrative magnetotransport numbers, not from a real sample.
+# One SdH frequency of 150 +/- 2 T, read as a spin-degenerate subband:
+d = sheet_density_from_sdh(150.0, branches=2, sigma_frequency_T=2.0)
+print(f"density: {d['n_sheet_cm2']:.3e} +/- {d['sigma_n_sheet_cm2']:.1e} cm^-2")
+
+# Its amplitude at 15 T and six temperatures, each +/- 0.01:
+T = [1.5, 3.0, 4.5, 6.0, 7.5, 9.0]
+amp = [0.915, 0.728, 0.483, 0.315, 0.181, 0.111]
+fit = fit_sdh_mass(T, amp, field_T=15.0, sigma_amplitudes=[0.01] * 6)
+print(f"cyclotron mass: {fit['mass_ratio']:.3f} +/- "
+      f"{fit['sigma_mass_ratio']:.3f} m0")
+print(f"chi-square per degree of freedom: {fit['chi2_red']:.2f} "
+      f"({fit['dof']} degrees of freedom)")
+
+# The frequencies the per-state densities of example 8 should show:
+per_state = sheet_density_from_cm2(np.array([1.974e13, 1.964e13,
+                                             0.352e13, 0.311e13]))
+print("predicted frequencies (T):",
+      np.round(sdh_frequency(per_state, branches=1), 1))
+```
+
+```
+density: 7.254e+12 +/- 9.7e+10 cm^-2
+cyclotron mass: 0.502 +/- 0.006 m0
+chi-square per degree of freedom: 0.79 (4 degrees of freedom)
+predicted frequencies (T): [816.4 812.2 145.6 128.6]
+```
+
+The frequency gives the density through the Onsager relation: a
+contour that encloses an area `A` in momentum space oscillates with
+`F = hbar A / (2 pi e)`, so one spin-resolved branch holding `n` holes
+per area has `F = (h/e) n`, whatever the shape of the contour.
+`branches` says how many spin-resolved branches share the contour that
+oscillates (2 when one frequency stands for a spin-degenerate subband,
+1 when the two spin branches show separate frequencies). It has no
+default, because a wrong guess is a factor of two.
+
+The mass comes from the Lifshitz-Kosevich temperature factor
+`X / sinh(X)` with `X = 2 pi^2 k_B T m* / (hbar e B)`, about
+14.69 (m*/m0) T / B with T in kelvin and B in tesla. The fit refits
+the zero-temperature amplitude with the mass, and gives honest error
+bars: from your amplitude errors if you pass them (then the
+chi-square per degree of freedom, near 1 here, tests the model), or
+else from the scatter of the points. It refuses data that do not fall
+clearly with temperature, because those do not determine the mass. The
+fit assumes the scattering does not change over the temperature range.
+
+The measured mass is the cyclotron mass of the Fermi contour. For a
+subband that depends only on the size of the momentum, `local_mass`
+between two momenta just below and above the Fermi wavevector
+(`k_F = sqrt(4 pi n)` for one branch holding `n`) is the same quantity,
+as a finite difference, for the computed dispersion, so the two can be
+compared directly.
+
 ## What is in the package
 
 **Material parameters**
@@ -570,7 +661,9 @@ the synthetic demo set.
   `SelfConsistentResult` with `z`, `potential`, `energies`,
   `envelopes`, `density`, `occupations`, `masses`, `iterations`,
   `residual`, `converged` (False when the loop ran out of iterations),
-  `filling` and `fermi_level`.
+  `filling`, `fermi_level` and `n_states_sufficient` (False, with a
+  `RuntimeWarning`, when a state below the computed ones would hold
+  holes; example 2).
 - `filling="parabolic"` (default) treats each state as a parabola with
   one mass; `filling="kgrid"` with `kmax` (and optionally `nk`,
   `ntheta`) fills the computed dispersion on a momentum grid and builds
@@ -586,7 +679,8 @@ the synthetic demo set.
   anisotropic strain one direction, `ntheta=1`, is enough).
   `KB_EV_PER_K` is the Boltzmann constant in eV/K, computed from the
   exact SI values of k_B and e.
-- `sheet_density_from_cm2`, `sheet_density_to_cm2` -- lab units.
+- `sheet_density_from_cm2`, `sheet_density_to_cm2` -- lab units;
+  `energy_from_wavenumber`, `energy_to_wavenumber` -- eV and cm^-1.
 
 **What the states are made of**
 
@@ -620,6 +714,12 @@ the synthetic demo set.
 
 - `fit_band_offset`, `offset_sensitivity` -- example 6;
   `sheet_density_from_shift` -- example 5.
+- `sheet_density_from_sdh`, `sdh_frequency` -- density from a
+  Shubnikov-de Haas frequency and back (`H_OVER_E_T_NM2` is h/e in
+  T nm^2); `fit_sdh_mass` -- the cyclotron mass from the temperature
+  damping, with `lk_thermal_factor` the damping factor itself
+  (`LK_TESLA_PER_KELVIN` = 14.69 T/K); example 11. The two constants
+  live in `kpenvelope.lab`.
 
 **Rashba term**
 
@@ -668,6 +768,12 @@ citation.
   half a grid step), or the per-point parameter, band-edge, strain,
   potential or permittivity arrays do not match the grid;
 - `n_states` is below 1 or above six times the number of grid points;
+- a layer thickness is negative or not finite, or no layer is given;
+- a sheet density `ps` is negative or not finite, or `mixing` or `tol`
+  is not a positive finite number;
+- `fill_subbands_thermal` gets energies and masses of different
+  shapes, a positive `ps` with no finite mass to put it in, or a `ps`
+  that does not fit within 5 eV of the subband edges;
 - a permittivity is not a positive finite number, or `sheet_z` lies
   outside the grid;
 - `filling="kgrid"` is asked for without `kmax`, or with a strain that
@@ -680,7 +786,9 @@ citation.
 - momenta are negative, or `local_mass` gets fewer than two points,
   momenta that do not increase, or a row count that does not match;
 - `dos_from_dispersion` gets a dispersion that does not fall
-  monotonically (use `fill_subbands_kgrid`);
+  monotonically (use `fill_subbands_kgrid`), or arrays of the wrong
+  shape (below the end of the momentum path it returns NaN: the path
+  says nothing there);
 - envelope arrays have the wrong shape for `band_character` or the
   depolarization functions;
 - `depolarization_shift` gets degenerate states, a negative sheet
@@ -699,11 +807,24 @@ citation.
 - a Rashba call has no real `reference` (fewer than 8 characters), a
   non-finite coefficient or a negative momentum, or asks for spin
   directions at `k = 0` or with `alpha = 0`, where the two branches
-  are degenerate.
+  are degenerate;
+- `sheet_density_from_sdh` or `sdh_frequency` gets no `branches`, or
+  one that is not a positive integer, or a frequency or density that
+  is not a positive finite number;
+- `fit_sdh_mass` gets fewer than 3 distinct temperatures, amplitudes,
+  temperatures or a field that are not positive, amplitudes that do
+  not fall with temperature, or data so weakly damped that the error
+  bar would not be honest (the mass error is as large as the mass, or
+  the chi-square does not rise by about one unit, 0.7 to 1.3, at one
+  sigma on either side).
+
+It does not stop, but warns (`RuntimeWarning`), when a self-consistent
+loop or `fill_subbands_kgrid` finds that a state below the computed
+`n_states` would hold holes (example 2).
 
 ## How the results are checked
 
-83 automated tests run on every push and pull request, on Python 3.9,
+105 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -811,6 +932,41 @@ the tests use:
   holds to 1e-15 eV; the line shape integrates to the strength sum to
   1e-3.
 
+**Magnetotransport (new in 0.13.0)**
+
+- h/e equals the value from `scipy.constants` to a relative 1e-15, and
+  the Lifshitz-Kosevich constant equals 2 pi^2 k_B m_e / (hbar e) from
+  `scipy.constants` to 1e-6 (the package's 6-digit hbar^2/2m0 sets the
+  difference).
+- On exactly parabolic subbands filled by the momentum-grid filler,
+  each state's predicted frequency equals hbar pi k_F^2 / (2 pi e),
+  with k_F from the closed-form Fermi level and SI constants, to a
+  relative 1e-9.
+- `lk_thermal_factor` equals `X / sinh(X)` to 1e-12 and does not
+  overflow. The mass fit returns the mass of noise-free data to 1e-9,
+  and agrees with `scipy.optimize.curve_fit` (an independent optimizer)
+  to 1e-7 in the mass and amplitude and to 1e-4 in both error bars and
+  their correlation, with and without amplitude errors. Over 400
+  simulated data sets with 3 % noise, the spread of the fitted masses
+  equals the reported error bar to 12 %, and the mean chi-square per
+  degree of freedom is 1 to 0.1.
+- The cm^-1 conversion matches h c / e from `scipy.constants` to
+  1e-17 eV at 1000 cm^-1.
+
+**Corrections in 0.13.0**
+
+- Over a sweep of 32 layer stacks with decimal thicknesses, every grid
+  point lands in the layer that exact rational arithmetic puts it in;
+  a GaN well moved along the grid keeps its top level to 1e-6 eV.
+- The geometry integral `S` does not change, to a relative 1e-12, when
+  either state is multiplied by a phase factor, and for real states it
+  is the textbook formula bit for bit.
+- On a demo well with two filled levels, the loops warn when the
+  second level was not computed; with enough states, the occupations
+  equal the closed-form parabolic filling to 1e-10 nm^-2.
+- The density of states is NaN below the end of the momentum path and
+  the closed-form constant (to 1 %) inside it.
+
 **Calibration and Rashba**
 
 - The offset fit recovers the offset used to make a synthetic
@@ -826,7 +982,31 @@ the tests use:
 
 ## Corrections in earlier versions
 
-**0.12.0 (this release) fixed a sign error in the Hamiltonian.** In
+**0.13.0 (this release) fixed five silent errors.** Each has a test
+that fails on 0.12.0; [CHANGELOG.md](CHANGELOG.md) has the numbers.
+
+- `layered_profile` decided which layer a grid point on an interface
+  belongs to by an exact comparison, so rounding in the sum of the
+  thicknesses could move the point into the wrong layer. A 3.4 nm GaN
+  well between AlN barriers then had 33 grid points instead of 34
+  when it started at 2.7 nm, and its top level moved from 1.98 to
+  1.23 meV.
+- The depolarization geometry integral used the real part of the
+  overlap of the two states. An eigenvector is only defined up to a
+  phase, and multiplying one state by `i` gave `S = 0` and no shift
+  at all. It now uses the modulus, which is the same for real states.
+- The self-consistent loops filled only the `n_states` computed states,
+  without checking that no other state lay above the Fermi level. Now
+  they warn and set `n_states_sufficient` to False (example 2). This
+  affected README examples 2 and 9 of version 0.12.0, which now use
+  more states.
+- `fill_subbands_thermal` returned all zeros (a total of 0, not the
+  requested density) when no subband had a finite mass, and negative
+  occupations for a negative density; it now refuses both. Below the
+  end of its momentum path, `dos_from_dispersion` returned a density
+  of states of 0, a gap that is not there; it now returns NaN.
+
+**0.12.0 fixed a sign error in the Hamiltonian.** In
 rows 4 to 6 of the six-band matrix, the term that couples the in-plane
 and growth-direction momenta (`A6`) was placed as its complex
 conjugate. Along `kx` that makes no difference, which is why every
@@ -908,7 +1088,18 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   are not included: no vetted coefficients in our sources.
 - The depolarization shift leaves out the excitonic (final-state)
   correction, which needs an exchange-correlation model this package
-  does not ship.
+  does not ship. Its standard form was written for real envelope
+  functions; it holds for the solver's states at zero in-plane
+  momentum (they are real), so use those.
+- `fill_subbands_thermal` and `fill_subbands_kgrid` can only fill the
+  states they are given. The self-consistent loops check that no
+  state below them would hold holes and warn if one would;
+  `fill_subbands_kgrid` can check only when your `solve_at_k` returns
+  more energies than `n_states`.
+- `fit_sdh_mass` assumes that the scattering (the Dingle factor) does
+  not change over the temperature range, and that each amplitude is
+  that of one frequency at one field. It returns the cyclotron mass of
+  the Fermi contour, not the mass at the subband edge.
 
 ## Where it comes from
 
