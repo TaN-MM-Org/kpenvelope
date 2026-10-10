@@ -89,6 +89,9 @@ def test_kgrid_thermal_matches_parabolic_closed_form():
             ps, 4, kmax=0.6, nk=13, ntheta=1, temperature_K=T)
 
 
+# n_states here leaves occupied states out (the v0.13.0 check warns);
+# kept on purpose so this test still pins the unchanged results
+@pytest.mark.filterwarnings("ignore:only n_states:RuntimeWarning")
 def test_self_consistent_loop_at_temperature_and_converged_flag():
     p = gan_rinke2008()
     z = np.linspace(0.0, 6.0, 49)

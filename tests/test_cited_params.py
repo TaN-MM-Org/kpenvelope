@@ -94,6 +94,9 @@ def test_aln_refuses_poisson_without_permittivity():
         solve_self_consistent(aln_rinke2008(), z, ps=0.1)
 
 
+# n_states here leaves occupied states out (the v0.13.0 check warns);
+# kept on purpose so this test still pins the unchanged results
+@pytest.mark.filterwarnings("ignore:only n_states:RuntimeWarning")
 def test_gan_self_consistent_hard_wall():
     """Hard-wall self-consistent GaN gas at the measured sheet density.
 

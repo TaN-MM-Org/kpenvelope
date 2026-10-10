@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from kpenvelope import (assemble_hamiltonian, demo_single_band,
                         solve_subbands, solve_self_consistent,
@@ -47,6 +48,9 @@ def test_poisson_uniform_slab():
     assert np.isclose(vh[-1], E2_OVER_EPS0 / eps_r * ps * L / 2.0, rtol=1e-3)
 
 
+# n_states here leaves occupied states out (the v0.13.0 check warns);
+# kept on purpose so this test still pins the unchanged results
+@pytest.mark.filterwarnings("ignore:only n_states:RuntimeWarning")
 def test_self_consistent_converges_and_is_neutral():
     p = demo_single_band()
     z = np.linspace(0.0, 6.0, 120)

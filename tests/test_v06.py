@@ -43,6 +43,9 @@ def test_kgrid_filling_refuses_an_undersized_kmax():
             0.05, 4, kmax=0.2, nk=8, ntheta=1)
 
 
+# n_states here leaves occupied states out (the v0.13.0 check warns);
+# kept on purpose so this test still pins the unchanged results
+@pytest.mark.filterwarnings("ignore:only n_states:RuntimeWarning")
 def test_hetero_self_consistency_reproduces_hard_wall_on_uniform_stack():
     """A uniform stack with no offset is the same Hamiltonian as the
     hard-wall assembly, so the two self-consistent loops must produce

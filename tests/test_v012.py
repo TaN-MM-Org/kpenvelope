@@ -303,6 +303,9 @@ def test_sheet_position_against_the_closed_form():
                           hole_potential(z, d, ps, eps))
 
 
+# n_states here leaves occupied states out (the v0.13.0 check warns);
+# kept on purpose so this test still pins the unchanged results
+@pytest.mark.filterwarnings("ignore:only n_states:RuntimeWarning")
 def test_hetero_loop_with_the_sheet_at_the_interface():
     """A 5 nm AlN barrier left of a GaN well. With the default (sheet at
     z = 0) the full sheet field e^2 ps / eps (0.35 eV/nm here) crosses
