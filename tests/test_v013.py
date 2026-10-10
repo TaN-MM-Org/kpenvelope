@@ -150,20 +150,40 @@ def test_geometry_integral_does_not_depend_on_eigenvector_phase():
 
 def test_geometry_integral_phase_invariance_on_solver_states():
     """HH1 -> HH2 of a tilted GaN well at k = 0 (the solver's states are
-    real there): S is unchanged by a phase on either state, and equals
-    the textbook real-function form evaluated component by component.
-    v0.12.0 gave 0.10378 nm for the plain states and 0 with i on one."""
+    real there). Each level is a Kramers pair, and which member of a
+    pair the eigensolver returns first can differ between computers
+    (one CI machine returned the partner with S = 0). So the test uses
+    S summed over the HH2 pair, which does not depend on that choice:
+    0.10378 nm, the same for any unitary mix of either pair. Each term
+    equals the textbook real-function form evaluated component by
+    component, and the sum is unchanged by a phase on either state.
+    v0.12.0 gave 0 with i on the HH2 states."""
     z = np.linspace(0.0, 6.0, 61)
     e, F = solve_subbands(GAN, z, potential=0.08 * z, n_states=6)
     assert np.abs(F.imag).max() == 0.0
-    fi, fj = F[0].real, F[4].real
-    lam = (fi * fj).sum(axis=0)
+    assert abs(e[0] - e[1]) < 1e-9 and abs(e[4] - e[5]) < 1e-9
     dz = z[1] - z[0]
-    ref = float(((np.cumsum(lam) * dz) ** 2).sum() * dz)
+
+    def textbook(fi, fj):
+        lam = (fi * fj).sum(axis=0)
+        return float(((np.cumsum(lam) * dz) ** 2).sum() * dz)
+
+    ref = textbook(F[0].real, F[4].real) + textbook(F[0].real, F[5].real)
     assert abs(ref - 0.10378) < 1e-5
     for pi_, pj in ((1.0, 1.0), (1.0, 1j), (np.exp(2.1j), np.exp(-0.4j))):
-        S = overlap_geometry_integral(z, pi_ * F[0], pj * F[4])
+        S = sum(overlap_geometry_integral(z, pi_ * F[0], pj * F[j])
+                for j in (4, 5))
         assert abs(S / ref - 1.0) < 1e-12
+    rng = np.random.default_rng(0)
+    for _ in range(3):
+        U = np.linalg.qr(rng.normal(size=(2, 2))
+                         + 1j * rng.normal(size=(2, 2)))[0]
+        V = np.linalg.qr(rng.normal(size=(2, 2))
+                         + 1j * rng.normal(size=(2, 2)))[0]
+        A = np.tensordot(U, F[0:2], 1)
+        B = np.tensordot(V, F[4:6], 1)
+        S = sum(overlap_geometry_integral(z, A[0], B[j]) for j in (0, 1))
+        assert abs(S / ref - 1.0) < 1e-10
 
 
 # ---------------------------------------------------------------- 3
