@@ -4,6 +4,168 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.14.0 (2026-10-17)
+
+A faster eigen-solver with the same results, the quantum lifetime from
+Shubnikov-de Haas (SdH) data, the cyclotron mass of a computed
+subband, two worked tutorials, and two silent errors fixed. Results of
+calls that were correct before do not change beyond rounding (1e-12 eV
+is asserted against the old solver), and every README example prints
+exactly what it printed with 0.13.1.
+
+### Added
+
+- `fit_sdh_dingle(fields_T, amplitudes, temperature_K, mass_ratio,
+  sigma_amplitudes, sigma_mass_ratio)`: the quantum lifetime tau_q
+  and the Dingle temperature from the field dependence of SdH
+  amplitudes at one temperature (a Dingle plot). It uses the
+  two-dimensional form A = 4 rho_0 R_T exp(-pi / (omega_c tau_q)) of
+  P. T. Coleridge, R. Stoner and R. Fletcher, Phys. Rev. B 39, 1120
+  (1989), and T_D = hbar / (2 pi k_B tau_q), the temperature whose
+  Lifshitz-Kosevich factor exp(-2 pi^2 k_B T_D / (hbar omega_c)) (D.
+  Shoenberg, Magnetic Oscillations in Metals, Cambridge University
+  Press (1984), chapter 8) is the same damping. Weighted or unweighted
+  linear least squares of ln(A / R_T) against 1/B; the error of the
+  mass is propagated with the exact derivative. It refuses amplitudes
+  that are not damped towards low field and a tau_q whose error is as
+  large as tau_q. `DINGLE_TESLA_PS` (pi m0 / e = 17.862 T ps) and
+  `DINGLE_KELVIN_PS` (hbar / (2 pi k_B) = 1.2157 K ps) live in
+  `kpenvelope.lab`. Checked against scipy.constants (1e-6 and 1e-15),
+  against the Lifshitz-Kosevich form of the Dingle factor (1e-12),
+  noise-free data (2e-6, set by scipy's electron mass against the
+  package's m0), `numpy.polyfit` with and without weights (values and
+  error bars to 1e-9), a 400-sample Monte Carlo (the spread of tau_q
+  equals the reported error to 12 %, mean reduced chi-square 1 to
+  0.1) and the mass propagation against refits at shifted masses
+  (1e-5).
+- `cyclotron_mass(kts, energies, n_branch)`: the cyclotron mass of a
+  computed branch at the Fermi contour that holds `n_branch` holes,
+  m_c / m0 = (hbar^2/2m0) |d(k^2)/dE| at k_F = sqrt(4 pi n), the
+  number `fit_sdh_mass` measures. A parabola in k^2 through the three
+  nearest path points is differentiated at k_F. Exact for parabolic
+  branches (1e-12), second order against the closed form
+  m sqrt(1 + 4 c k^2 / (m Eg)) of a nonparabolic test branch (error
+  below 0.5 / (nk - 1)^2 over 15 densities and 5 spacings), and within
+  1 % (0.3 % at half the spacing) of a direct difference of two
+  six-band GaN solves around k_F. It refuses a path that does not
+  start at 0, a k_F beyond the path and a branch whose occupied region
+  on the path is not the disk k < k_F.
+- `subband_energies` and `heterostructure_energies`: the energies of
+  `solve_subbands` and `solve_heterostructure`, bit for bit, without
+  building the envelopes.
+- Tutorials `examples/tutorial_sdh_analysis.py` and
+  `examples/tutorial_sdh_prediction.py` (see Tutorials).
+
+### Fixed
+
+- **`dos_from_dispersion` returned 0 and a spike at the start of a
+  momentum path that does not begin at k_t = 0.** Energies above
+  E(kts[0]) were given an occupied area of 0. For the demo set
+  (A = -2, constant DOS 1.0443 nm^-2 eV^-1) on a path from 0.2 nm^-1
+  (E = -3.048 meV) it returned 2.596 at -4 meV, 2.076 at -3 meV and 0
+  from -2 to +4 meV, where the band continues. Those energies are now
+  NaN, as at the far end of the path since 0.13.0. A path from 0 is
+  unchanged. Test: `test_dos_is_nan_before_a_path_that_starts_above_zero`.
+- **`fill_subbands_thermal` filled a negative mass with negative
+  holes.** Edges [0, -0.01] eV with masses [0.5, -0.3] m0 and
+  ps = 0.1 nm^-2 gave [0.234, -0.134] nm^-2 at 0 K and at 77 K. A
+  negative mass is now refused with a `ValueError` (the self-consistent
+  loops never produce one). Test:
+  `test_thermal_filler_refuses_negative_masses`.
+- `tests/test_lab.py::test_sheet_density_exact_round_trip_and_linearity`
+  used state 5 of a Kramers pair (states 4 and 5) as the upper state.
+  Which member of a pair overlaps with state 0 depends on the basis
+  the eigensolver picks inside the pair: S was 0.194 nm (state 4) and
+  0.062 nm (state 5) with 0.13.1 on our machine, and is 0.256 and 0
+  with 0.14.0 (the sum, 0.256 nm, is the same). With S = 0 the test
+  refused its own input. It now takes the member with the larger S,
+  whatever its index, as the 0.13.x fix of the geometry-integral test
+  did.
+
+### Changed
+
+- The solvers diagonalize the assembled matrix in exact independent
+  blocks where it has them (see Performance). The energies agree with
+  the full diagonalization to rounding (largest difference seen
+  2e-14 eV; 1e-12 eV asserted), and the states agree through the
+  projector onto each degenerate level (1e-8 asserted). Inside a
+  degenerate level the basis is a convention, and it changed: at
+  k_t = 0 the two members of a Kramers pair now have bit-for-bit
+  equal energies, and each lies in one group of components that the
+  matrix does not couple. A number computed from one member of a pair
+  (not summed over the pair) can therefore differ from 0.13.1, as it
+  could already between computers. For HH1 -> HH2 of the tilted 6 nm
+  GaN well of README example 5, S is 0.10378 nm and 0 for the two HH2
+  members; summed over the pair it is 0.10378 nm, as before.
+- `assemble_heterostructure` (and so `solve_heterostructure` and the
+  finite-barrier loop) refuses a band edge that is not finite. Before,
+  one NaN gave NaN energies and a `RuntimeWarning`. Test:
+  `test_heterostructure_refuses_a_non_finite_band_edge`.
+- Type hints on the public functions touched in this release.
+
+### Performance
+
+Measured on one core of a shared machine (OMP_NUM_THREADS=1), old and
+new runs interleaved, median of 5 runs (3 for the last two lines), GaN
+on a 97-point grid with a tilted potential and 8 states unless noted:
+
+- `solve_subbands` at k_t = 0: 0.928 s -> 0.056 s (16.5 times faster).
+  The matrix splits into independent groups of components (HH up, HH
+  down, LH up with CH down, LH down with CH up). The groups are read
+  from the zero pattern of the assembled matrix, each is diagonalized
+  on its own (as a real matrix when it is real), and a group whose
+  time-reversal partner gives the identical matrix is diagonalized
+  once.
+- `solve_subbands` at kx = 0.3 nm^-1: 0.912 s -> 0.275 s (3.3 times).
+  The Chuang-Chang block diagonalization (Phys. Rev. B 54, 2491
+  (1996), the upper and lower 3 x 3 blocks of their Eq. (45)) splits
+  the matrix into two of half the size at every in-plane direction. It
+  is used only after checking that the neglected coupling is at
+  rounding level (at most 1e-14 of the largest element); a strain
+  whose in-plane axes do not match the momentum direction couples the
+  blocks, and the full matrix is then diagonalized exactly as before
+  (bit for bit, asserted).
+- `solve_heterostructure` (README example 6 stack, k_t = 0): 0.696 s
+  -> 0.049 s (14.2 times).
+- `subband_dispersion` over 16 momenta: 14.31 s -> 3.83 s (3.7 times).
+- `solve_self_consistent`, README example 2: 31.3 s -> 6.9 s (4.5
+  times). Same iterations; energies, occupations, potential and
+  density agree with the old solver to 1e-9 in the test.
+- The whole test suite took 1044 s (105 tests, 0.13.1) at the start
+  of this work and 56 to 85 s (126 tests) at the end, on the same
+  machine under a changing load; this is a rough indication only, the
+  lines above are the measured factors.
+
+Equality is checked in `tests/test_v014.py`, which keeps the 0.13.1
+dense diagonalization as the reference: energies, projectors,
+orthonormality and residuals over 40 cases (hard walls, a layered
+stack, potentials, four strains, five momenta), the solvers and the
+energies-only helpers, both self-consistent loops and the momentum-grid
+filler run through the old and the new solver.
+
+### Tutorials
+
+- `examples/tutorial_sdh_analysis.py`: synthetic SdH data (fixed seed)
+  to the density, the cyclotron mass and the quantum lifetime with the
+  Dingle temperature, each with its error bar (about 1 s).
+- `examples/tutorial_sdh_prediction.py`: the hole gas of README
+  example 2, its dispersion filled at the converged potential, and the
+  predicted SdH frequency and cyclotron mass of each occupied branch,
+  with the numerical uncertainty from two path spacings (5 to 30 s).
+- Their printed output is in the README (Tutorials) and at the top of
+  each script; `test_tutorial_sdh_analysis` and
+  `test_tutorial_sdh_prediction` run them and check the key numbers.
+
+### Tests
+
+- New file `tests/test_v014.py`, 21 tests (126 in total). The two
+  fixes and the band-edge refusal fail on 0.13.1. One of the new
+  tests covers the per-point strain path of
+  `assemble_heterostructure`, which no test reached before (it was
+  correct: equal to the uniform assembly bit for bit). No new test depends on which member of a
+  Kramers pair the solver returns first or on the phase of an
+  eigenvector.
+
 ## 0.13.1 (2026-10-10)
 
 Citation correction and packaging.

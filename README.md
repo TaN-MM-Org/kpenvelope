@@ -24,9 +24,9 @@ numbers for. It answers questions such as:
   depolarization shift that a doped layer adds?
 - Which band offset, or which sheet density, reproduces my measured
   absorption line?
-- What hole density and mass do my magnetotransport (Shubnikov-de Haas)
-  measurements give, with error bars, and which frequencies should the
-  computed hole gas show?
+- What hole density, mass and quantum lifetime do my magnetotransport
+  (Shubnikov-de Haas) measurements give, with error bars, and which
+  frequencies and masses should the computed hole gas show?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -37,6 +37,7 @@ says why, instead of returning a number that looks fine but is not.
 - [A short guide to the words used here](#a-short-guide-to-the-words-used-here)
 - [Install, units and conventions](#install-units-and-conventions)
 - [Examples](#examples) (each with the output it prints)
+- [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
 - [When it refuses, and why](#when-it-refuses-and-why)
@@ -143,7 +144,7 @@ Units and conventions, used everywhere:
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with kpenvelope 0.13.0. Numbers labeled illustrative are
+printed with kpenvelope 0.14.0 (the same as with 0.13.1). Numbers labeled illustrative are
 chosen for the example, not taken from a source.
 
 ### 1. Energy levels and what they are made of
@@ -346,11 +347,13 @@ from a measured line in closed form: `sheet_density_from_shift` is the
 exact inverse of `depolarization_shift`, not a fit. With solver states
 (`solve_subbands`, `solve_heterostructure`) pass one state's `(6, N)`
 envelope; note that the two members of a Kramers pair are not unique,
-so pick states that are not degenerate with each other. Which member
-of a pair the solver returns first can differ between computers, and
-S can differ with it: for HH1 -> HH2 of a tilted 6 nm GaN well, one
-HH2 member gives 0.10378 nm and the other 0. S summed over the two
-members of the upper pair is the same on every computer. Use states at
+so pick states that are not degenerate with each other. Which
+combination of the two members of a pair the solver returns is a
+convention (it changed in version 0.14.0, and before that it could
+differ between computers), and S can differ with it: for HH1 -> HH2
+of a tilted 6 nm GaN well, one HH2 member gives 0.10378 nm and the
+other 0. S summed over the two members of the upper pair does not
+depend on the convention. Use states at
 zero in-plane momentum, where the solver's states are real. The
 result does not depend on the arbitrary phase of either state (since
 version 0.13.0; see [Corrections](#corrections-in-earlier-versions)).
@@ -470,9 +473,9 @@ at 16 in-plane momenta from 0 to `kmax` = 1.6 nm^-1 and fills those
 computed energies, instead of treating each state as a parabola. The
 hole density is built from the wavefunctions at every one of those
 momenta, not only at `k = 0`. Each iteration needs 17 solutions
-instead of 2, so expect it to take several times longer than example
-2 (from under two minutes to a few minutes of CPU time in our runs,
-depending on the machine and its load). No state is left
+instead of 2, so expect it to take about ten times longer than example
+2 (with version 0.14.0, about 8 s for example 2 and 90 s for this one
+on one core of our loaded test machine). No state is left
 with an infinite mass and no holes any more. The two members of a pair
 still hold slightly different numbers of holes, and that is physical:
 in this lopsided well they split apart as the momentum grows
@@ -630,6 +633,80 @@ between two momenta just below and above the Fermi wavevector
 as a finite difference, for the computed dispersion, so the two can be
 compared directly.
 
+## Tutorials
+
+Two scripts in `examples/` go from data to a final result with error
+bars. They use only this package and NumPy. Each prints the output
+below, which is also at the top of the script. The test suite runs
+both and checks their key numbers.
+
+### Shubnikov-de Haas data: density, mass and quantum lifetime
+
+`examples/tutorial_sdh_analysis.py` (about one second) makes synthetic
+"measured" SdH data from known, illustrative values (m* = 0.5 m0,
+tau_q = 0.15 ps; not a real sample) with a fixed random seed, and
+recovers them:
+
+1. the density from the oscillation frequency (`sheet_density_from_sdh`),
+2. the cyclotron mass from how the amplitude falls with temperature at
+   one field (`fit_sdh_mass`),
+3. the quantum lifetime and the Dingle temperature from how the
+   amplitude falls towards low field at one temperature
+   (`fit_sdh_dingle`, a Dingle plot), with the error of the mass from
+   step 2 carried along.
+
+```
+1. density from the SdH frequency
+   F = 150.0 +/- 2.0 T, spin-degenerate subband (branches=2)
+   n = 7.254e+12 +/- 9.7e+10 cm^-2
+2. cyclotron mass from the temperature damping at 20 T
+   m* = 0.500 +/- 0.002 m0   (true 0.5)
+   chi-square per degree of freedom 1.49 (4 degrees of freedom)
+3. quantum lifetime from the field damping at 2 K (Dingle plot)
+   tau_q = 0.147 +/- 0.002 ps   (true 0.15)
+     of which 0.002 ps from the data and 0.001 ps from the mass
+   Dingle temperature T_D = 8.27 +/- 0.11 K
+   A0 = 4.32 +/- 0.18 (4 for a homogeneous sample, in units of rho_0)
+   chi-square per degree of freedom 0.12 (6 degrees of freedom)
+```
+
+To use it on your own sample, replace the three blocks marked DATA with
+your measurements. The quantum lifetime comes from the two-dimensional
+form of the oscillation amplitude,
+`A = 4 rho_0 (X / sinh X) exp(-pi / (omega_c tau_q))` (Coleridge,
+Stoner and Fletcher, Phys. Rev. B 39, 1120 (1989)), so `ln(A / R_T)` is
+a straight line in `1/B` with slope `-pi m* / (e tau_q)`. In units of
+`rho_0` the line should reach 4 at `1/B = 0` for a homogeneous sample.
+The Dingle temperature is `T_D = hbar / (2 pi k_B tau_q)`: the
+temperature that would damp the oscillation as much (Shoenberg,
+Magnetic Oscillations in Metals, chapter 8).
+
+### A computed hole gas: which frequencies and masses to expect
+
+`examples/tutorial_sdh_prediction.py` (5 to 30 seconds) computes the
+hole gas of example 2, fills its computed dispersion at the converged
+potential, and predicts for each spin-resolved branch that holds holes
+its SdH frequency and its cyclotron mass at the Fermi contour
+(`cyclotron_mass`), the two numbers the first tutorial measures.
+
+```
+self-consistent: converged True after 20 iterations
+Fermi level -458.75 meV, 4 branches hold holes, total 4.6000e+13 cm^-2
+branch  holes (1e13 cm^-2)  F (T)            m_c (m0)
+  0     2.0108 +/- 0.0003   831.6 +/- 0.1    1.882 +/- 0.000
+  1     2.0028 +/- 0.0003   828.3 +/- 0.1    1.885 +/- 0.000
+  2     0.3062 +/- 0.0005   126.7 +/- 0.2    0.333 +/- 0.001
+  3     0.2802 +/- 0.0001   115.9 +/- 0.0    0.314 +/- 0.000
+```
+
+The error bars are numerical: the change between a momentum path of 17
+and of 33 points. Both path methods are second order, so the error of
+the 33-point value is about a third of that change. The limits of the
+model itself (hard walls, the cited parameter set, no disorder) are
+not in these numbers. Each branch gives its own frequency here because
+the two members of each pair hold slightly different numbers of holes
+in this lopsided well (example 8).
+
 ## What is in the package
 
 **Material parameters**
@@ -647,12 +724,21 @@ compared directly.
   top states of one material between hard walls, at any in-plane
   momentum; `assemble_hamiltonian` builds the matrix it solves.
   `HBAR2_OVER_2M0` is hbar^2/2m0 = 0.0380998 eV nm^2.
+  `subband_energies` (new in 0.14.0) gives the same energies, bit for
+  bit, without the envelopes.
 - `layered_profile(z, layers)` -- per-point materials and band edges
   from a list of `(thickness_nm, params, band_edge_eV)` layers.
 - `solve_heterostructure`, `assemble_heterostructure` -- the same for
   layered stacks with finite barriers. The discretization keeps the
   matrix Hermitian for any profile, and each layer may carry its own
-  strain.
+  strain. `heterostructure_energies` gives the energies alone.
+- Since version 0.14.0 the solvers split the matrix into the pieces
+  that it falls apart into exactly: at zero in-plane momentum into
+  groups of components that no element couples, and at any other
+  momentum into the two halves of the Chuang-Chang block form (their
+  Eq. (45)). The energies are those of the full matrix to rounding,
+  3 to 16 times faster (see [Limits](#limits) for times). If a strain
+  couples the halves, the full matrix is used, as before.
 - `strain_blocks(p, strain)` -- the Bir-Pikus strain matrix for a
   symmetric 3 x 3 strain tensor (needs cited D1..D6). Every solver
   takes a `strain=` (or `strain_list=`) argument.
@@ -703,6 +789,10 @@ compared directly.
 - `group_velocity` -- dE/dk (eV nm; divide by hbar for a velocity);
   `dos_from_dispersion` -- the 2D density of states of falling,
   isotropic dispersions.
+- `cyclotron_mass(kts, energies, n_branch)` (new in 0.14.0) gives the
+  cyclotron mass of a branch at the Fermi contour that holds
+  `n_branch` holes per nm^2, the mass a Shubnikov-de Haas measurement
+  sees (second tutorial).
 
 **Intersubband optics**
 
@@ -722,8 +812,12 @@ compared directly.
   Shubnikov-de Haas frequency and back (`H_OVER_E_T_NM2` is h/e in
   T nm^2); `fit_sdh_mass` -- the cyclotron mass from the temperature
   damping, with `lk_thermal_factor` the damping factor itself
-  (`LK_TESLA_PER_KELVIN` = 14.69 T/K); example 11. The two constants
-  live in `kpenvelope.lab`.
+  (`LK_TESLA_PER_KELVIN` = 14.69 T/K); example 11.
+  `fit_sdh_dingle` (new in 0.14.0) gives the quantum lifetime and the
+  Dingle temperature from the field dependence of the amplitude
+  (`DINGLE_TESLA_PS` = pi m0 / e = 17.86 T ps,
+  `DINGLE_KELVIN_PS` = hbar / (2 pi k_B) = 1.2157 K ps); first
+  tutorial. The constants live in `kpenvelope.lab`.
 
 **Rashba term**
 
@@ -772,14 +866,15 @@ citation.
 - the grid is not uniform, not increasing or shorter than three
   points, the layer thicknesses do not add up to the grid span (within
   half a grid step), or the per-point parameter, band-edge, strain,
-  potential or permittivity arrays do not match the grid;
+  potential or permittivity arrays do not match the grid, or the band
+  edge is not finite;
 - `n_states` is below 1 or above six times the number of grid points;
 - a layer thickness is negative or not finite, or no layer is given;
 - a sheet density `ps` is negative or not finite, or `mixing` or `tol`
   is not a positive finite number;
 - `fill_subbands_thermal` gets energies and masses of different
-  shapes, a positive `ps` with no finite mass to put it in, or a `ps`
-  that does not fit within 5 eV of the subband edges;
+  shapes, a negative mass, a positive `ps` with no finite mass to put
+  it in, or a `ps` that does not fit within 5 eV of the subband edges;
 - a permittivity is not a positive finite number, or `sheet_z` lies
   outside the grid;
 - `filling="kgrid"` is asked for without `kmax`, or with a strain that
@@ -793,8 +888,13 @@ citation.
   momenta that do not increase, or a row count that does not match;
 - `dos_from_dispersion` gets a dispersion that does not fall
   monotonically (use `fill_subbands_kgrid`), or arrays of the wrong
-  shape (below the end of the momentum path it returns NaN: the path
-  says nothing there);
+  shape (below the end of the momentum path, and above its start when
+  it does not start at 0, it returns NaN: the path says nothing
+  there);
+- `cyclotron_mass` gets a path that does not start at 0, a Fermi
+  wavevector beyond the path, or a branch that does not lie above the
+  Fermi energy exactly inside the Fermi wavevector (then the occupied
+  region is not one disk);
 - envelope arrays have the wrong shape for `band_character` or the
   depolarization functions;
 - `depolarization_shift` gets degenerate states, a negative sheet
@@ -822,7 +922,12 @@ citation.
   not fall with temperature, or data so weakly damped that the error
   bar would not be honest (the mass error is as large as the mass, or
   the chi-square does not rise by about one unit, 0.7 to 1.3, at one
-  sigma on either side).
+  sigma on either side);
+- `fit_sdh_dingle` gets fewer than 3 distinct fields, amplitudes,
+  fields or a mass that are not positive, a negative temperature,
+  amplitudes that are not damped towards low field once the
+  temperature factor is divided out, or data whose quantum lifetime
+  has an error as large as itself.
 
 It does not stop, but warns (`RuntimeWarning`), when a self-consistent
 loop or `fill_subbands_kgrid` finds that a state below the computed
@@ -830,7 +935,7 @@ loop or `fill_subbands_kgrid` finds that a state below the computed
 
 ## How the results are checked
 
-105 automated tests run on every push and pull request, on Python 3.9,
+126 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -959,6 +1064,36 @@ the tests use:
 - The cm^-1 conversion matches h c / e from `scipy.constants` to
   1e-17 eV at 1000 cm^-1.
 
+**New in 0.14.0**
+
+- The split solvers give the energies of the full diagonalization of
+  version 0.13.1 (kept in the tests as the reference) to 1e-12 eV, and
+  the same states, compared through the projector onto each complete
+  degenerate level (1e-8, so the arbitrary basis inside a Kramers pair
+  does not enter), over 40 cases: hard walls, a layered stack,
+  potentials, four kinds of strain, zero momentum and four directions.
+  Where a strain couples the halves, the result is the full
+  diagonalization bit for bit. Both self-consistent loops and the
+  momentum-grid filler give the same results with the old and the new
+  solver (1e-9 and 1e-10). At zero momentum the two members of each
+  Kramers pair have exactly equal energies.
+- `cyclotron_mass` is exact for parabolic branches (1e-12), its error
+  on a closed-form nonparabolic branch stays below 0.5 / (nk - 1)^2,
+  and on GaN it agrees with a direct difference of two solves around
+  the Fermi wavevector to 1 % (0.3 % at half the path spacing).
+- `fit_sdh_dingle`: its constants match `scipy.constants` (1e-6 for
+  pi m0 / e, set by the package's 6-digit hbar^2/2m0; 1e-15 for
+  hbar / (2 pi k_B)); its Dingle temperature gives the same damping as
+  `exp(-pi / (omega_c tau_q))` (1e-12); it recovers the lifetime of
+  noise-free data; it equals `numpy.polyfit` (values and error bars to
+  1e-9, with and without weights); over 400 simulated data sets with
+  3 % noise the spread of the lifetimes equals the reported error to
+  12 % and the mean chi-square per degree of freedom is 1 to 0.1; and
+  the mass error is propagated as refits at shifted masses say (1e-5).
+- Both tutorials run. The first recovers the true values its data
+  were made from within two error bars; the second prints frequencies
+  that obey the Onsager relation and holes that add up to the density.
+
 **Corrections in 0.13.0**
 
 - Over a sweep of 32 layer stacks with decimal thicknesses, every grid
@@ -988,7 +1123,23 @@ the tests use:
 
 ## Corrections in earlier versions
 
-**0.13.0 (this release) fixed five silent errors.** Each has a test
+**0.14.0 (this release) fixed two silent errors.** Each has a test
+that fails on 0.13.1.
+
+- `dos_from_dispersion` on a momentum path that does not start at 0
+  returned a density of states of 0 above the energy of the first
+  point, where the band continues, and a spike next to it (2.6 instead
+  of 1.04 nm^-2 eV^-1 on the test's demo set). It now returns NaN
+  there, as it has at the other end of the path since 0.13.0.
+- `fill_subbands_thermal` accepted a negative mass and gave that
+  subband a negative number of holes (-0.134 nm^-2 in the test). A
+  negative mass is now refused.
+
+A test of the depolarization inversion also depended on which member
+of a Kramers pair the solver returns; it no longer does (see
+[CHANGELOG.md](CHANGELOG.md)).
+
+**0.13.0 fixed five silent errors.** Each has a test
 that fails on 0.12.0; [CHANGELOG.md](CHANGELOG.md) has the numbers.
 
 - `layered_profile` decided which layer a grid point on an interface
@@ -1084,11 +1235,15 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 - A permittivity profile changes only the electrostatics (Gauss's
   law). Image-charge effects of a permittivity step on the holes are
   not included. No permittivity is shipped for AlN.
-- Every solve builds and diagonalizes a dense matrix of size 6 N, so
-  the time grows as N^3. On one core of a shared, loaded test machine
-  one GaN solve took about 0.25 s at 97 points, 11 s at 301 points and
-  100 s at 601 points (times vary with the machine); loops and
-  momentum grids multiply that.
+- Every solve builds a dense matrix of size 6 N and diagonalizes it in
+  pieces (two of size 3 N at finite in-plane momentum), so the time
+  still grows as N^3. On one core of a shared, loaded test machine one
+  GaN solve with version 0.14.0 took about 0.1 s at 97 points, 0.7 s
+  at 301 points and 2.5 s at 601 points at zero in-plane momentum, and
+  about 0.5 s, 10 s and 70 s at finite momentum (times vary with the
+  machine); loops and momentum grids multiply that. A strain that
+  couples the two halves makes a finite-momentum solve several times
+  slower.
 - The Rashba term is for the conduction-band companion problem. The
   valence-band k-linear terms beyond the six-band Chuang-Chang model
   are not included: no vetted coefficients in our sources.
@@ -1106,6 +1261,16 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   not change over the temperature range, and that each amplitude is
   that of one frequency at one field. It returns the cyclotron mass of
   the Fermi contour, not the mass at the subband edge.
+- `fit_sdh_dingle` assumes one frequency (no beating), a quantum
+  lifetime that does not change with the field, and the low-field
+  regime where the oscillations are small and sinusoidal. It fits the logarithm of the amplitudes, weighted by
+  `(A / sigma_A)^2`, which is right to first order in the relative
+  errors.
+- `cyclotron_mass` assumes a branch that depends only on the size of
+  the momentum (no in-plane anisotropic strain) and holds its holes in
+  one disk around `k = 0`; when the occupied region is a ring (a
+  maximum away from `k = 0` that reaches above the Fermi energy) it
+  refuses.
 
 ## Where it comes from
 
