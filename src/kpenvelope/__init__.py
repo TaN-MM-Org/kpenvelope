@@ -13,13 +13,15 @@ from .params import (WurtziteParameters, aln_rinke2008, demo_single_band,
                      gan_rinke2008)
 from .character import (CHARACTER_GROUPS, band_character, character_vs_k,
                         dominant_character)
-from .dispersion import (dipole_matrix, dos_from_dispersion,
-                         group_velocity, local_mass, oscillator_strengths,
-                         spin_splitting, splitting_vs_k, subband_dispersion)
+from .dispersion import (cyclotron_mass, dipole_matrix,
+                         dos_from_dispersion, group_velocity, local_mass,
+                         oscillator_strengths, spin_splitting,
+                         splitting_vs_k, subband_dispersion)
 from .hamiltonian import assemble_hamiltonian, HBAR2_OVER_2M0
-from .heterostructure import (assemble_heterostructure, layered_profile,
+from .heterostructure import (assemble_heterostructure,
+                              heterostructure_energies, layered_profile,
                               solve_heterostructure)
-from .solver import solve_subbands
+from .solver import solve_subbands, subband_energies
 from .selfconsistent import (KB_EV_PER_K, fill_subbands_kgrid,
                              fill_subbands_thermal, solve_self_consistent,
                              solve_self_consistent_hetero,
@@ -27,7 +29,8 @@ from .selfconsistent import (KB_EV_PER_K, fill_subbands_kgrid,
 from .strain import strain_blocks
 from .units import (energy_from_wavenumber, energy_to_wavenumber,
                     sheet_density_from_cm2, sheet_density_to_cm2)
-from .lab import (fit_band_offset, fit_sdh_mass, lk_thermal_factor,
+from .lab import (fit_band_offset, fit_sdh_dingle, fit_sdh_mass,
+                  lk_thermal_factor,
                   offset_sensitivity, sdh_frequency,
                   sheet_density_from_sdh, sheet_density_from_shift)
 from .rashba import (rashba_hamiltonian, rashba_spins,
@@ -35,7 +38,7 @@ from .rashba import (rashba_hamiltonian, rashba_spins,
 from .isb import (depolarization_shift, isb_lineshape,
                   overlap_geometry_integral)
 
-__version__ = "0.13.1"
+__version__ = "0.14.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -55,4 +58,6 @@ __all__ = [
     "sheet_density_from_sdh", "sdh_frequency", "fit_sdh_mass",
     "lk_thermal_factor", "energy_from_wavenumber", "energy_to_wavenumber",
     "rashba_hamiltonian", "rashba_splitting", "rashba_spins",
+    "fit_sdh_dingle", "cyclotron_mass", "subband_energies",
+    "heterostructure_energies",
 ]

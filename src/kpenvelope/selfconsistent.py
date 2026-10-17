@@ -34,7 +34,7 @@ import warnings
 import numpy as np
 
 from .poisson import hole_potential, _check_eps
-from .solver import solve_subbands
+from .solver import solve_subbands, subband_energies
 from .hamiltonian import HBAR2_OVER_2M0
 
 # exact SI defining constants (2019 redefinition): both are exact
@@ -79,8 +79,8 @@ def _inplane_masses(p, z, potential, energies0, n_states, dk=_DK):
     m*/m0 = (hbar^2/2m0) * dk^2 / (E(0) - E(dk)) for a band curving
     downward from the valence edge (hole mass positive).
     """
-    e_k, _ = solve_subbands(p, z, kx=dk, ky=0.0, potential=potential,
-                            n_states=n_states)
+    e_k = subband_energies(p, z, kx=dk, ky=0.0, potential=potential,
+                           n_states=n_states)
     return _masses_from_step(energies0[:n_states], e_k[:n_states], dk)
 
 
@@ -108,6 +108,15 @@ def _check_fill_inputs(energies, masses, ps, strict=True):
     if not np.all(np.isfinite(energies)):
         raise ValueError("energies must be finite")
     ps = _check_ps(ps)
+    if np.any(masses < 0.0):
+        # before v0.14.0 a negative mass gave a negative density of
+        # states and with it negative occupations (holes taken away)
+        raise ValueError(
+            "masses must not be negative (units of m0): a negative "
+            "mass makes a negative density of states and negative "
+            f"occupations; got {masses.tolist()}. A subband that rises "
+            "from its edge is not parabolic; fill it from its computed "
+            "dispersion with fill_subbands_kgrid")
     dos = (masses / HBAR2_OVER_2M0) / (4.0 * np.pi)
     if strict and ps > 0.0 and not np.any(np.isfinite(dos) & (dos > 0.0)):
         # before v0.13.0: all-zero occupations, a total of 0 instead of ps
@@ -189,7 +198,10 @@ def fill_subbands_thermal(energies, masses, ps,
     Refuses (new in v0.13.0) a negative or non-finite ps, energies and
     masses of different shapes, and a positive ps when no subband has a
     finite positive mass (before, that returned all zeros, so the
-    occupations did not add up to ps).
+    occupations did not add up to ps). Refuses (new in v0.14.0) a
+    negative mass: before, it gave negative occupations, for example
+    [0.234, -0.134] nm^-2 for edges [0, -0.01] eV, masses [0.5, -0.3]
+    and ps = 0.1.
 
     Returns per-subband sheet densities (nm^-2).
     """
@@ -455,11 +467,11 @@ def _check_filling(filling, kmax, nk, ntheta, strain):
     return _polar_grid(kmax, nk, ntheta)
 
 
-def _parabolic_state(solve, z, vh, ps, n_states, T):
+def _parabolic_state(solve, energies_at, z, vh, ps, n_states, T):
     """Edge energies, envelopes, step masses, parabolic occupations and
     the density they make (the historical filling model)."""
     energies, envelopes = solve(vh, 0.0, 0.0)
-    e_k, _ = solve(vh, _DK, 0.0)
+    e_k = energies_at(vh, _DK, 0.0)
     masses = _masses_from_step(energies, e_k)
     occ, ef = _fill_thermal_ef(energies, masses, ps, T)
     density = np.zeros_like(z)
@@ -470,7 +482,7 @@ def _parabolic_state(solve, z, vh, ps, n_states, T):
     return energies, envelopes, masses, occ, density, float("nan"), ef
 
 
-def _kgrid_state(solve, z, vh, ps, n_states, T, grid):
+def _kgrid_state(solve, energies_at, z, vh, ps, n_states, T, grid):
     """As `_parabolic_state`, but occupations and density come from the
     states on the whole polar momentum grid: each state's |F(z)|^2 is
     weighted by its share of the occupied momentum area."""
@@ -491,7 +503,7 @@ def _kgrid_state(solve, z, vh, ps, n_states, T, grid):
     w, ef = _kgrid_fill(E, kts, ps, T)
     occ = w.sum(axis=(1, 2))
     density = np.einsum("nij,nijz->z", w, P)
-    e_k, _ = solve(vh, _DK, 0.0)
+    e_k = energies_at(vh, _DK, 0.0)
     masses = _masses_from_step(energies, e_k)
     return energies, envelopes, masses, occ, density, float(ef), float(ef)
 
@@ -511,14 +523,16 @@ def _check_loop_inputs(ps, mixing, tol):
     return ps
 
 
-def _loop(solve, z, ps, eps_r, n_states, mixing, tol, max_iter, T,
-          filling, grid, sheet_z):
+def _loop(solve, energies_at, z, ps, eps_r, n_states, mixing, tol,
+          max_iter, T, filling, grid, sheet_z):
     if grid is None:
         def state(vh):
-            return _parabolic_state(solve, z, vh, ps, n_states, T)
+            return _parabolic_state(solve, energies_at, z, vh, ps,
+                                    n_states, T)
     else:
         def state(vh):
-            return _kgrid_state(solve, z, vh, ps, n_states, T, grid)
+            return _kgrid_state(solve, energies_at, z, vh, ps, n_states,
+                                T, grid)
     vh = np.zeros_like(z)
     density = np.zeros_like(z)
     residual = np.inf
@@ -542,7 +556,7 @@ def _loop(solve, z, ps, eps_r, n_states, mixing, tol, max_iter, T,
     # is the first state below the computed ones occupied? (v0.13.0)
     sufficient = True
     if n_states < 6 * z.size:
-        e_next = float(solve(vh, 0.0, 0.0, n_states + 1)[0][n_states])
+        e_next = float(energies_at(vh, 0.0, 0.0, n_states + 1)[n_states])
         if _next_state_occupied(e_next, ef_check, T):
             sufficient = False
             _warn_truncated(n_states, e_next, ef_check, stacklevel=4)
@@ -612,8 +626,12 @@ def solve_self_consistent(p, z, ps: float, n_states: int = 6,
         return solve_subbands(p, z, kx=kx, ky=ky, potential=vh,
                               n_states=n)
 
-    return _loop(solve, z, ps, p.eps_r, n_states, mixing, tol,
-                 int(max_iter), T, filling, grid, None)
+    def energies_at(vh, kx, ky, n=n_states):
+        return subband_energies(p, z, kx=kx, ky=ky, potential=vh,
+                                n_states=n)
+
+    return _loop(solve, energies_at, z, ps, p.eps_r, n_states, mixing,
+                 tol, int(max_iter), T, filling, grid, None)
 
 
 def solve_self_consistent_hetero(z, params_list, band_edge, ps: float,
@@ -656,7 +674,8 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps: float,
     deep-barrier limit approaches it, and occupations sum to exact
     neutrality.
     """
-    from .heterostructure import solve_heterostructure
+    from .heterostructure import (heterostructure_energies,
+                                  solve_heterostructure)
     if int(max_iter) < 1:
         raise ValueError("max_iter must be at least 1")
     ps = _check_loop_inputs(ps, mixing, tol)
@@ -672,5 +691,10 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps: float,
                                      potential=vh, n_states=n,
                                      strain_list=strain_list)
 
-    return _loop(solve, z, ps, eps_r, n_states, mixing, tol,
+    def energies_at(vh, kx, ky, n=n_states):
+        return heterostructure_energies(z, params_list, band_edge, kx, ky,
+                                        potential=vh, n_states=n,
+                                        strain_list=strain_list)
+
+    return _loop(solve, energies_at, z, ps, eps_r, n_states, mixing, tol,
                  int(max_iter), T, filling, grid, sheet_z)

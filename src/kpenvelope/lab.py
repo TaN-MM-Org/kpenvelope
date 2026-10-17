@@ -55,11 +55,22 @@ oscillation amplitude dies away with temperature.
   is exactly what `local_mass` returns between two momenta around k_F,
   so a measured mass can be set against the computed dispersion.
 
+* `fit_sdh_dingle` (new in v0.14.0): the quantum lifetime tau_q and
+  the Dingle temperature from how the amplitude falls towards low
+  field at one temperature (a Dingle plot), using the two-dimensional
+  form A = 4 rho_0 R_T exp(-pi / (omega_c tau_q)) of P. T. Coleridge,
+  R. Stoner and R. Fletcher, Phys. Rev. B 39, 1120 (1989), and
+  T_D = hbar / (2 pi k_B tau_q), which makes the Dingle factor equal to
+  Shoenberg's exp(-2 pi^2 k_B T_D / (hbar omega_c)) (Magnetic
+  Oscillations in Metals, chapter 8). The mass from `fit_sdh_mass`
+  goes in with its error, which is propagated.
+
 The constants are computed, not typed: h/e from the exact 2019 SI
 values of h and e, and 2 pi^2 k_B m0 / (hbar e) (14.69 T/K) from the
 exact k_B, h and e and the package's own hbar^2/2m0 (m0 = hbar^2 /
 (2 * HBAR2_OVER_2M0)), so it is consistent with every mass the
-package computes.
+package computes; pi m0 / e (17.86 T ps) the same way, and
+hbar / (2 pi k_B) (1.2157 K ps) from the exact h and k_B.
 
 Units as everywhere in this package: energies in eV, lengths in nm,
 sheet densities in nm^-2 (1e13 cm^-2 = 0.1 nm^-2); fields in tesla,
@@ -72,13 +83,14 @@ import math
 import numpy as np
 
 from .hamiltonian import HBAR2_OVER_2M0
-from .heterostructure import solve_heterostructure
+from .heterostructure import heterostructure_energies
 from .isb import depolarization_shift
 
 __all__ = ["fit_band_offset", "offset_sensitivity",
            "sheet_density_from_shift", "sheet_density_from_sdh",
            "sdh_frequency", "fit_sdh_mass", "lk_thermal_factor",
-           "H_OVER_E_T_NM2", "LK_TESLA_PER_KELVIN"]
+           "fit_sdh_dingle", "H_OVER_E_T_NM2", "LK_TESLA_PER_KELVIN",
+           "DINGLE_TESLA_PS", "DINGLE_KELVIN_PS"]
 
 # exact 2019 SI defining constants
 _H = 6.62607015e-34          # J s
@@ -96,9 +108,22 @@ LK_TESLA_PER_KELVIN = (2.0 * math.pi ** 2 * _KB / (_H / (2.0 * math.pi) * _E)
                        * (_H / (2.0 * math.pi)) ** 2
                        / (2.0 * HBAR2_OVER_2M0 * _E * 1e-18))
 
+# m0 in kg from the package's own hbar^2/2m0 (as in LK_TESLA_PER_KELVIN)
+_M0 = (_H / (2.0 * math.pi)) ** 2 / (2.0 * HBAR2_OVER_2M0 * _E * 1e-18)
+
+#: pi m0 / e in T ps: the Dingle factor is
+#: exp(-pi / (omega_c tau_q)) = exp(-DINGLE_TESLA_PS * (m*/m0) / (B tau_q))
+#: with B in tesla and tau_q in ps (new in v0.14.0)
+DINGLE_TESLA_PS = math.pi * _M0 / _E * 1e12
+
+#: hbar / (2 pi k_B) in K ps: the Dingle temperature is
+#: T_D = DINGLE_KELVIN_PS / tau_q (tau_q in ps), from the exact SI
+#: values of h and k_B (new in v0.14.0)
+DINGLE_KELVIN_PS = _H / (4.0 * math.pi ** 2 * _KB) * 1e12
+
 
 def _spacing(z, params_list, band_edge_unit, offset, states, kwargs):
-    energies, _ = solve_heterostructure(
+    energies = heterostructure_energies(
         z, params_list, band_edge=offset * band_edge_unit,
         n_states=max(states) + 1, **kwargs)
     i, j = states
@@ -536,3 +561,141 @@ def fit_sdh_mass(temperatures_K, amplitudes, field_T,
             "correlation": float(corr),
             "chi2_red": None if chi2_red is None else float(chi2_red),
             "dof": int(dof), "x_max": float(a.max() * m)}
+
+
+def fit_sdh_dingle(fields_T, amplitudes, temperature_K, mass_ratio,
+                   sigma_amplitudes=None, sigma_mass_ratio=None) -> dict:
+    """Quantum lifetime and Dingle temperature from the field
+    dependence of SdH amplitudes (a Dingle plot; new in v0.14.0).
+
+    In a two-dimensional gas the low-field SdH oscillation of the
+    resistivity has the envelope
+
+        A(B) = A0 * R_T(B) * exp(-pi / (omega_c tau_q)),
+        omega_c = e B / m*,  R_T = X / sinh X  (as in `fit_sdh_mass`),
+
+    with A0 = 4 rho_0 when the amplitudes are of rho_xx (P. T.
+    Coleridge, R. Stoner and R. Fletcher, Phys. Rev. B 39, 1120 (1989)),
+    so ln(A / R_T) is a straight line in 1/B with slope
+    -pi m* / (e tau_q). This fits that line by (weighted) linear least
+    squares and returns the quantum lifetime tau_q and the Dingle
+    temperature T_D = hbar / (2 pi k_B tau_q), the temperature whose
+    Lifshitz-Kosevich factor exp(-2 pi^2 k_B T_D / (hbar omega_c)) is
+    the same damping (D. Shoenberg, Magnetic Oscillations in Metals,
+    Cambridge University Press (1984), chapter 8).
+
+    fields_T : (M,) fields of the amplitudes (tesla), M >= 3 distinct.
+    amplitudes : (M,) positive envelope amplitudes (any unit; in units
+        of rho_0, a homogeneous sample should give A0 near 4).
+    temperature_K : the temperature, one value or one per field (K).
+    mass_ratio : the cyclotron mass m*/m0, e.g. from `fit_sdh_mass`.
+    sigma_amplitudes : optional (M,) 1-sigma amplitude errors. With
+        them each point of the line is weighted by (A / sigma_A)^2
+        (the error of ln A to first order), the error bars come from
+        them alone, and ``chi2_red`` tests the model. Without them all
+        points weigh the same and the error bars are scaled by the
+        scatter (``chi2_red`` is then None).
+    sigma_mass_ratio : optional 1-sigma error of the mass. Its effect
+        on tau_q (through omega_c and through the R_T correction) is
+        propagated with the exact derivative and reported on its own
+        and in the total.
+
+    Returns dict(tau_q_ps, sigma_tau_q_ps, sigma_tau_q_stat_ps,
+    sigma_tau_q_mass_ps, dingle_temperature_K,
+    sigma_dingle_temperature_K, A0, sigma_A0, slope_T, sigma_slope_T,
+    chi2_red, dof). sigma_tau_q_ps adds the statistical and the mass
+    part in quadrature.
+
+    Assumes one oscillation frequency (no beating), a field-independent
+    tau_q and the low-field regime, where the oscillations are
+    sinusoidal and small. Refuses fewer than 3 distinct fields,
+    non-positive amplitudes, fields or mass, a negative temperature,
+    corrected amplitudes that do not fall towards low field (slope not
+    negative: no finite tau_q), and a tau_q whose statistical 1-sigma
+    error is as large as tau_q itself.
+    """
+    B = np.asarray(fields_T, dtype=float)
+    y_amp = np.asarray(amplitudes, dtype=float)
+    if B.ndim != 1 or y_amp.shape != B.shape:
+        raise ValueError("fields_T and amplitudes must be 1D arrays of "
+                         "the same length")
+    if not (np.all(np.isfinite(B)) and np.all(B > 0.0)):
+        raise ValueError("fields_T must be finite and > 0 (tesla)")
+    if B.size < 3 or np.unique(B).size < 3:
+        raise ValueError("need amplitudes at 3 or more distinct fields "
+                         "to fit a line with an error bar")
+    if not (np.all(np.isfinite(y_amp)) and np.all(y_amp > 0.0)):
+        raise ValueError("amplitudes must be finite and > 0 (the size "
+                         "of the oscillation envelope)")
+    T = np.broadcast_to(np.asarray(temperature_K, dtype=float), B.shape)
+    if not (np.all(np.isfinite(T)) and np.all(T >= 0.0)):
+        raise ValueError("temperature_K must be finite and >= 0 (K), "
+                         "one value or one per field")
+    m = float(mass_ratio)
+    if not (np.isfinite(m) and m > 0.0):
+        raise ValueError("mass_ratio must be finite and > 0 (m*/m0)")
+    sm = 0.0
+    if sigma_mass_ratio is not None:
+        sm = float(sigma_mass_ratio)
+        if not (np.isfinite(sm) and sm >= 0.0):
+            raise ValueError("sigma_mass_ratio must be finite and >= 0")
+    absolute = sigma_amplitudes is not None
+    if absolute:
+        sa = np.asarray(sigma_amplitudes, dtype=float)
+        if sa.shape != y_amp.shape or not (np.all(np.isfinite(sa))
+                                           and np.all(sa > 0.0)):
+            raise ValueError("sigma_amplitudes must be finite, > 0 and "
+                             "one per amplitude")
+        w = (y_amp / sa) ** 2
+    else:
+        w = np.ones_like(y_amp)
+
+    x = 1.0 / B
+    X = LK_TESLA_PER_KELVIN * m * T / B
+    y = np.log(y_amp) - np.log(_lk_R(X))
+    W, Sx, Sy = w.sum(), (w * x).sum(), (w * y).sum()
+    Sxx, Sxy = (w * x * x).sum(), (w * x * y).sum()
+    delta = W * Sxx - Sx * Sx
+    slope = (W * Sxy - Sx * Sy) / delta
+    icpt = (Sxx * Sy - Sx * Sxy) / delta
+    resid = y - icpt - slope * x
+    chi2 = float((w * resid ** 2).sum())
+    dof = B.size - 2
+    var_s, var_a = W / delta, Sxx / delta
+    if absolute:
+        chi2_red = chi2 / dof
+    else:
+        chi2_red = None
+        var_s, var_a = var_s * chi2 / dof, var_a * chi2 / dof
+    if not slope < 0.0:
+        raise ValueError(
+            "ln(A / R_T) does not fall with 1/B (slope "
+            f"{slope:.4g} T): the amplitudes are not damped towards low "
+            "field, so no finite quantum lifetime follows. Check the "
+            "mass, the temperature and that the amplitudes are those "
+            "of one frequency")
+    tau = -DINGLE_TESLA_PS * m / slope
+    sig_s = math.sqrt(var_s)
+    s_stat = tau * sig_s / abs(slope)
+    if not s_stat < tau:
+        raise ValueError(
+            f"the data do not determine the quantum lifetime: tau_q = "
+            f"{tau:.3g} ps with a statistical 1-sigma error of "
+            f"{s_stat:.3g} ps. Measure over a wider range of 1/B")
+    # d(slope)/dm through the R_T correction: dy/dm = -dlnR/dX * X/m
+    c = w * (W * x - Sx) / delta
+    ds_dm = float((c * (-_lk_dlnR_dX(X) * X / m)).sum())
+    dtau_dm = tau * (1.0 / m - ds_dm / slope)
+    s_mass = abs(dtau_dm) * sm
+    s_tot = math.hypot(s_stat, s_mass)
+    td = DINGLE_KELVIN_PS / tau
+    A0 = math.exp(icpt)
+    return {"tau_q_ps": float(tau), "sigma_tau_q_ps": float(s_tot),
+            "sigma_tau_q_stat_ps": float(s_stat),
+            "sigma_tau_q_mass_ps": float(s_mass),
+            "dingle_temperature_K": float(td),
+            "sigma_dingle_temperature_K": float(td * s_tot / tau),
+            "A0": float(A0), "sigma_A0": float(A0 * math.sqrt(var_a)),
+            "slope_T": float(slope), "sigma_slope_T": float(sig_s),
+            "chi2_red": None if chi2_red is None else float(chi2_red),
+            "dof": int(dof)}

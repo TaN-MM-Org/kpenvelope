@@ -37,6 +37,7 @@ import numpy as np
 
 from .hamiltonian import (assemble_hamiltonian, bulk_blocks, check_grid,
                           check_n_states, check_potential)
+from .solver import envelopes_from_vectors, top_eigenpairs
 
 
 def layered_profile(z, layers) -> tuple:
@@ -114,6 +115,8 @@ def assemble_heterostructure(z, params_list, band_edge=None,
         band_edge = np.asarray(band_edge, dtype=float)
         if band_edge.shape != (n,):
             raise ValueError("band_edge must have one value per grid point")
+        if not np.all(np.isfinite(band_edge)):
+            raise ValueError("band_edge must be finite (eV)")
 
     blocks = [bulk_blocks(p, kx, ky) for p in params_list]
     if strain_list is not None:
@@ -157,23 +160,31 @@ def assemble_heterostructure(z, params_list, band_edge=None,
 
 def solve_heterostructure(z, params_list, band_edge=None, kx: float = 0.0,
                           ky: float = 0.0, potential=None, n_states: int = 8,
-                          strain_list=None):
+                          strain_list=None) -> tuple:
     """Top valence states of a layered heterostructure.
 
     Same return convention as :func:`~kpenvelope.solver.solve_subbands`:
     (energies descending in eV, envelopes (n_states, 6, N) normalized to
-    unit total probability).
+    unit total probability). Since v0.14.0 the matrix is diagonalized in
+    exact independent blocks where it has them, as in `solve_subbands`
+    (energies equal to rounding, several times faster).
     """
     z = check_grid(z)
     n_states = check_n_states(n_states, z.size)
     H = assemble_heterostructure(z, params_list, band_edge, kx, ky,
                                  potential, strain_list=strain_list)
-    vals, vecs = np.linalg.eigh(H)
-    order = np.argsort(vals)[::-1][:n_states]
-    dz = z[1] - z[0]
-    envelopes = np.empty((len(order), 6, z.size), dtype=complex)
-    for j, o in enumerate(order):
-        v = vecs[:, o].reshape(z.size, 6).T
-        norm = np.sqrt((np.abs(v) ** 2).sum() * dz)
-        envelopes[j] = v / norm
-    return vals[order], envelopes
+    vals, vecs = top_eigenpairs(H, z.size, n_states, kx, ky)
+    return vals, envelopes_from_vectors(vecs, z.size, z[1] - z[0])
+
+
+def heterostructure_energies(z, params_list, band_edge=None,
+                             kx: float = 0.0, ky: float = 0.0,
+                             potential=None, n_states: int = 8,
+                             strain_list=None) -> np.ndarray:
+    """The energies of `solve_heterostructure` (bit for bit) without
+    building the envelopes (new in v0.14.0)."""
+    z = check_grid(z)
+    n_states = check_n_states(n_states, z.size)
+    H = assemble_heterostructure(z, params_list, band_edge, kx, ky,
+                                 potential, strain_list=strain_list)
+    return top_eigenpairs(H, z.size, n_states, kx, ky, vectors=False)[0]
