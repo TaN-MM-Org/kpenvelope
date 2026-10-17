@@ -65,9 +65,18 @@ def test_sheet_density_exact_round_trip_and_linearity():
     e, env = solve_heterostructure(Z, PARAMS_LIST,
                                    band_edge=OFFSET_TRUE * UNIT,
                                    n_states=6)
+    # states 4 and 5 are a Kramers pair, and which member overlaps with
+    # state 0 depends on the basis the eigensolver picks inside the pair
+    # (v0.14.0 returns pure partners, one of which has S = 0); use the
+    # member with the larger S, whatever its index
+    j = max((4, 5), key=lambda k: depolarization_shift(
+        Z, env[0], env[k], e[0], e[k], 1.0, GAN.eps_r)["S"])
+    env = {0: env[0], 5: env[j]}
+    e = {0: e[0], 5: e[j]}
     ns_true = 0.05                                  # nm^-2
     fwd = depolarization_shift(Z, env[0], env[5], e[0], e[5],
                                n_sheet=ns_true, eps_r=GAN.eps_r)
+    assert fwd["alpha"] > 0.0
     inv = sheet_density_from_shift(Z, env[0], env[5], e[0], e[5],
                                    fwd["E_shifted"], GAN.eps_r,
                                    sigma_e_ev=1e-4)
