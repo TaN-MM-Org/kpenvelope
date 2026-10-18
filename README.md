@@ -27,6 +27,8 @@ numbers for. It answers questions such as:
 - What hole density, mass and quantum lifetime do my magnetotransport
   (Shubnikov-de Haas) measurements give, with error bars, and which
   frequencies and masses should the computed hole gas show?
+- How much does each computed level depend on each material number,
+  and what error bar do the uncertainties of those numbers give it?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -144,8 +146,9 @@ Units and conventions, used everywhere:
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with kpenvelope 0.14.0 (the same as with 0.13.1). Numbers labeled illustrative are
-chosen for the example, not taken from a source.
+printed with kpenvelope 0.15.0 (examples 1 to 11 print the same as
+with 0.14.0). Numbers labeled illustrative are chosen for the example,
+not taken from a source.
 
 ### 1. Energy levels and what they are made of
 
@@ -353,7 +356,8 @@ convention (it changed in version 0.14.0, and before that it could
 differ between computers), and S can differ with it: for HH1 -> HH2
 of a tilted 6 nm GaN well, one HH2 member gives 0.10378 nm and the
 other 0. S summed over the two members of the upper pair does not
-depend on the convention. Use states at
+depend on the convention, and `level_transitions` (example 12) gives
+that sum for every level. Use states at
 zero in-plane momentum, where the solver's states are real. The
 result does not depend on the arbitrary phase of either state (since
 version 0.13.0; see [Corrections](#corrections-in-earlier-versions)).
@@ -474,7 +478,7 @@ computed energies, instead of treating each state as a parabola. The
 hole density is built from the wavefunctions at every one of those
 momenta, not only at `k = 0`. Each iteration needs 17 solutions
 instead of 2, so expect it to take about ten times longer than example
-2 (with version 0.14.0, about 8 s for example 2 and 90 s for this one
+2 (with version 0.15.0, about 5 s for example 2 and 60 s for this one
 on one core of our loaded test machine). No state is left
 with an infinite mass and no holes any more. The two members of a pair
 still hold slightly different numbers of holes, and that is physical:
@@ -633,12 +637,97 @@ between two momenta just below and above the Fermi wavevector
 as a finite difference, for the computed dispersion, so the two can be
 compared directly.
 
+### 12. Transitions between levels, not single states
+
+```python
+import numpy as np
+from kpenvelope import gan_rinke2008, level_transitions, solve_subbands
+
+p = gan_rinke2008()
+z = np.linspace(0.0, 6.0, 61)        # a 6 nm GaN layer
+v = 0.08 * z                         # a tilting field (illustrative)
+E, F = solve_subbands(p, z, potential=v, n_states=6)
+
+lev = level_transitions(z, E, F)     # from the top level (initial=0)
+for L, states in enumerate(lev["levels"]):
+    print(f"level {L} (states {', '.join(map(str, states))}): "
+          f"{lev['transition_energy'][L] * 1e3:6.2f} meV down, "
+          f"|z|^2 {lev['z2'][L]:.5f} nm^2, S {lev['S'][L]:.5f} nm")
+```
+
+```
+level 0 (states 0, 1):   0.00 meV down, |z|^2 0.00000 nm^2, S 0.00000 nm
+level 1 (states 2, 3):  11.07 meV down, |z|^2 0.00000 nm^2, S 0.00000 nm
+level 2 (states 4, 5):  88.40 meV down, |z|^2 0.17109 nm^2, S 0.10378 nm
+```
+
+At zero in-plane momentum each level is a Kramers pair, and which two
+states of the pair the solver returns is a convention (see example
+5). A number taken from one state, such as `|z_fi|^2` or the
+depolarization integral `S`, can change with that convention; for
+level 2 here one state gives `S` = 0.10378 nm and the other 0.
+`level_transitions` sums over the states of the final level and
+averages over those of the initial level, as a transition rate
+between levels does, so its numbers do not depend on the convention.
+Level 1 is light-hole-like and does not couple to light polarized
+along `z` from the heavy-hole top level; level 2 does. Pass
+`mass_ratio=` for oscillator strengths, and `initial=` to start from
+another level. `degenerate_levels(energies)` gives the grouping alone.
+
+### 13. How much a level depends on each material number
+
+```python
+import numpy as np
+from kpenvelope import gan_rinke2008, parameter_sensitivities
+
+p = gan_rinke2008()
+z = np.linspace(0.0, 5.0, 51)
+s = parameter_sensitivities(z, p, kx=0.4, n_states=2,
+                            sigmas={"A5": 0.1, "A6": 0.1})  # illustrative
+print(f"top state at k = 0.4 nm^-1: {s['energies'][0] * 1e3:.2f} meV")
+for name, d in zip(s["names"], s["derivatives"][0, 0]):
+    if name.startswith("A"):
+        print(f"  dE/d{name:<6s} {d * 1e3:+8.3f} meV per unit of {name}")
+    else:
+        print(f"  dE/d{name:<6s} {d:+8.3f} meV per meV")
+print(f"error from A5 and A6 (+/- 0.1 each): "
+      f"{s['sigma_energies'][0] * 1e3:.2f} meV")
+```
+
+```
+top state at k = 0.4 nm^-1: 0.88 meV
+  dE/dA1      +14.113 meV per unit of A1
+  dE/dA2       +6.096 meV per unit of A2
+  dE/dA3      +13.998 meV per unit of A3
+  dE/dA4       +6.056 meV per unit of A4
+  dE/dA5       -5.592 meV per unit of A5
+  dE/dA6       -0.228 meV per unit of A6
+  dE/ddelta1   +0.994 meV per meV
+  dE/ddelta2   +0.364 meV per meV
+  dE/ddelta3   +0.124 meV per meV
+error from A5 and A6 (+/- 0.1 each): 0.56 meV
+```
+
+`parameter_sensitivities` gives the exact derivative of every computed
+energy with respect to each of the nine parameters (A1..A6 and the
+three splittings) of every material, and, with a band edge, with
+respect to the size of the whole offset profile. Each derivative is
+`v^H (dH/dparameter) v` for the computed state `v` (first-order
+perturbation theory, exact for the discrete matrix), so no step size
+is involved; the tests compare it with finite differences of the
+solver. With `sigmas=`, your 1-sigma errors of the parameters (none
+ship with the package; the 0.1 here is illustrative), it also returns
+the covariance of the energies, assuming independent errors. Here the
+in-plane terms A5 and A6 move the top level at finite momentum, while
+at `k = 0` they would not enter at all. The third tutorial uses this
+for an error budget.
+
 ## Tutorials
 
-Two scripts in `examples/` go from data to a final result with error
+Three scripts in `examples/` go from data to a final result with error
 bars. They use only this package and NumPy. Each prints the output
 below, which is also at the top of the script. The test suite runs
-both and checks their key numbers.
+all three and checks their key numbers.
 
 ### Shubnikov-de Haas data: density, mass and quantum lifetime
 
@@ -707,6 +796,62 @@ not in these numbers. Each branch gives its own frequency here because
 the two members of each pair hold slightly different numbers of holes
 in this lopsided well (example 8).
 
+### An intersubband line: the heavy-hole mass along c, with an error budget
+
+`examples/tutorial_isb_mass_calibration.py` (a few seconds) takes a
+GaN well between AlN barriers (3 nm each, an illustrative offset of
+0.3 eV) and a synthetic "measured" intersubband line, made with a
+fixed random seed from a GaN whose heavy-hole mass along c is 2.0 m0
+(the cited set has 1.876 m0), and
+
+1. finds the line a spectrometer sees: of the transitions from the top
+   level, only the one to the second heavy-hole level couples to light
+   polarized along `z` (`level_transitions`),
+2. lists what that line depends on (`parameter_sensitivities`): at
+   `k = 0` the heavy holes feel only A1 + A3 and the two splittings of
+   each material, and the offset,
+3. calibrates A1 + A3 of GaN, which sets the heavy-hole mass along c
+   (`m0 / |A1 + A3|`, from the heavy-hole diagonal of the Chuang-Chang
+   matrix), by Newton steps with the exact derivative, and
+4. gives the error bar from the line and, separately, from the
+   errors of the other parameters (illustrative errors, not published
+   ones), with the largest parts named.
+
+```
+1. levels of the cited model (k_t = 0), from the top level
+   level  energy (meV)  character  E_top - E (meV)  |z|^2 (nm^2)
+     0        -0.83        HH           0.00          0.0000
+     1       -11.39        LH          10.56          0.0000
+     2       -50.32        HH          49.49          0.3926
+     3       -61.52        LH          60.69          0.0000
+   the line a spectrometer sees (light polarized along c): level 0 -> 2
+2. measured line: 377.9 +/- 2.4 cm^-1 = 46.85 +/- 0.30 meV
+3. what the 0 -> 2 line depends on (dE/dparameter, cited model)
+   GaN A1        -0.0719 eV     AlN A1        -0.0154 eV
+   GaN A3        -0.0719 eV     AlN A3        -0.0154 eV
+   GaN delta1    +0.0104 eV/eV  AlN delta1    -0.0104 eV/eV
+   GaN delta2    +0.0104 eV/eV  AlN delta2    -0.0104 eV/eV
+   offset scale  +0.0031 eV (a 10 % change of the offset moves the line 0.31 meV)
+   every other parameter: 0 (at k_t = 0 the heavy holes feel only these)
+4. calibrating A1 + A3 of GaN (Newton steps with the exact derivative)
+   start  A1 + A3 = -0.53300   line 49.488 meV
+   step 1 A1 + A3 = -0.49634   line 46.821 meV
+   step 2 A1 + A3 = -0.49678   line 46.854 meV
+   step 3 A1 + A3 = -0.49678   line 46.854 meV
+   dE/d(A1 + A3) at the result: exact -0.073647 eV, finite difference -0.073647 eV
+5. result, with illustrative errors: 5 % on A1..A6 of AlN, 5 meV on every splitting, 10 % on the offset
+   A1 + A3 = -0.4968 +/- 0.0040 (line) +/- 0.0536 (other parameters)
+   m_hh^c = 2.013 +/- 0.016 (line) +/- 0.217 (other parameters) m0
+   largest parts of the second error bar (in A1 + A3): AlN A1 0.0393, AlN A3 0.0362, offset 0.0038
+   the cited set has m0 / |A1 + A3| = 1.876 m0; the synthetic line was made with 2.0 m0
+```
+
+The line fixes A1 + A3 to about 1 %, but with these illustrative
+errors the A parameters of the AlN barrier dominate the error bar.
+That is the kind of budget `parameter_sensitivities` gives before a
+measurement is planned. Replace the blocks marked DATA with your own
+structure, line and errors.
+
 ## What is in the package
 
 **Material parameters**
@@ -738,7 +883,11 @@ in this lopsided well (example 8).
   momentum into the two halves of the Chuang-Chang block form (their
   Eq. (45)). The energies are those of the full matrix to rounding,
   3 to 16 times faster (see [Limits](#limits) for times). If a strain
-  couples the halves, the full matrix is used, as before.
+  couples the halves, the full matrix is used, as before. Since
+  version 0.15.0 each half is turned into a real matrix by one phase
+  factor per component before it is diagonalized, which makes a solve
+  at finite momentum about twice as fast again, and the matrix is
+  built without a Python loop over the grid.
 - `strain_blocks(p, strain)` -- the Bir-Pikus strain matrix for a
   symmetric 3 x 3 strain tensor (needs cited D1..D6). Every solver
   takes a `strain=` (or `strain_list=`) argument.
@@ -803,6 +952,23 @@ in this lopsided well (example 8).
   line and its geometry integral `S`; `isb_lineshape` -- a
   strength-weighted Lorentzian line shape at your measured linewidth
   (shape only; the absolute absorbance needs your optical geometry).
+- `level_transitions(z, energies, envelopes, initial, mass_ratio)`
+  (new in 0.15.0) -- `|z|^2`, the oscillator strength and `S` between
+  whole levels (summed over the final level, averaged over the initial
+  one), which do not depend on how the solver picked the states of a
+  Kramers pair; `degenerate_levels(energies)` -- the grouping into
+  levels (example 12).
+
+**Parameter sensitivities and error budgets**
+
+- `parameter_sensitivities(z, params, band_edge, kx, ky, potential,
+  n_states, strain, sigmas, sigma_band_edge_scale)` (new in 0.15.0)
+  -- the exact derivative of every computed energy with respect to
+  A1..A6, `delta1`, `delta2`, `delta3` of every material
+  (`PARAMETER_NAMES`) and to the size of the band-edge profile, and,
+  with your parameter errors, the covariance of the energies (example
+  13 and the third tutorial). `params` is one parameter set (hard
+  walls) or one per grid point (a layered stack).
 
 **Calibration from your own measurement**
 
@@ -927,15 +1093,27 @@ citation.
   fields or a mass that are not positive, a negative temperature,
   amplitudes that are not damped towards low field once the
   temperature factor is divided out, or data whose quantum lifetime
-  has an error as large as itself.
+  has an error as large as itself;
+- `degenerate_levels` or `level_transitions` get energies that are not
+  sorted from the highest down, envelopes that do not match the
+  energies or the grid, an initial level that does not exist, or a
+  mass that is not positive;
+- `parameter_sensitivities` gets an unknown parameter name, a
+  negative or non-finite error, an error of the band-edge scale
+  without a band edge, parameter sets that do not match the grid, or
+  a single mapping of errors for a stack of several materials.
 
 It does not stop, but warns (`RuntimeWarning`), when a self-consistent
 loop or `fill_subbands_kgrid` finds that a state below the computed
-`n_states` would hold holes (example 2).
+`n_states` would hold holes (example 2). With the momentum grid
+(`filling="kgrid"`, or `fill_subbands_kgrid` given more energies than
+it fills) this is checked at every grid momentum since 0.15.0, so a
+branch that rises above its `k = 0` energy before it falls is caught
+too.
 
 ## How the results are checked
 
-126 automated tests run on every push and pull request, on Python 3.9,
+142 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -1094,6 +1272,38 @@ the tests use:
   were made from within two error bars; the second prints frequencies
   that obey the Onsager relation and holes that add up to the density.
 
+**New in 0.15.0**
+
+- At finite momentum the solver's real form of each half of the
+  matrix gives the energies of the complex form of 0.14.0 (kept in the
+  tests as the reference) to 1e-12 eV and the same states (projectors
+  to 1e-10) over 24 cases: GaN, AlN, a layered stack with a potential
+  and a strained well, in six directions. A random complex matrix,
+  which has no real form, is recognized and left complex. The matrix
+  built without the loop equals the loop of 0.14.0 (kept in the
+  tests) to 1e-15 of its largest element.
+- `parameter_sensitivities`: on the demo set the derivatives equal the
+  closed forms of the discrete well to 1e-12; on GaN (zero and finite
+  momentum, and a stack of two materials) they equal central finite
+  differences of the solver's own energies to 2e-8 eV (Richardson
+  extrapolated); the band-edge derivative equals `offset_sensitivity`
+  to 1e-6; and over 400 parameter sets drawn from 2 % errors the
+  spread of the energies equals the propagated error to 12 %.
+- `level_transitions`: on the demo set `|z|^2` and `S` equal the
+  values from the closed-form eigenvectors of the discrete well to
+  1e-12 and the oscillator strength equals the multiplet sum of
+  `oscillator_strengths` to 1e-12; on the tilted GaN well `S` is the
+  0.10378 nm pinned since 0.13.0, and mixing the states inside each
+  Kramers pair at random leaves every level value unchanged to 1e-10.
+- The check for missing holes catches a branch that rises above its
+  `k = 0` energy (a synthetic three-branch test that 0.14.0 passed
+  without a warning).
+- The third tutorial runs and recovers the mass its line was made
+  from within its error bar. The relation it uses, a heavy-hole
+  energy of `delta1 + delta2 + c (A1 + A3) kz^2` at `k_t = 0` (so a
+  mass `m0 / |A1 + A3|` along c), holds for the bulk matrix of GaN and
+  AlN to 1e-14 eV.
+
 **Corrections in 0.13.0**
 
 - Over a sweep of 32 layer stacks with decimal thicknesses, every grid
@@ -1123,7 +1333,22 @@ the tests use:
 
 ## Corrections in earlier versions
 
-**0.14.0 (this release) fixed two silent errors.** Each has a test
+**0.15.0 (this release) fixed one silent error.** It has a test that
+fails on 0.14.0.
+
+- The self-consistent loops with `filling="kgrid"`, and
+  `fill_subbands_kgrid` when given more energies than it fills,
+  checked whether the next state down would hold holes only at
+  `k = 0`. A branch can rise above its `k = 0` energy before it falls
+  (one of a spin-split pair in a lopsided well does), and then holds
+  holes in a ring although its `k = 0` energy lies below the Fermi
+  level. On a tilted 6 nm GaN well (0.05 eV/nm, 61 points) filled
+  with two states at 0.0491 nm^-2, 0.14.0 gave no warning, but the
+  third state holds 7.0e-5 nm^-2 when it is filled too. The check now
+  uses every grid momentum. Results do not change; only the warning
+  and `n_states_sufficient` do.
+
+**0.14.0 fixed two silent errors.** Each has a test
 that fails on 0.13.1.
 
 - `dos_from_dispersion` on a momentum path that does not start at 0
@@ -1238,12 +1463,12 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 - Every solve builds a dense matrix of size 6 N and diagonalizes it in
   pieces (two of size 3 N at finite in-plane momentum), so the time
   still grows as N^3. On one core of a shared, loaded test machine one
-  GaN solve with version 0.14.0 took about 0.1 s at 97 points, 0.7 s
-  at 301 points and 2.5 s at 601 points at zero in-plane momentum, and
-  about 0.5 s, 10 s and 70 s at finite momentum (times vary with the
-  machine); loops and momentum grids multiply that. A strain that
-  couples the two halves makes a finite-momentum solve several times
-  slower.
+  GaN solve with version 0.15.0 took about 0.06 s at 97 points, 0.7 s
+  at 301 points and 3.5 s at 601 points at zero in-plane momentum, and
+  about 0.2 s, 2 s and 23 s at finite momentum (times vary with the
+  machine and its load); loops and momentum grids multiply that. A
+  strain that couples the two halves makes a finite-momentum solve
+  several times slower.
 - The Rashba term is for the conduction-band companion problem. The
   valence-band k-linear terms beyond the six-band Chuang-Chang model
   are not included: no vetted coefficients in our sources.
@@ -1271,6 +1496,22 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   one disk around `k = 0`; when the occupied region is a ring (a
   maximum away from `k = 0` that reaches above the Fermi energy) it
   refuses.
+- `parameter_sensitivities` propagates errors linearly, so the error
+  bar holds while the energies change linearly over one sigma of each
+  parameter, and it treats the errors you pass as independent (for
+  correlated errors, apply your covariance to the returned
+  derivatives). The deformation potentials D1..D6 are not among the
+  parameters. Where a parameter splits a level of several states (only
+  possible for a level that is degenerate by accident, as in the demo
+  set; a Kramers pair is never split), it gives the derivative of the
+  level's mean energy and sets `level_split`.
+- `level_transitions` needs complete levels (an even `n_states` at
+  `k = 0`), and groups states whose energies differ by less than
+  `tol_ev` (1e-9 eV by default), so two different levels closer than
+  that count as one.
+- The check for holes in the next state down uses the momenta of the
+  grid; a maximum between two grid momenta is seen only as far as the
+  grid resolves it.
 
 ## Where it comes from
 

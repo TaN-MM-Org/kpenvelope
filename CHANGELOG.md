@@ -4,6 +4,160 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.15.0 (2026-10-18)
+
+Exact parameter sensitivities with error propagation, intersubband
+numbers for whole levels (which, unlike numbers taken from one member
+of a Kramers pair, do not depend on how the solver picks the pair),
+solves at finite in-plane momentum about twice as fast, a third
+tutorial, and one silent error fixed. Results of calls that were correct before do not change beyond
+rounding (1e-12 eV asserted against the 0.14.0 code), and README
+examples 1 to 11 print exactly what they printed with 0.14.0.
+
+### Added
+
+- `parameter_sensitivities(z, params, band_edge, kx, ky, potential,
+  n_states, strain, sigmas, sigma_band_edge_scale)` (new module
+  `kpenvelope.sensitivity`): the exact derivative of every computed
+  energy with respect to each of A1..A6, delta1, delta2, delta3 of
+  every material (`PARAMETER_NAMES`) and to a common scale of the
+  band-edge profile. The assembled matrix is linear in each of them,
+  so dE/dtheta = v^H (dH/dtheta) v (first-order perturbation theory
+  for a Hermitian matrix, the Hellmann-Feynman theorem), with dH/dtheta
+  the package's own assembly with that parameter set to 1 and all
+  others to 0; no step size is involved. Inside a level of several
+  states the derivative of the level's mean energy is returned, which
+  does not depend on the basis the solver chose; a Kramers pair is
+  never split by these parameters, and a level that is split (only
+  possible for an accidental degeneracy, as in the demo set) is
+  flagged in `level_split`. With 1-sigma parameter errors it returns
+  the covariance J diag(sigma^2) J^T of the energies (independent
+  errors, linear propagation). `params` is one parameter set (hard
+  walls, the matrix of `solve_subbands`) or one per grid point (a
+  layered stack). Checked against the closed forms of the discrete
+  demo well (dE/dA1 = c (2 - 2 cos(l pi / (N + 1))) / dz^2, dE/dA2 =
+  c k_t^2, 1e-12), against Richardson-extrapolated central finite
+  differences of the solvers' energies for every parameter of GaN at
+  k_t = 0 and 0.27 nm^-1 and of both materials of an AlN/GaN/AlN stack
+  (2e-8 eV; the plain difference converges to the same value at second
+  order), against `offset_sensitivity` (1e-6) and against the spread
+  of 400 Monte Carlo parameter sets (12 %).
+- `level_transitions(z, energies, envelopes, initial, mass_ratio,
+  tol_ev)` and `degenerate_levels(energies, tol_ev)` (in
+  `kpenvelope.isb`): `|z|^2`, the oscillator strength and the
+  depolarization integral `S` between whole levels, summed over the
+  states of the final level and averaged over those of the initial
+  level. A number taken from one member of a Kramers pair depends on
+  which basis of the pair the solver returns (for HH1 -> HH2 of the
+  tilted 6 nm GaN well, S = 0.10378 nm for one HH2 member and 0 for
+  the other); the level values do not (any unitary mixing inside each
+  level leaves them unchanged to 1e-10 in the test). Checked against
+  the closed-form sine eigenvectors of the discrete demo well (`|z|^2`
+  and `S` to 1e-12), against the multiplet sum of
+  `oscillator_strengths` (0.9606 of README example 4, 1e-12) and
+  against the 0.10378 nm pinned since 0.13.0.
+- README examples 12 (levels) and 13 (sensitivities), and the third
+  tutorial (see Tutorials).
+
+### Fixed
+
+- **The check for holes in the state below the computed ones looked
+  only at k_t = 0 when the momentum grid was used.**
+  `fill_subbands_kgrid` (when `solve_at_k` returns more energies than
+  it fills) and both self-consistent loops with `filling="kgrid"`
+  compared only the k_t = 0 energy of the next state with the Fermi
+  level. A branch can rise above its k_t = 0 energy before it falls (one
+  member of a spin-split pair in an asymmetric well does), and then
+  holds holes in a ring around k_t = 0 while its k_t = 0 energy lies
+  below E_F, with no warning. On a GaN well tilted by 0.05 eV/nm (6 nm,
+  61 points, ntheta = 1, nk = 61 up to 0.6 nm^-1) filled with 2 states
+  at 0.04913 nm^-2, 0.14.0 gave no warning, but the third state holds
+  7.0e-5 nm^-2 when 4 states are filled (its maximum, 0.040 meV above
+  its edge, lies at 0.02 nm^-1). In the synthetic test (two parabolic
+  branches and a third that rises by 1.2 meV) 0.14.0 gave no warning
+  and `n_states_sufficient = True`, while the third branch holds
+  1.11e-3 nm^-2 (2.7 % of ps) when filled. The next state is now
+  checked at every grid momentum (the final iteration of the loop
+  solves for one more state at each grid momentum; the first
+  `n_states` of such a solve are exactly those of an `n_states`
+  solve, asserted), and the warning says where. Returned numbers do
+  not change. Tests: `test_fill_kgrid_warns_when_the_next_branch_rises_above_its_edge`,
+  `test_kgrid_loop_checks_the_next_branch_on_the_whole_grid`.
+
+### Changed
+
+- The source distribution now also contains `examples/`,
+  `CITATION.cff`, `CHANGELOG.md` and `CONTRIBUTING.md` (new
+  `MANIFEST.in`; no new build dependency). It already contained the
+  tests, but three of them read those files: run from an sdist built
+  as 0.14.0 was, `test_version_is_consistent` (no `CITATION.cff`) and
+  both tutorial tests (no `examples/`) failed. All 142 tests now pass
+  from the unpacked sdist. The wheel is unchanged.
+- Type hints on the assembly functions touched in this release.
+- README: examples 12 and 13, the third tutorial, the new functions,
+  refusals, checks, limits and timings.
+
+### Performance
+
+Measured on one core of a shared, heavily loaded machine
+(OMP_NUM_THREADS=1, load average 5 to 9 on 2 cores), 0.14.0 and
+0.15.0 runs interleaved, median of 7 runs (3 for example 8), GaN on a
+97-point grid with a tilted potential and 8 states unless noted. The
+load made single runs vary by up to a factor of two; a first series
+of the same measurements gave factors within 0.3 of these.
+
+- `solve_subbands` at k = 0.3 nm^-1 (angle 0.4 rad): 0.363 s -> 0.159 s
+  (2.3 times faster). Each Chuang-Chang block is turned into a real
+  symmetric matrix by one phase factor per component (read off the
+  block, accepted only if the imaginary part left is at most 1e-14 of
+  the largest element, which a random complex matrix fails), and real
+  symmetric diagonalization is about three times faster than complex
+  Hermitian diagonalization of the same size.
+- `subband_dispersion` over 16 momenta: 5.69 s -> 3.29 s (1.7 times).
+- `solve_self_consistent`, README example 2: 9.24 s -> 5.25 s (1.8
+  times); README example 8 (`filling="kgrid"`): 128 s -> 63 s (2.0
+  times), including the extra state now solved for in its final
+  iteration. Same iteration counts; energies, occupations and
+  potential differ from 0.14.0 by at most 8e-11.
+- `solve_heterostructure` (README example 6 stack, k = 0): 0.080 s ->
+  0.051 s (1.6 times); `solve_subbands` at k = 0: 0.053 s -> 0.048 s
+  (1.1 times, within the noise). The assemblies place their 6 x 6
+  blocks with array indexing instead of a Python loop over the grid
+  (9 times faster for the uniform assembly on its own) and evaluate
+  the bulk blocks once per distinct parameter set; the values placed
+  come from the same operations as before.
+
+Equality is checked in `tests/test_v015.py`, which keeps the 0.14.0
+complex block diagonalization and both assembly loops as the
+reference: energies to 1e-12 eV, projectors onto the top 8 states to
+1e-10, residuals and orthonormality to 1e-12 over 24 cases (largest
+energy difference seen 1.6e-14 eV), and the assembled matrices to
+1e-15 of their largest element (identical on this machine).
+
+### Tutorials
+
+- `examples/tutorial_isb_mass_calibration.py` (a few seconds): a GaN
+  well between AlN barriers and a synthetic intersubband line (fixed
+  seed) made from a GaN with a heavy-hole mass of 2.0 m0 along c. It
+  finds the line that couples to light polarized along z
+  (`level_transitions`), lists what that line depends on
+  (`parameter_sensitivities`: at k_t = 0 only A1 + A3 and the two
+  splittings of each material, and the offset), calibrates A1 + A3 of
+  GaN by Newton steps with the exact derivative, and gives the error
+  bar from the line (1 %) and from illustrative errors of the other
+  parameters, with the largest parts named (the AlN A parameters).
+  Its output is in the README and at the top of the script;
+  `test_tutorial_isb_mass_calibration` runs it and checks the result.
+
+### Tests
+
+- New file `tests/test_v015.py`, 16 tests (142 in total). The two
+  tests of the fix fail on 0.14.0. The speed tests keep the 0.14.0
+  code (the complex block diagonalization and the assembly loops) as
+  the reference and compare with stated tolerances. No new test
+  depends on which member of a Kramers pair the solver returns first
+  or on the phase of an eigenvector.
+
 ## 0.14.0 (2026-10-17)
 
 A faster eigen-solver with the same results, the quantum lifetime from
