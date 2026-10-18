@@ -118,7 +118,7 @@ def bulk_blocks(p, kx: float, ky: float):
 
 
 def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0,
-                         potential=None, strain=None):
+                         potential=None, strain=None) -> np.ndarray:
     """Dense 6N x 6N envelope Hamiltonian on grid z (uniform, nm).
 
     potential : optional array of the HOLE potential energy V_h(z) in eV;
@@ -138,22 +138,31 @@ def assemble_hamiltonian(p, z, kx: float = 0.0, ky: float = 0.0,
     if strain is not None:
         from .strain import strain_blocks
         H0 = H0 + strain_blocks(p, strain)
-    H = np.zeros((6 * n, 6 * n), dtype=complex)
-
-    idx = lambda i: slice(6 * i, 6 * i + 6)
     inv_dz2 = 1.0 / (dz * dz)
     inv_2dz = 1.0 / (2.0 * dz)
+    # kz^2 term: -d/dz H2 d/dz -> +2 H2 / dz^2 on the diagonal
+    diag = H0.copy()
+    diag += 2.0 * H2 * inv_dz2
+    # kz^2 off-diagonal: -H2/dz^2 ; kz linear: -i H1 * (D_central)
+    off = -H2 * inv_dz2 + (-1j) * H1 * inv_2dz
+    if potential is None:
+        diags = diag
+    else:
+        diags = diag[None, :, :] - potential[:, None, None] * np.eye(6)
+    return place_blocks(n, diags, off, off.conj().T)
 
-    for i in range(n):
-        diag = H0.copy()
-        # kz^2 term: -d/dz H2 d/dz -> +2 H2 / dz^2 on the diagonal
-        diag += 2.0 * H2 * inv_dz2
-        if potential is not None:
-            diag -= potential[i] * np.eye(6)
-        H[idx(i), idx(i)] = diag
-        if i + 1 < n:
-            # kz^2 off-diagonal: -H2/dz^2 ; kz linear: -i H1 * (D_central)
-            off = -H2 * inv_dz2 + (-1j) * H1 * inv_2dz
-            H[idx(i), idx(i + 1)] = off
-            H[idx(i + 1), idx(i)] = off.conj().T
+
+def place_blocks(n: int, diags, upper, lower) -> np.ndarray:
+    """The 6n x 6n block-tridiagonal matrix with 6 x 6 blocks
+    ``diags`` on the diagonal and ``upper`` (block i, i+1) and ``lower``
+    (block i+1, i) next to it; each may be one block for all positions
+    or one per position. Only copies values (new in v0.15.0: the
+    assemblies used to place the blocks one at a time in a Python
+    loop; the values placed are computed by the same operations)."""
+    H = np.zeros((6 * n, 6 * n), dtype=complex)
+    H4 = H.reshape(n, 6, n, 6)
+    i = np.arange(n)
+    H4[i, :, i, :] = diags
+    H4[i[:-1], :, i[1:], :] = upper
+    H4[i[1:], :, i[:-1], :] = lower
     return H

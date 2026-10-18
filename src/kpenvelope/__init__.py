@@ -35,10 +35,11 @@ from .lab import (fit_band_offset, fit_sdh_dingle, fit_sdh_mass,
                   sheet_density_from_sdh, sheet_density_from_shift)
 from .rashba import (rashba_hamiltonian, rashba_spins,
                      rashba_splitting)
-from .isb import (depolarization_shift, isb_lineshape,
-                  overlap_geometry_integral)
+from .isb import (degenerate_levels, depolarization_shift, isb_lineshape,
+                  level_transitions, overlap_geometry_integral)
+from .sensitivity import PARAMETER_NAMES, parameter_sensitivities
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -59,5 +60,6 @@ __all__ = [
     "lk_thermal_factor", "energy_from_wavenumber", "energy_to_wavenumber",
     "rashba_hamiltonian", "rashba_splitting", "rashba_spins",
     "fit_sdh_dingle", "cyclotron_mass", "subband_energies",
-    "heterostructure_energies",
+    "heterostructure_energies", "degenerate_levels", "level_transitions",
+    "parameter_sensitivities", "PARAMETER_NAMES",
 ]

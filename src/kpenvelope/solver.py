@@ -27,11 +27,19 @@ whenever it falls apart into them, which is exact in exact arithmetic:
   the largest matrix element); a strain that breaks in-plane isotropy
   makes the coupling large, and the full matrix is then diagonalized
   as before.
+* Since v0.15.0 each of the two blocks is made real before it is
+  diagonalized: one phase factor per component (the same at every grid
+  point) turns it into a real symmetric matrix, whose diagonalization
+  is about three times faster than that of the complex one. The phases
+  are read off the block and accepted only if what is left of the
+  imaginary part is at rounding level (at most 1e-14 times the largest
+  element); otherwise the complex block is diagonalized as in v0.14.0.
 
 The test suite checks the energies against the dense diagonalization
-of the full matrix (the pre-0.14 path) and the eigenvectors through
-the projector onto each degenerate level, which does not depend on
-the arbitrary basis inside a Kramers pair.
+of the full matrix (the pre-0.14 path), and the real blocks against
+the complex ones of v0.14.0, and the eigenvectors through the
+projector onto each degenerate level, which does not depend on the
+arbitrary basis inside a Kramers pair.
 """
 from __future__ import annotations
 
@@ -155,6 +163,53 @@ def _split_upper_lower(H, n, kx, ky):
     return up, lo, coupling, w
 
 
+def _real_gauge(M, n):
+    """Diagonal phases that make a Chuang-Chang block real (new in
+    v0.15.0). Returns (d, R) with M = diag(d) R diag(d)^H and R real
+    symmetric up to rounding, or None when no such phases exist.
+
+    One phase per component (the same at every grid point) is read off
+    the largest element of each coupling between two components; the
+    result is accepted only if the imaginary part left over is at
+    rounding level (at most _SPLIT_TOL times the largest element), so
+    a block that cannot be made real is never treated as real."""
+    B = M.reshape(n, 3, n, 3)
+    scale = float(np.abs(M).max())
+    if scale == 0.0:
+        return None
+    chi = [0.0, None, None]
+    for _ in range(2):
+        for a in range(3):
+            for b in range(3):
+                if a == b or chi[a] is None or chi[b] is not None:
+                    continue
+                blk = B[:, a, :, b]
+                mag = np.abs(blk)
+                k = int(np.argmax(mag))
+                if mag.flat[k] > 0.0:
+                    # e^{-i chi_a} M_ab e^{i chi_b} real
+                    chi[b] = chi[a] - float(np.angle(blk.flat[k]))
+    chi = [0.0 if c is None else c for c in chi]
+    d = np.tile(np.exp(1j * np.asarray(chi)), n)
+    Mg = (np.conj(d)[:, None] * M) * d[None, :]
+    if float(np.abs(Mg.imag).max()) > _SPLIT_TOL * scale:
+        return None
+    return d, Mg.real
+
+
+def _eig_block(M, n, vectors):
+    """Eigenpairs of one Chuang-Chang block: as a real symmetric
+    matrix after the diagonal phase change of `_real_gauge` when one
+    exists (about three times faster than the complex
+    diagonalization; new in v0.15.0), otherwise as before."""
+    g = _real_gauge(M, n)
+    if g is not None:
+        d, R = g
+        vals, vecs = np.linalg.eigh(R)
+        return vals, (d[:, None] * vecs if vectors else None)
+    return _eig(M, vectors)
+
+
 def top_eigenpairs(H, n: int, n_states: int, kx: float = 0.0,
                    ky: float = 0.0, vectors: bool = True) -> tuple:
     """The n_states highest eigenvalues (descending) of the assembled
@@ -182,8 +237,8 @@ def top_eigenpairs(H, n: int, n_states: int, kx: float = 0.0,
     if kx != 0.0 or ky != 0.0:
         up, lo, coupling, w = _split_upper_lower(H, n, kx, ky)
         if coupling <= _SPLIT_TOL * float(np.abs(H).max()):
-            vu, xu = _eig(up, vectors)
-            vl, xl = _eig(lo, vectors)
+            vu, xu = _eig_block(up, n, vectors)
+            vl, xl = _eig_block(lo, n, vectors)
             vals = np.concatenate([vu, vl])
             order = np.argsort(-vals, kind="stable")[:n_states]
             if not vectors:

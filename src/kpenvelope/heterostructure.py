@@ -36,7 +36,7 @@ from __future__ import annotations
 import numpy as np
 
 from .hamiltonian import (assemble_hamiltonian, bulk_blocks, check_grid,
-                          check_n_states, check_potential)
+                          check_n_states, check_potential, place_blocks)
 from .solver import envelopes_from_vectors, top_eigenpairs
 
 
@@ -91,7 +91,8 @@ def layered_profile(z, layers) -> tuple:
 
 def assemble_heterostructure(z, params_list, band_edge=None,
                              kx: float = 0.0, ky: float = 0.0,
-                             potential=None, strain_list=None):
+                             potential=None,
+                             strain_list=None) -> np.ndarray:
     """Dense 6N x 6N envelope Hamiltonian with position-dependent
     material parameters and band edge (Ben Daniel-Duke symmetrized).
 
@@ -118,7 +119,15 @@ def assemble_heterostructure(z, params_list, band_edge=None,
         if not np.all(np.isfinite(band_edge)):
             raise ValueError("band_edge must be finite (eV)")
 
-    blocks = [bulk_blocks(p, kx, ky) for p in params_list]
+    # one bulk evaluation per distinct parameter set (v0.15.0; the same
+    # object gives the same blocks, so this only saves repeated work)
+    cache = {}
+    blocks = []
+    for p in params_list:
+        key = id(p)
+        if key not in cache:
+            cache[key] = bulk_blocks(p, kx, ky)
+        blocks.append(cache[key])
     if strain_list is not None:
         from .strain import strain_blocks
         s = np.asarray(strain_list, dtype=float)
@@ -132,30 +141,27 @@ def assemble_heterostructure(z, params_list, band_edge=None,
         blocks = [(H0 + strain_blocks(p, e), H1, H2)
                   for (H0, H1, H2), p, e in zip(blocks, params_list,
                                                 strains)]
-    H = np.zeros((6 * n, 6 * n), dtype=complex)
-    idx = lambda i: slice(6 * i, 6 * i + 6)
     inv_dz2 = 1.0 / (dz * dz)
     inv_2dz = 1.0 / (2.0 * dz)
+    H0s = np.array([b[0] for b in blocks])
+    H1s = np.array([b[1] for b in blocks])
+    H2s = np.array([b[2] for b in blocks])
 
-    # midpoint kz^2 coefficients
-    half = [0.5 * (blocks[i][2] + blocks[i + 1][2]) for i in range(n - 1)]
-    for i in range(n):
-        H0_i, H1_i, H2_i = blocks[i]
-        diag = H0_i.copy()
-        left = half[i - 1] if i > 0 else blocks[i][2]
-        right = half[i] if i + 1 < n else blocks[i][2]
-        diag += (left + right) * inv_dz2
-        if band_edge is not None:
-            diag += band_edge[i] * np.eye(6)
-        if potential is not None:
-            diag -= potential[i] * np.eye(6)
-        H[idx(i), idx(i)] = diag
-        if i + 1 < n:
-            H1_half = 0.5 * (H1_i + blocks[i + 1][1])
-            off = -half[i] * inv_dz2 + (-1j) * H1_half * inv_2dz
-            H[idx(i), idx(i + 1)] = off
-            H[idx(i + 1), idx(i)] = off.conj().T
-    return H
+    # midpoint kz^2 coefficients; at the two ends the point's own
+    # (the operations, element by element, are those of the per-point
+    # loop of v0.14.0 and earlier)
+    half = 0.5 * (H2s[:-1] + H2s[1:])
+    left = np.concatenate([H2s[:1], half])
+    right = np.concatenate([half, H2s[-1:]])
+    diags = H0s.copy()
+    diags += (left + right) * inv_dz2
+    if band_edge is not None:
+        diags += band_edge[:, None, None] * np.eye(6)
+    if potential is not None:
+        diags -= potential[:, None, None] * np.eye(6)
+    H1_half = 0.5 * (H1s[:-1] + H1s[1:])
+    off = -half * inv_dz2 + (-1j) * H1_half * inv_2dz
+    return place_blocks(n, diags, off, off.conj().transpose(0, 2, 1))
 
 
 def solve_heterostructure(z, params_list, band_edge=None, kx: float = 0.0,

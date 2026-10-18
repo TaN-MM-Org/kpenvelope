@@ -34,17 +34,26 @@ both ends; asserted to 1e-12); S doubles when the well width doubles
 (to 1e-3 relative); alpha is linear in the sheet density (to 1e-12
 relative) with the zero-density limit exact; and the lineshape helper
 integrates to the oscillator-strength sum by quadrature (to 1e-3).
+
+Levels (new in v0.15.0): `level_transitions` gives |z|^2, oscillator
+strengths and S between whole degenerate levels (summed over the final
+level, averaged over the initial one), which do not depend on the basis
+the solver picks inside a Kramers pair; checked against the closed-form
+eigenvectors of the discrete demo well and for invariance under any
+unitary mixing inside each level.
 """
 from __future__ import annotations
 
 import numpy as np
+
+from .hamiltonian import HBAR2_OVER_2M0
 
 # e^2 / (4 pi eps0) = 1.4399645 eV nm (as in kpenvelope.poisson)
 _E2_OVER_4PI_EPS0 = 1.4399645
 
 
 __all__ = ["overlap_geometry_integral", "depolarization_shift",
-           "isb_lineshape"]
+           "isb_lineshape", "degenerate_levels", "level_transitions"]
 
 
 def overlap_geometry_integral(z, env_i, env_j) -> float:
@@ -143,3 +152,120 @@ def isb_lineshape(transition_energies, strengths, gamma, e_grid):
     for e0, f0 in zip(Ei, fi):
         out += f0 * (half / np.pi) / ((E - e0) ** 2 + half ** 2)
     return out
+
+
+# --------------------------------------------------------------------
+# levels instead of single states (new in v0.15.0)
+# --------------------------------------------------------------------
+
+def degenerate_levels(energies, tol_ev: float = 1e-9) -> list:
+    """Group states into levels: runs of descending energies in which
+    each energy lies within ``tol_ev`` (eV) of the one before (new in
+    v0.15.0). Returns a list of index arrays, highest level first. At
+    k_t = 0 every level of the solvers is a Kramers pair (two states
+    with exactly equal energies); the synthetic demo set has six-fold
+    levels."""
+    e = np.asarray(energies, dtype=float)
+    if e.ndim != 1 or e.size < 1 or not np.all(np.isfinite(e)):
+        raise ValueError("energies must be a 1D array of finite "
+                         "energies (eV)")
+    t = float(tol_ev)
+    if not (np.isfinite(t) and t >= 0.0):
+        raise ValueError("tol_ev must be finite and >= 0 (eV)")
+    if np.any(np.diff(e) > 0.0):
+        raise ValueError("energies must be sorted from the highest down, "
+                         "as the solvers return them")
+    out = [[0]]
+    for i in range(1, e.size):
+        if e[i - 1] - e[i] <= t:
+            out[-1].append(i)
+        else:
+            out.append([i])
+    return [np.asarray(c) for c in out]
+
+
+def level_transitions(z, energies, envelopes, initial: int = 0,
+                      mass_ratio=None, tol_ev: float = 1e-9) -> dict:
+    """Intersubband quantities between whole levels, which do not
+    depend on the basis the solver picks inside a degenerate level (new
+    in v0.15.0).
+
+    The two states of a Kramers pair (and the six states of a demo-set
+    level) are any orthonormal pair of the level: which pair the solver
+    returns is a convention, and a number computed from one member,
+    such as |z_fi|^2 or the depolarization integral S, depends on it
+    (for HH1 -> HH2 of a tilted 6 nm GaN well, one HH2 member gives
+    S = 0.10378 nm and the other 0). Summed over the states of the
+    final level and averaged over those of the initial level, as a
+    transition rate between levels is, the numbers no longer depend on
+    the convention: the sums below are unchanged by any unitary mixing
+    of the states inside each level (asserted in the tests).
+
+    z : uniform grid (nm). energies : (n,) descending (eV), as the
+    solvers return them. envelopes : (n, 6, N) from the same solve.
+    initial : index of the initial level (0 = the highest, where the
+        holes sit). mass_ratio : optional m*/m0 for the oscillator
+        strength (as in `oscillator_strengths`). tol_ev : the largest
+        spacing within a level (eV).
+
+    For every level L, with I the initial level and g_I its number of
+    states:
+      transition_energy[L] = E_I - E_L (eV; positive for the levels
+        below I, which a hole in I absorbs into),
+      z2[L] = (1/g_I) sum_{i in I} sum_{f in L} |<f|z|i>|^2 (nm^2),
+      oscillator_strength[L] = (m*/m0) (E_I - E_L) z2[L] / (hbar^2/2m0)
+        (None without mass_ratio), per hole in level I,
+      S[L] = (1/g_I) sum_{i in I} sum_{f in L} S_fi (nm), with S_fi of
+        `overlap_geometry_integral`.
+    The entries of the initial level itself are 0 (no transition).
+
+    For the solver's states at k_t = 0 without a strain that couples
+    the spin groups, each member of a pair lies in one group of
+    components; each member of the initial pair then couples to at
+    most one member of the final pair, both members with the same S,
+    and S[L] is that S (as for the two spin channels of a
+    spin-degenerate subband in the textbook form). Pass complete levels: a level cut by
+    ``n_states`` gives sums that again depend on the convention.
+    Returns dict(levels, level_energies, degeneracy, initial,
+    transition_energy, z2, oscillator_strength, S).
+    """
+    z = np.asarray(z, dtype=float)
+    e = np.asarray(energies, dtype=float)
+    F = np.asarray(envelopes)
+    if F.ndim != 3 or F.shape[1] != 6 or F.shape[0] != e.size:
+        raise ValueError("envelopes must have shape (n_states, 6, N), "
+                         "one state per energy")
+    if z.ndim != 1 or z.size != F.shape[2] or z.size < 2:
+        raise ValueError("z must be the grid of the envelopes")
+    levels = degenerate_levels(e, tol_ev)
+    I = int(initial)
+    if I != initial or not 0 <= I < len(levels):
+        raise ValueError(f"initial must be a level index from 0 to "
+                         f"{len(levels) - 1}; got {initial!r}")
+    mr = None
+    if mass_ratio is not None:
+        mr = float(mass_ratio)
+        if not (np.isfinite(mr) and mr > 0.0):
+            raise ValueError("mass_ratio must be finite and > 0 (m*/m0)")
+    dz = z[1] - z[0]
+    e_lev = np.array([e[c].mean() for c in levels])
+    g_i = levels[I].size
+    z2 = np.zeros(len(levels))
+    S = np.zeros(len(levels))
+    for L, c in enumerate(levels):
+        if L == I:
+            continue
+        for i in levels[I]:
+            for f in c:
+                zfi = (np.conj(F[f]) * z[None, :] * F[i]).sum() * dz
+                z2[L] += abs(zfi) ** 2
+                S[L] += overlap_geometry_integral(z, F[i], F[f])
+    z2 /= g_i
+    S /= g_i
+    de = e_lev[I] - e_lev
+    de[I] = 0.0
+    osc = None if mr is None else mr * de * z2 / HBAR2_OVER_2M0
+    return {"levels": levels, "level_energies": e_lev,
+            "degeneracy": np.array([c.size for c in levels]),
+            "initial": I, "transition_energy": de, "z2": z2,
+            "oscillator_strength": osc, "S": S}

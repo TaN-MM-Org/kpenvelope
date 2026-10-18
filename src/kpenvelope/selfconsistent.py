@@ -382,6 +382,13 @@ def fill_subbands_kgrid(solve_at_k, ps: float, n_states: int, kmax: float,
     subband still occupied at kmax, at T > 0 a hole occupation factor
     above 1e-4 on the outermost ring.
 
+    When solve_at_k returns more than n_states energies, the next one
+    is checked: if it would hold holes (above E_F at T = 0, a hole
+    factor above 1e-4 at T > 0), a RuntimeWarning says so. Since
+    v0.15.0 this is checked at every grid point; before, only at
+    k_t = 0, which missed a branch that rises above its k_t = 0 energy
+    before it falls.
+
     Returns (occupations nm^-2 per subband, E_F eV).
     """
     T = _check_temperature(temperature_K)
@@ -392,7 +399,8 @@ def fill_subbands_kgrid(solve_at_k, ps: float, n_states: int, kmax: float,
         raise ValueError(f"n_states must be a positive integer; got "
                          f"{n_states!r}")
     E = np.empty((n_states, kts.size, thetas.size))
-    e_next = None
+    # the next state down at every grid point, when solve_at_k gives it
+    e_next = np.full((kts.size, thetas.size), np.nan)
     for i, kt in enumerate(kts):
         for j, th in enumerate(thetas):
             e = np.asarray(solve_at_k(kt * np.cos(th), kt * np.sin(th)),
@@ -401,13 +409,30 @@ def fill_subbands_kgrid(solve_at_k, ps: float, n_states: int, kmax: float,
                 raise ValueError(
                     f"solve_at_k must return at least n_states = "
                     f"{n_states} energies; got shape {e.shape}")
-            if i == 0 and j == 0 and e.size > n_states:
-                e_next = float(e[n_states])
+            if e.size > n_states:
+                e_next[i, j] = e[n_states]
             E[:, i, j] = e[:n_states]
     w, ef = _kgrid_fill(E, kts, ps, T)
-    if e_next is not None and _next_state_occupied(e_next, ef, T):
-        _warn_truncated(n_states, e_next, ef, stacklevel=3)
+    if np.any(np.isfinite(e_next)):
+        _check_next_state_on_grid(e_next, n_states, ef, T, stacklevel=4)
     return w.sum(axis=(1, 2)), ef
+
+
+def _check_next_state_on_grid(e_next, n_states, ef, T, stacklevel):
+    """Warn when the first state below the filled ones would hold holes
+    anywhere on the momentum grid (new in v0.15.0). Before, only its
+    energy at k_t = 0 was checked, which misses a branch whose maximum
+    lies away from k_t = 0 (a spin-split branch in an asymmetric well
+    rises over a small momentum range before it falls)."""
+    k = int(np.nanargmax(e_next))
+    e_max = float(e_next.flat[k])
+    if _next_state_occupied(e_max, ef, T):
+        _warn_truncated(n_states, e_max, ef, stacklevel=stacklevel,
+                        where=("" if k == 0 else
+                               " at its highest point on the momentum "
+                               "grid"))
+        return True
+    return False
 
 
 def _next_state_occupied(e_next, ef, T):
@@ -420,10 +445,12 @@ def _next_state_occupied(e_next, ef, T):
         if T > 0.0 else bool(e_next > ef)
 
 
-def _warn_truncated(n_states, e_next, ef, stacklevel):
+def _warn_truncated(n_states, e_next, ef, stacklevel, where=""):
     warnings.warn(
         f"only n_states = {n_states} states were filled, but state "
-        f"{n_states} (counting from 0; edge {e_next:.6g} eV) lies above "
+        f"{n_states} (counting from 0; "
+        f"{'edge' if not where else 'energy'} {e_next:.6g} eV{where}) "
+        f"lies above "
         f"the Fermi level {ef:.6g} eV and would hold holes too: the "
         "occupations and the hole density leave its holes out. "
         "Increase n_states (by an even number, so Kramers pairs stay "
@@ -482,12 +509,22 @@ def _parabolic_state(solve, energies_at, z, vh, ps, n_states, T):
     return energies, envelopes, masses, occ, density, float("nan"), ef
 
 
-def _kgrid_state(solve, energies_at, z, vh, ps, n_states, T, grid):
+def _kgrid_state(solve, energies_at, z, vh, ps, n_states, T, grid,
+                 e_next=None):
     """As `_parabolic_state`, but occupations and density come from the
     states on the whole polar momentum grid: each state's |F(z)|^2 is
-    weighted by its share of the occupied momentum area."""
+    weighted by its share of the occupied momentum area.
+
+    e_next : optional (nk, ntheta) array; when given, one more state is
+    solved for at every grid point and its energy stored there (for the
+    check of `_check_next_state_on_grid`, new in v0.15.0). The first
+    n_states states of such a solve are those of an n_states solve."""
     kts, thetas = grid
-    energies, envelopes = solve(vh, 0.0, 0.0)
+    m = n_states if e_next is None else n_states + 1
+    energies, envelopes = solve(vh, 0.0, 0.0, m)
+    if e_next is not None:
+        e_next[0, :] = energies[n_states]
+        energies, envelopes = energies[:n_states], envelopes[:n_states]
     E = np.empty((n_states, kts.size, thetas.size))
     P = np.empty((n_states, kts.size, thetas.size, z.size))
     prob0 = (np.abs(envelopes) ** 2).sum(axis=1)
@@ -496,7 +533,10 @@ def _kgrid_state(solve, energies_at, z, vh, ps, n_states, T, grid):
             if kt == 0.0:
                 e, prob = energies, prob0
             else:
-                e, F = solve(vh, kt * np.cos(th), kt * np.sin(th))
+                e, F = solve(vh, kt * np.cos(th), kt * np.sin(th), m)
+                if e_next is not None:
+                    e_next[i, j] = e[n_states]
+                    e, F = e[:n_states], F[:n_states]
                 prob = (np.abs(F) ** 2).sum(axis=1)
             E[:, i, j] = e
             P[:, i, j, :] = prob
@@ -544,8 +584,17 @@ def _loop(solve, energies_at, z, ps, eps_r, n_states, mixing, tol,
         vh = (1 - mixing) * vh + mixing * new_vh
         if residual < tol:
             break
-    # final consistent (unmixed) state at the converged potential
-    energies, envelopes, masses, occ, density, ef, ef_check = state(vh)
+    # final consistent (unmixed) state at the converged potential; with
+    # the k-grid filling, one more state is solved for at every grid
+    # point for the check below (v0.15.0)
+    e_grid_next = None
+    if grid is not None and n_states < 6 * z.size:
+        e_grid_next = np.full((grid[0].size, grid[1].size), np.nan)
+        energies, envelopes, masses, occ, density, ef, ef_check = \
+            _kgrid_state(solve, energies_at, z, vh, ps, n_states, T, grid,
+                         e_next=e_grid_next)
+    else:
+        energies, envelopes, masses, occ, density, ef, ef_check = state(vh)
     if ps > 0.0 and not occ.sum() > 0.0:
         warnings.warn(
             "no computed state holds any holes at the final potential "
@@ -554,8 +603,13 @@ def _loop(solve, energies_at, z, ps, eps_r, n_states, mixing, tol,
             "increase n_states or use filling=\"kgrid\"",
             RuntimeWarning, stacklevel=3)
     # is the first state below the computed ones occupied? (v0.13.0)
+    # (since v0.15.0 with the k-grid filling at every grid momentum:
+    # a branch can rise above its k_t = 0 edge before it falls)
     sufficient = True
-    if n_states < 6 * z.size:
+    if e_grid_next is not None:
+        sufficient = not _check_next_state_on_grid(
+            e_grid_next, n_states, ef_check, T, stacklevel=5)
+    elif n_states < 6 * z.size:
         e_next = float(energies_at(vh, 0.0, 0.0, n_states + 1)[n_states])
         if _next_state_occupied(e_next, ef_check, T):
             sufficient = False
@@ -599,7 +653,10 @@ def solve_self_consistent(p, z, ps: float, n_states: int = 6,
         lies above the Fermi level (T = 0), or has a hole factor above
         1e-4 at its edge (T > 0), its holes are missing from the
         occupations and the density, so a RuntimeWarning is issued and
-        ``n_states_sufficient`` is False. Increase n_states then.
+        ``n_states_sufficient`` is False. Increase n_states then. With
+        filling="kgrid" the next state is checked at every momentum of
+        the grid (new in v0.15.0; one more state is solved for at each
+        grid momentum of the final iteration).
 
     Returns SelfConsistentResult; its `converged` flag records whether
     the residual dropped below tol within max_iter iterations. The
