@@ -13,3 +13,18 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.22015269
     description: "Concept DOI for all versions; resolves to the latest release"
+references:
+  - type: article
+    title: "Origin of the conflicting hole masses in the GaN/AlN two-dimensional hole gas"
+    authors:
+      - family-names: Mahim
+        given-names: Tanvir M.
+      - family-names: Mohsin
+        given-names: Abu S. M.
+      - family-names: Rahman
+        given-names: M. Mosaddequr
+    journal: "Physical Review B"
+    status: in-press
+    doi: 10.1103/zn44-nmx8
+    url: "https://doi.org/10.1103/zn44-nmx8"
+    notes: "Accepted 28 October 2026. The methodological basis of kpenvelope."

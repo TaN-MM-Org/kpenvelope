@@ -1518,8 +1518,9 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 The package's methodological basis is
 
 > T. M. Mahim, A. S. M. Mohsin and M. M. Rahman, "Origin of the
-> conflicting hole masses in the GaN/AlN two-dimensional hole gas"
-> (under review); code for the paper:
+> conflicting hole masses in the GaN/AlN two-dimensional hole gas",
+> Physical Review B (accepted 28 October 2026),
+> https://doi.org/10.1103/zn44-nmx8; code for the paper:
 > https://github.com/Tanvir-Mahmud-Mahim/gan-2dhg-masses-lifetimes
 
 and follows S. L. Chuang and C. S. Chang, Phys. Rev. B 54, 2491
@@ -1531,7 +1532,9 @@ reproduces the specific published study.
 If `kpenvelope` helps your work, please cite it with the concept DOI
 [10.5281/zenodo.22015269](https://doi.org/10.5281/zenodo.22015269),
 which always resolves to the latest version; every release is
-archived on Zenodo. [CITATION.cff](CITATION.cff) has the details.
+archived on Zenodo. [CITATION.cff](CITATION.cff) has the details. If
+you use its method, please also cite the Physical Review B paper in
+[Where it comes from](#where-it-comes-from).
 
 Written and maintained by Tanvir Mahmud Mahim (Department of
 Electrical and Electronic Engineering, BRAC University), who reviews
