@@ -161,16 +161,55 @@ def test_kgrid_loop_checks_the_next_branch_on_the_whole_grid(
 def test_kgrid_loop_results_unchanged_by_the_extra_state():
     """The final state of the k-grid loop now solves for one more state
     at every grid momentum; the first n_states of such a solve are those
-    of an n_states solve, so the results are the same as when that
-    extra state is not asked for (the solver's prefix property,
-    checked directly, energies to 0 and envelopes to 0)."""
+    of an n_states solve (the same matrix is diagonalized, and only the
+    number of columns kept differs), so the results are the same as
+    when that extra state is not asked for.
+
+    Checked on what the results are made of: the energies (1e-12 eV),
+    each state up to its arbitrary phase (|<f4|f5>| = 1 to 1e-12), its
+    probability density |F|^2 (1e-12 nm^-1), and the occupations,
+    density and Fermi level of one k-grid filling step with and without
+    the extra state (1e-12). Before v0.16.0 this test asserted
+    bit-for-bit equal envelopes, which failed now and then on NumPy
+    1.22 with AVX-512: the envelopes differed by about 1e-16 through
+    the normalization (see
+    `test_v016.py::test_normalization_does_not_depend_on_memory_layout`).
+    Bit-for-bit equality would also need a LAPACK that returns the same
+    bits on every call, which NumPy does not promise."""
     z = np.linspace(0.0, 5.0, 31)
+    dz = z[1] - z[0]
     for kx, ky in ((0.0, 0.0), (0.3, 0.1)):
         e4, f4 = solve_subbands(GAN, z, kx, ky, potential=0.1 * z,
                                 n_states=4)
         e5, f5 = solve_subbands(GAN, z, kx, ky, potential=0.1 * z,
                                 n_states=5)
-        assert np.array_equal(e4, e5[:4]) and np.array_equal(f4, f5[:4])
+        assert np.abs(e4 - e5[:4]).max() <= 1e-12
+        for j in range(4):
+            ov = abs(np.vdot(f4[j].ravel(), f5[j].ravel())) * dz
+            assert abs(ov - 1.0) <= 1e-12
+        assert np.abs(np.abs(f4) ** 2 - np.abs(f5[:4]) ** 2).max() <= 1e-12
+    # one k-grid filling step of the loop, with and without the extra
+    # state, at the same potential
+    vh = 0.1 * z
+    grid = sc_mod._polar_grid(1.0, 6, 1)
+
+    def solve(v, kx, ky, n=4):
+        return solve_subbands(GAN, z, kx=kx, ky=ky, potential=v, n_states=n)
+
+    def energies_at(v, kx, ky, n=4):
+        return subband_energies(GAN, z, kx=kx, ky=ky, potential=v,
+                                n_states=n)
+
+    plain = sc_mod._kgrid_state(solve, energies_at, z, vh, 0.02, 4, 0.0,
+                                grid)
+    e_next = np.full((6, 1), np.nan)
+    extra = sc_mod._kgrid_state(solve, energies_at, z, vh, 0.02, 4, 0.0,
+                                grid, e_next=e_next)
+    assert np.all(np.isfinite(e_next))
+    for a, b in ((plain[0], extra[0]), (plain[3], extra[3]),
+                 (plain[4], extra[4])):
+        assert np.abs(np.asarray(a) - np.asarray(b)).max() <= 1e-12
+    assert abs(plain[5] - extra[5]) <= 1e-12
 
 
 # ---------------------------------------------------------------- 2

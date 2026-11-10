@@ -3,7 +3,7 @@
 The closed-form anchors come from the quasi-cubic limits of the six-band
 Hamiltonian and are quoted in the Supplemental Material (Sec. S9) of
 Mahim, Mohsin and Rahman, "Origin of the conflicting hole masses in the
-GaN/AlN two-dimensional hole gas", Phys. Rev. B (accepted 2026),
+GaN/AlN two-dimensional hole gas", Phys. Rev. B 114, L291304 (2026),
 doi:10.1103/zn44-nmx8:
 
   * zone-center splittings 5.20 and 21.80 meV for the GaN set
