@@ -5,8 +5,8 @@ authors:
   - family-names: Mahim
     given-names: Tanvir M.
     orcid: "https://orcid.org/0000-0002-4550-3248"
-version: 0.15.0
-date-released: 2026-10-18
+version: 0.16.0
+date-released: 2026-11-10
 license: Apache-2.0
 repository-code: "https://github.com/TaN-MM-Org/kpenvelope"
 identifiers:
@@ -24,7 +24,10 @@ references:
       - family-names: Rahman
         given-names: M. Mosaddequr
     journal: "Physical Review B"
-    status: in-press
+    volume: 114
+    start: "L291304"
+    year: 2026
+    date-published: 2026-11-06
     doi: 10.1103/zn44-nmx8
     url: "https://doi.org/10.1103/zn44-nmx8"
-    notes: "Accepted 28 October 2026. The methodological basis of kpenvelope."
+    notes: "Published 6 November 2026 (accepted 28 October 2026). The methodological basis of kpenvelope."

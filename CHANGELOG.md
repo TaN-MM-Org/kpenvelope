@@ -4,6 +4,154 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.16.0 (2026-11-10)
+
+Intersubband transitions for light polarized in the plane (the
+in-plane velocity matrix of the six-band model), two silent errors
+fixed, the cause of a test that failed now and then in the
+oldest-dependencies CI job found and removed, and the methodological
+paper cited as published (Phys. Rev. B 114, L291304 (2026)). Results
+of calls that were correct before do not change beyond rounding:
+against 0.15.0, energies, level sums, band characters and both
+self-consistent loops of README examples 2 and 8 are bit for bit the
+same, and envelopes at finite in-plane momentum differ by at most
+1.2e-16 (the new normalization, see Fixed). README examples 1 to 13
+print exactly what they printed with 0.15.0.
+
+### Added
+
+- `velocity_matrix(z, params, envelopes, kx, ky, angle)` (new module
+  `kpenvelope.velocity`): the matrix elements `<f| dH/dk_e |i>` (eV nm,
+  hbar times the velocity) between solver states, for the in-plane
+  direction e = (cos angle, sin angle). The assembled matrix is of
+  second degree in (kx, ky) (its third difference vanishes to
+  rounding, asserted), so the derivative is exact: each 6 x 6 bulk
+  block is differentiated as [B(k + e) - B(k - e)] / 2 and placed with
+  the solvers' own discretization. `params` is one parameter set (hard
+  walls) or one per grid point (a layered stack). Its diagonal is the
+  slope dE/dk of each state (the Hellmann-Feynman theorem), with no
+  step size.
+- `inplane_transitions(z, params, energies, envelopes, kx, ky, angle,
+  initial, tol_ev)`: the level sums of `level_transitions` for light
+  polarized in the plane, `v2 = (1/g_I) sum |<f| dH/dk_e |i>|^2` and
+  the oscillator strength `f = v2 / ((hbar^2/2m0) (E_I - E_L))` with
+  the free-electron mass. For light polarized along z the same
+  definitions, with hbar v_z = i [H, z], give `level_transitions` with
+  `mass_ratio=1`, so the two compare directly. For one parabolic band
+  the velocity is a constant times the identity and no in-plane line
+  exists; in the six-band model the band mixing allows one. Checked
+  against the polynomial identity of the package's own assembly (hard
+  walls; a stack with band edge, potential and strain; 1e-15 eV nm),
+  the closed form 2 c A k_e times the identity of the demo set (1e-12),
+  Richardson-extrapolated finite differences of the solver's energies
+  for the slope (1e-9 eV nm) and, through the effective-mass sum rule
+  of second-order perturbation theory, for the curvature of every one
+  of the top 8 states of a tilted GaN well and an AlN/GaN/AlN stack
+  (a relative 1e-6), the in-plane f-sum rule of the strengths of a
+  symmetric GaN well (a relative 1e-6), the in-plane isotropy (no
+  dependence on the polarization angle at k_t = 0, 1e-12; a common
+  rotation of momentum and polarization changes nothing, 1e-9), the
+  Kramers symmetry of the two initial states, invariance under any
+  unitary mixing inside each level (1e-10), and the commutator form
+  of the z velocity against `level_transitions` (1e-10). On the tilted
+  6 nm GaN well of README example 12 the top level absorbs light
+  polarized in the plane into the two light-hole levels (f = 0.0065
+  and 0.0050) and not into the second heavy-hole level, which is the
+  one line light polarized along z sees (f = 0.3969).
+- README example 14.
+
+### Fixed
+
+- **The parabolic filling used the mass along kx for every in-plane
+  direction, also when a strain makes the subbands anisotropic.**
+  `solve_self_consistent_hetero` with `filling="parabolic"` (the
+  default) and a strain with eps_xx != eps_yy or a shear measured one
+  step mass per state along kx and filled every state as if it had
+  that mass in all directions. Such a strain makes the masses differ
+  strongly between directions. For GaN with arbitrary test
+  deformation potentials (D1..D6 = -3.7, 4.5, 8.2, -4.1, -4.0, -5.5 eV,
+  test numbers, not material constants), a 6 nm stack on 41 points,
+  strain diag(0.002, -0.002, 0), ps = 0.1 nm^-2, eps_r = 10.4 and 6
+  states, 0.15.0 returned occupations [0, 0.0823, 0, 0.0030, 0.0124,
+  0.0023] nm^-2 from kx masses [inf, 0.787, inf, 0.088, 5.05, 0.948]
+  m0, while the masses along ky at the same potential are [3.01,
+  0.126, inf, 0.558, inf, 0.152] m0 and `filling="kgrid"` over 16
+  directions gives [0.0517, 0.0483, 0, 0, 0, 0] nm^-2. This combination
+  is now refused with a message that points to `filling="kgrid"` with
+  `ntheta`, as the k-grid filling without `ntheta` already was.
+  In-plane isotropic strain (eps_xx = eps_yy, no shear, for example
+  the biaxial strain of c-plane growth) is accepted as before. Test:
+  `test_parabolic_filling_refuses_an_anisotropic_strain`.
+- **`dipole_matrix` and `oscillator_strengths` did not check their
+  inputs.** `dipole_matrix(z, F[0])`, one state of shape (6, N), read
+  the six components as six states and returned a 6 x 6 matrix
+  without a warning; it now requires (n_states, n_components, N) on
+  the grid. `oscillator_strengths` with mass_ratio = -0.5 returned
+  -1.31 for a transition whose strength is 1.31 at 0.5; a mass ratio
+  that is not a finite number above 0, or a dipole matrix whose shape
+  does not match the energies, is now refused. Test:
+  `test_dipole_and_strength_inputs_are_checked`.
+- **The envelope normalization was not reproducible on NumPy 1.22.**
+  `test_kgrid_loop_results_unchanged_by_the_extra_state` failed now
+  and then in the oldest-dependencies CI job (NumPy 1.22.0, SciPy
+  1.8.0): the energies of a 4-state and a 5-state solve agreed exactly,
+  but the envelopes did not. The eigenvectors were the same bit for
+  bit (in 19999 repeated solves of a tilted GaN well at k_t = 0.32
+  nm^-1, none differed, while 3163 of the normalized envelopes did);
+  the difference came from the norm, which was summed as
+  `numpy.abs(v) ** 2` over the strided view of each eigenvector. On
+  NumPy 1.22 with AVX-512 the complex absolute value runs a vector
+  loop or the scalar `hypot`, which differ in the last bit for some
+  inputs. NumPy uses the vector loop only when the input stride is
+  below 256 bytes and its overlap check passes. That check takes the
+  strided view of state j to reach 48 bytes past its last element,
+  that is 16 j bytes past the end of the eigenvector array, and the
+  allocator often puts the result 16 bytes after that end (in all 286
+  of 20000 calls where the norm of state 3 differed, and in none of
+  the others). The whole state was then computed with `hypot`, and for
+  state 3 of that solve its norm changed by about 2e-16 (relative).
+  Placing the result there on purpose reproduces this every time. The
+  norm is now summed from the real and imaginary parts,
+  `re ** 2 + im ** 2`, which gives the same bits on every code path:
+  in the same 19999 solves no envelope differs. The old bit-for-bit
+  form of the test, run outside the suite with 3000 more repeated
+  solves, now passes in 20 of 20 runs on NumPy 1.22.0 on an AVX-512
+  machine (it failed in 20 of 20 before). NumPy 2.5.3 does not show
+  the effect. The 0.15.0 notes
+  say that the first `n_states` of an `n_states + 1` solve are
+  "exactly" those of an `n_states` solve: that holds for the energies,
+  but for the envelopes it held only to about 1e-16 on such machines,
+  and bit for bit it also needs a LAPACK that returns the same bits on
+  every call, which NumPy does not promise. The test now compares what
+  the loop uses (energies, each state up to its phase, |F|^2, and the
+  occupations, density and Fermi level of one filling step) to 1e-12.
+  Tests: `test_normalization_does_not_depend_on_memory_layout` (fails
+  on 0.15.0 with NumPy 1.22 on an AVX-512 machine; with NumPy 2 the
+  two inner loops agree and it passes on both versions), and the
+  rewritten `test_kgrid_loop_results_unchanged_by_the_extra_state`.
+
+### Changed
+
+- The methodological paper is cited as published: T. M. Mahim, A. S.
+  M. Mohsin and M. M. Rahman, Phys. Rev. B 114, L291304 (2026),
+  doi:10.1103/zn44-nmx8, in `CITATION.cff` (journal, volume, article
+  number, year and date of publication; no longer in press), the
+  README, the package docstring, the `reference` strings of
+  `gan_rinke2008()` and `aln_rinke2008()` (text only; no number
+  changes) and a test docstring.
+- README: example 14, the new functions, refusals, checks, corrections
+  and limits.
+
+### Tests
+
+- New file `tests/test_v016.py`, 9 tests (151 in total). The three
+  tests of the fixes fail on 0.15.0 (the normalization test needs
+  NumPy 1.22 on an AVX-512 machine, as in the CI job where the old
+  test failed). A mutation check of the new module (seven deliberate
+  errors, such as a missing conjugate, a missing average over the
+  initial level or a wrong factor in the strength) was caught by
+  these tests in every case.
+
 ## 0.15.0 (2026-10-18)
 
 Exact parameter sensitivities with error propagation, intersubband

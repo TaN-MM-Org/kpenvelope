@@ -21,7 +21,9 @@ numbers for. It answers questions such as:
 - What is the hole mass, and how does it change with momentum? (A hole
   mass here is not one number.)
 - Where will the intersubband absorption line sit, including the
-  depolarization shift that a doped layer adds?
+  depolarization shift that a doped layer adds? How strongly does the
+  layer absorb light polarized along the growth axis, and light
+  polarized in the plane?
 - Which band offset, or which sheet density, reproduces my measured
   absorption line?
 - What hole density, mass and quantum lifetime do my magnetotransport
@@ -87,6 +89,10 @@ says why, instead of returning a number that looks fine but is not.
 - **Intersubband transition** -- a hole jumping between two subbands by
   absorbing light. Its strength is set by the **dipole matrix element**
   `z_fi` and the dimensionless **oscillator strength** `f`.
+- **Polarization** -- the direction of the light's electric field:
+  along the growth axis `z`, or in the plane of the layers (as at
+  normal incidence). The two couple the subbands differently
+  (example 14).
 - **Depolarization shift** -- in a layer with many carriers the
   absorption line sits above the bare subband spacing, because the
   oscillating charge screens itself (Allen, Tsui and Vinter, Solid
@@ -146,8 +152,8 @@ Units and conventions, used everywhere:
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-printed with kpenvelope 0.15.0 (examples 1 to 11 print the same as
-with 0.14.0). Numbers labeled illustrative are chosen for the example,
+printed with kpenvelope 0.16.0 (examples 1 to 13 print the same as
+with 0.15.0). Numbers labeled illustrative are chosen for the example,
 not taken from a source.
 
 ### 1. Energy levels and what they are made of
@@ -722,6 +728,62 @@ in-plane terms A5 and A6 move the top level at finite momentum, while
 at `k = 0` they would not enter at all. The third tutorial uses this
 for an error budget.
 
+### 14. Light polarized in the plane
+
+```python
+import numpy as np
+from kpenvelope import (band_character, dominant_character, gan_rinke2008,
+                        inplane_transitions, level_transitions,
+                        solve_subbands, velocity_matrix)
+
+p = gan_rinke2008()
+z = np.linspace(0.0, 6.0, 61)        # the tilted 6 nm well of example 12
+v = 0.08 * z
+E, F = solve_subbands(p, z, potential=v, n_states=8)
+
+kind = dominant_character(band_character(F, z))
+along_z = level_transitions(z, E, F, mass_ratio=1.0)
+in_plane = inplane_transitions(z, p, E, F, angle=0.0)
+for L in (1, 2, 3):
+    print(f"level 0 -> {L} ({kind[2 * L]}): "
+          f"{along_z['transition_energy'][L] * 1e3:5.2f} meV   "
+          f"f along z {along_z['oscillator_strength'][L]:.4f}   "
+          f"f in the plane {in_plane['oscillator_strength'][L]:.4f}")
+
+# the diagonal is the group velocity dE/dk (times hbar), with no step size
+k = 0.4
+Ek, Fk = solve_subbands(p, z, kx=k, potential=v, n_states=2)
+V = velocity_matrix(z, p, Fk, kx=k)
+print(f"dE/dk of the top state at k = {k} nm^-1: {V[0, 0].real:.5f} eV nm")
+```
+
+```
+level 0 -> 1 (LH): 11.07 meV   f along z 0.0000   f in the plane 0.0065
+level 0 -> 2 (HH): 88.40 meV   f along z 0.3969   f in the plane 0.0000
+level 0 -> 3 (LH): 99.32 meV   f along z 0.0000   f in the plane 0.0050
+dE/dk of the top state at k = 0.4 nm^-1: -0.02176 eV nm
+```
+
+Light polarized along the growth axis `z` couples the top heavy-hole
+level only to the second heavy-hole level (example 12). Light
+polarized in the plane, for example at normal incidence, couples
+through the in-plane velocity, which is `dH/dk` divided by hbar, with
+`H` the matrix the solver diagonalizes. For one simple band that
+velocity is the same for every subband, so it cannot move a hole from
+one subband to another. The six-band matrix also has terms that
+couple the heavy-hole, light-hole and split-off components (at
+`k = 0` the A6 term), and here they let the top level absorb into the
+two light-hole levels, 60 to 80 times more weakly than the `z` line,
+and not into the second heavy-hole level. Both strengths use the
+free-electron mass (hence `mass_ratio=1.0` for the `z` line), so they
+can be compared directly. At `k = 0` they do not depend on the
+direction of the polarization (`angle`), because the subbands are the
+same in every in-plane direction. For other momenta, solve at
+`kx`, `ky` and pass the same `kx`, `ky` here. The diagonal of
+`velocity_matrix` is the slope of each state's dispersion, exactly
+(here the same number as a central difference of two solves,
+-0.021761 eV nm); it needs no step size.
+
 ## Tutorials
 
 Three scripts in `examples/` go from data to a final result with error
@@ -958,6 +1020,13 @@ structure, line and errors.
   one), which do not depend on how the solver picked the states of a
   Kramers pair; `degenerate_levels(energies)` -- the grouping into
   levels (example 12).
+- `velocity_matrix(z, params, envelopes, kx, ky, angle)` (new in
+  0.16.0) -- the in-plane velocity matrix elements `<f| dH/dk |i>`
+  (eV nm; divide by hbar for a velocity) along the direction `angle`;
+  its diagonal is the exact slope dE/dk of each state.
+  `inplane_transitions(z, params, energies, envelopes, kx, ky, angle,
+  initial)` -- the same level sums as `level_transitions`, for light
+  polarized in the plane (example 14).
 
 **Parameter sensitivities and error budgets**
 
@@ -1101,7 +1170,19 @@ citation.
 - `parameter_sensitivities` gets an unknown parameter name, a
   negative or non-finite error, an error of the band-edge scale
   without a band edge, parameter sets that do not match the grid, or
-  a single mapping of errors for a stack of several materials.
+  a single mapping of errors for a stack of several materials;
+- `solve_self_consistent_hetero` is asked for the parabolic filling
+  (the default) with a strain that breaks in-plane isotropy (since
+  0.16.0; use `filling="kgrid"` with `ntheta`, see
+  [Corrections](#corrections-in-earlier-versions));
+- `dipole_matrix` gets envelopes that are not an array of states on
+  the grid (one state is `envelopes[None]`), or `oscillator_strengths`
+  gets a mass ratio that is not a positive finite number or a dipole
+  matrix that does not match the energies (since 0.16.0);
+- `velocity_matrix` or `inplane_transitions` get envelopes that do not
+  match the grid or the energies, parameter sets that do not match the
+  grid, a momentum or an angle that is not finite, or an initial level
+  that does not exist.
 
 It does not stop, but warns (`RuntimeWarning`), when a self-consistent
 loop or `fill_subbands_kgrid` finds that a state below the computed
@@ -1113,7 +1194,7 @@ too.
 
 ## How the results are checked
 
-142 automated tests run on every push and pull request, on Python 3.9,
+151 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -1304,6 +1385,33 @@ the tests use:
   mass `m0 / |A1 + A3|` along c), holds for the bulk matrix of GaN and
   AlN to 1e-14 eV.
 
+**New in 0.16.0**
+
+- The velocity matrix `dH/dk` equals half the difference of the
+  package's own matrix at `k + e` and `k - e` to 1e-15 eV nm (exact,
+  since the matrix is of second degree in the in-plane momentum; its
+  third difference vanishes to rounding), for hard walls and for a
+  layered stack with a band edge, a potential and a strain.
+- On the demo set it is `2 c A k` times the identity (1e-12), so no
+  in-plane intersubband line appears, as for any single band.
+- Its diagonal equals the slope dE/dk from finite differences of the
+  solver's energies (1e-9 eV nm), and the effective-mass sum rule of
+  second-order perturbation theory (the curvature of each state from
+  the velocity matrix elements to all other states) equals the
+  finite-difference curvature to a relative 1e-6, for a tilted GaN
+  well and an AlN/GaN/AlN stack at finite momentum. Summed over all
+  final levels, the in-plane strengths obey the corresponding sum
+  rule (a relative 1e-6).
+- At `k = 0` the in-plane level sums do not depend on the polarization
+  angle (1e-12), rotating the momentum and the polarization together
+  changes nothing (1e-9), mixing the states inside each Kramers pair
+  changes nothing (1e-10), and HH1 -> HH2 is forbidden in the plane.
+  Written with the same definitions, the `z` velocity `i [H, z]` gives
+  the strengths of `level_transitions(mass_ratio=1)` (1e-10).
+- The same eigenvectors stored in three memory layouts give
+  bit-for-bit the same envelopes (the cause of a test that failed now
+  and then; see [Corrections](#corrections-in-earlier-versions)).
+
 **Corrections in 0.13.0**
 
 - Over a sweep of 32 layer stacks with decimal thicknesses, every grid
@@ -1333,7 +1441,39 @@ the tests use:
 
 ## Corrections in earlier versions
 
-**0.15.0 (this release) fixed one silent error.** It has a test that
+**0.16.0 (this release) fixed two silent errors and one source of
+results that were not reproducible.** Each has a test that fails on
+0.15.0 (the third only with NumPy 1.22 on a machine with AVX-512,
+where the problem appeared).
+
+- `solve_self_consistent_hetero` with the parabolic filling (the
+  default) and a strain that breaks in-plane isotropy (`eps_xx` not
+  equal to `eps_yy`, or a shear) measured each state's mass along `kx`
+  only and used it for every direction. Such a strain makes the masses
+  differ strongly between directions. In the case the test describes
+  (GaN with arbitrary test deformation potentials, strain 0.002 and
+  -0.002 in the plane) the masses along `kx` were [inf, 0.79, inf,
+  0.088, 5.05, 0.95] m0 and along `ky` [3.01, 0.13, inf, 0.56, inf,
+  0.15] m0, and the loop returned occupations of [0, 0.0823, 0,
+  0.0030, 0.0124, 0.0023] nm^-2 where the momentum-grid filling over
+  16 directions gives [0.0517, 0.0483, 0, 0, 0, 0] nm^-2. This
+  combination is now refused, as the momentum-grid filling without
+  `ntheta` already was.
+- `dipole_matrix` given one state, `(6, N)`, read its six components
+  as six states and returned a 6 x 6 matrix, and `oscillator_strengths`
+  with a negative mass ratio returned negative strengths. Both are
+  refused now.
+- The normalization of the envelopes could differ in the last bit
+  between two calls with the same eigenvector, on NumPy 1.22 with
+  AVX-512, because NumPy's complex absolute value has two inner loops
+  that round differently and picks one by the memory layout. The
+  envelopes changed by about 2e-16 (relative), and a test that
+  compared them bit for bit failed now and then in the
+  oldest-dependencies CI job. The norm is now summed from the real and
+  imaginary parts, which gives the same bits on every path. No printed
+  number changes.
+
+**0.15.0 fixed one silent error.** It has a test that
 fails on 0.14.0.
 
 - The self-consistent loops with `filling="kgrid"`, and
@@ -1443,11 +1583,12 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small
-  momentum step (0.02 nm^-1) away from `k = 0`, which in a lopsided
-  well gives the two states of a Kramers pair different masses
-  (sometimes `inf`) and different numbers of holes (example 2). Use
-  `filling="kgrid"` (example 8) for occupations you rely on; it costs
-  `nk` extra solutions per iteration.
+  momentum step (0.02 nm^-1) along `kx` away from `k = 0`, which in a
+  lopsided well gives the two states of a Kramers pair different
+  masses (sometimes `inf`) and different numbers of holes (example 2).
+  With a strain that breaks in-plane isotropy it is refused (since
+  0.16.0). Use `filling="kgrid"` (example 8) for occupations you rely
+  on; it costs `nk` extra solutions per iteration.
 - With `filling="kgrid"` the states are labelled by their energy order
   at each momentum, so where two subbands cross, the holes of the two
   labels are shared out by that order. The totals and the density do
@@ -1512,6 +1653,13 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 - The check for holes in the next state down uses the momenta of the
   grid; a maximum between two grid momenta is seen only as far as the
   grid resolves it.
+- `velocity_matrix` and `inplane_transitions` use the velocity of the
+  six-band envelope model, `dH/dk`. Bands outside the six (the
+  conduction band) enter only through the A parameters, as everywhere
+  in the model. The strengths are for one in-plane momentum: an
+  absorption spectrum of a filled hole gas would sum them over the
+  occupied momenta, which the package does not do. As in
+  `level_transitions`, pass complete levels.
 
 ## Where it comes from
 
@@ -1519,7 +1667,7 @@ The package's methodological basis is
 
 > T. M. Mahim, A. S. M. Mohsin and M. M. Rahman, "Origin of the
 > conflicting hole masses in the GaN/AlN two-dimensional hole gas",
-> Physical Review B (accepted 28 October 2026),
+> Phys. Rev. B 114, L291304 (2026),
 > https://doi.org/10.1103/zn44-nmx8; code for the paper:
 > https://github.com/Tanvir-Mahmud-Mahim/gan-2dhg-masses-lifetimes
 
