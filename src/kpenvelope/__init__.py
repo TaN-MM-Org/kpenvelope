@@ -6,9 +6,9 @@ two-dimensional hole gases and related wurtzite heterostructures.
 
 Methodological basis: T. M. Mahim, A. S. M. Mohsin and M. M. Rahman,
 "Origin of the conflicting hole masses in the GaN/AlN two-dimensional
-hole gas", Phys. Rev. B (accepted 2026), doi:10.1103/zn44-nmx8, and the
-standard wurtzite k.p formulation of Chuang and Chang, Phys. Rev. B 54,
-2491 (1996).
+hole gas", Phys. Rev. B 114, L291304 (2026), doi:10.1103/zn44-nmx8,
+and the standard wurtzite k.p formulation of Chuang and Chang, Phys.
+Rev. B 54, 2491 (1996).
 """
 from .params import (WurtziteParameters, aln_rinke2008, demo_single_band,
                      gan_rinke2008)
@@ -39,8 +39,9 @@ from .rashba import (rashba_hamiltonian, rashba_spins,
 from .isb import (degenerate_levels, depolarization_shift, isb_lineshape,
                   level_transitions, overlap_geometry_integral)
 from .sensitivity import PARAMETER_NAMES, parameter_sensitivities
+from .velocity import inplane_transitions, velocity_matrix
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -63,4 +64,5 @@ __all__ = [
     "fit_sdh_dingle", "cyclotron_mass", "subband_energies",
     "heterostructure_energies", "degenerate_levels", "level_transitions",
     "parameter_sensitivities", "PARAMETER_NAMES",
+    "velocity_matrix", "inplane_transitions",
 ]

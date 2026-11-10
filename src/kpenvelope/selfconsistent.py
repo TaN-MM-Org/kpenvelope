@@ -479,6 +479,15 @@ def _check_filling(filling, kmax, nk, ntheta, strain):
     if filling not in ("parabolic", "kgrid"):
         raise ValueError('filling must be "parabolic" or "kgrid"')
     if filling == "parabolic":
+        if not _strain_is_inplane_isotropic(strain):
+            # before v0.16.0 the masses were measured along kx only and
+            # used for every direction (see CHANGELOG 0.16.0)
+            raise ValueError(
+                "the strain breaks in-plane isotropy (eps_xx != eps_yy "
+                "or a shear), so each subband has a different mass in "
+                "each in-plane direction, and the parabolic filling, "
+                "which measures one mass along kx, does not describe "
+                'it. Use filling="kgrid" with kmax and ntheta (e.g. 8)')
         return None
     if kmax is None:
         raise ValueError(
@@ -713,7 +722,11 @@ def solve_self_consistent_hetero(z, params_list, band_edge, ps: float,
         in v0.8; 0 reproduces the historical T = 0 filling exactly).
     filling, kmax, nk, ntheta : as in `solve_self_consistent`. With a
         strain that breaks in-plane isotropy (eps_xx != eps_yy or any
-        shear) ``ntheta`` must be given for ``filling="kgrid"``.
+        shear) ``ntheta`` must be given for ``filling="kgrid"``, and
+        the parabolic filling is refused (new in v0.16.0): it measures
+        one mass along kx, while such a strain gives each subband a
+        different mass in each direction. Before v0.16.0 it used the
+        kx mass for every direction without a warning.
     sheet_z : position (nm) of the fixed negative sheet charge that
         binds the gas, normally the interface the gas sits against
         (new in v0.12.0). None (default) keeps the historical choice,

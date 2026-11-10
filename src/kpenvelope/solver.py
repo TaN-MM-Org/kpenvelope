@@ -261,12 +261,23 @@ def top_eigenpairs(H, n: int, n_states: int, kx: float = 0.0,
 
 def envelopes_from_vectors(vecs, n, dz):
     """(6n, m) eigenvectors -> (m, 6, n) envelopes normalized so that
-    sum_m integral |F_m|^2 dz = 1."""
+    sum_m integral |F_m|^2 dz = 1.
+
+    The squared norm is summed from the real and imaginary parts,
+    re^2 + im^2 (new in v0.16.0). Before, it was summed from
+    numpy.abs(v)^2. On NumPy 1.22 with AVX-512 the absolute value of a
+    complex array has two inner loops (a vector loop and the scalar
+    hypot) that can differ in the last bit, and which one runs depends
+    on the stride of the array and on where the allocator places the
+    result. The same eigenvector could then be normalized differently
+    in two calls, by about 1e-16 (the cause of a test that failed now
+    and then in the oldest-dependencies CI job). Squares and sums give
+    the same bits on every code path."""
     m = vecs.shape[1]
     envelopes = np.empty((m, 6, n), dtype=complex)
     for j in range(m):
         v = vecs[:, j].reshape(n, 6).T  # (6, N)
-        norm = np.sqrt((np.abs(v) ** 2).sum() * dz)
+        norm = np.sqrt((v.real ** 2 + v.imag ** 2).sum() * dz)
         envelopes[j] = v / norm
     return envelopes
 

@@ -305,9 +305,22 @@ def dipole_matrix(z, envelopes):
     z_12 = 16 L / (9 pi^2), the diagonal is the well center L/2, and
     same-parity transitions vanish; in a symmetric six-band well the
     parity selection rule survives the band mixing.
+
+    envelopes : (n_states, n_components, N), as the solvers return them.
+    Refuses (new in v0.16.0) any other shape and a grid that does not
+    match. Before, a single (6, N) state was read as six states of one
+    component each and gave a 6 x 6 matrix between the components of
+    that state, without a warning.
     """
     z = np.asarray(z, dtype=float)
     env = np.asarray(envelopes)
+    if z.ndim != 1 or z.size < 2:
+        raise ValueError("z must be a 1D grid of at least two points")
+    if env.ndim != 3 or env.shape[2] != z.size:
+        raise ValueError(
+            "envelopes must have shape (n_states, n_components, N) on the "
+            f"grid z (N = {z.size}); got {env.shape}. For one state "
+            "use envelopes[None]")
     dz = z[1] - z[0]
     n = env.shape[0]
     out = np.empty((n, n), dtype=complex)
@@ -341,10 +354,25 @@ def oscillator_strengths(energies, dip, mass_ratio):
         1/|A|). For coupled six-band states no single mass exists and
         the sum rule is not 1; the strengths remain well-defined
         matrix elements. Returns (n,) with f_11 = 0.
+
+    Refuses (new in v0.16.0) a mass_ratio that is not a finite number
+    above 0 (before, -0.5 gave negative strengths, -1.31 for a
+    transition whose strength is 1.31 with 0.5), and a dipole matrix
+    whose shape does not match the energies.
     """
     e = np.asarray(energies, dtype=float)
     d = np.asarray(dip)
-    f = float(mass_ratio) * (e[0] - e) * np.abs(d[0, :]) ** 2 \
+    if e.ndim != 1 or e.size < 1:
+        raise ValueError("energies must be a 1D array (eV, descending)")
+    if d.ndim != 2 or d.shape[0] < 1 or d.shape[1] != e.size:
+        raise ValueError(f"dip must be the dipole matrix of these states, "
+                         f"with {e.size} columns (one per energy); got "
+                         f"shape {d.shape}")
+    mr = float(mass_ratio)
+    if not (np.isfinite(mr) and mr > 0.0):
+        raise ValueError("mass_ratio must be finite and > 0 (m*/m0); "
+                         f"got {mass_ratio!r}")
+    f = mr * (e[0] - e) * np.abs(d[0, :]) ** 2 \
         / HBAR2_OVER_2M0
     f[0] = 0.0
     return f
