@@ -263,22 +263,27 @@ kpenvelope and NumPy. You build the layer stack on the left (from an
 example or from scratch), choose whose published numbers to use, and
 read the results on the right:
 
+- Every result starts with an "In short" sentence that says what it
+  means, every "?" opens a short explanation when you tap it, and when
+  you change the sample the old results are marked as out of date.
 - **Charges**: the fixed charge at each interface, with what it does
   ("attracts electrons"), how much the layer is stretched or squeezed,
   how much of the charge comes from dislocation lines, and the source
   of every number.
 - **Electrons**: the band diagram and the electron density, the sheet
   density as one big number, and the lowest energy levels.
-- **Error bars**: how sure the electron density is, from the errors you
+- **How sure?**: how sure the electron density is, from the errors you
   give for each composition, thickness and the surface barrier, with a
   bar chart of where the error comes from (or a spread of random
   samples).
-- **Device**: a C-V sweep (no transport numbers needed) or an I-V sweep
-  (with your transport numbers and their source).
-- **Dislocation charge**: what the published data say about the charge
+- **Voltage sweep**: a C-V sweep (no transport numbers needed, with the
+  electrons treated simply or by quantum mechanics) that says where the
+  electron layer empties, or an I-V sweep (with your transport numbers
+  and their source).
+- **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
-- **Python code**: the same calculation as a script you can rerun or
+- **Save and share**: the same calculation as a script you can rerun or
   put in a supplement, and the last curve as a CSV file.
 
 Every box has a short explanation, the words are plain, and when an
@@ -1159,8 +1164,11 @@ sweep; no transport numbers are needed). The capacitance sits just
 below that of the 25 nm barrier and drops to zero where the electron
 sheet empties, between -7 and -6 V for this layer and this 1 eV barrier.
 Each sheet density equals that of `solve_electrons` with the matching
-surface barrier (see the checks). The electrons here are classical;
-use `solve_electrons` for the subbands.
+surface barrier (see the checks). The electrons here are classical.
+`cv_curve_quantum(layers, voltages, barrier=1.0)` does the same sweep
+with the electrons' quantum states (one `solve_electrons` run per
+voltage, so about ten times slower); for this layer the two
+capacitances differ by -0.6 to +1.7 percent between -5 and -1 V.
 
 ### 21. A GaN p-n junction (illustrative transport numbers)
 
@@ -1604,7 +1612,8 @@ example) gives its inputs, units and conventions.
   semiconductor at the Fermi level of its bottom contact while the top
   metal is biased, with holes optional; bottom "ohmic" or "zero-field".
 - `iv_curve` and `cv_curve` -- current and quasi-static capacitance
-  sweeps, warm-started from point to point; `bernoulli` -- the stable
+  sweeps, warm-started from point to point; `cv_curve_quantum` -- the
+  C-V sweep with quantum electrons (`solve_electrons` at every voltage); `bernoulli` -- the stable
   Bernoulli function of the fluxes.
 
 **Phonons (new in 0.18.0)**
@@ -1909,7 +1918,7 @@ Since 0.18.0 it also refuses (or warns):
 
 ## How the results are checked
 
-224 automated tests run on every push and pull request, on Python 3.9,
+225 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -2179,6 +2188,9 @@ the tests use:
   solvers. Against the other electron solver: band edges within 1 meV
   and the sheet density to 1e-3 for an AlGaN/GaN layer, and the
   quasi-equilibrium C-V sheet densities to 1e-3 at three gate voltages.
+  The quantum C-V: its sheets equal `solve_electrons`, its metal charge
+  moves by q times the change of the electrons (to 2e-3), and it stays
+  within 3 percent of the classical C-V.
   The NumPy banded solver equals a dense solve and gives the same
   current as SciPy's.
 - Phonons: the GaN numbers equal the listed ones and pass the

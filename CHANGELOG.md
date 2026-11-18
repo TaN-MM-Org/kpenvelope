@@ -36,7 +36,8 @@ printed before.
   recombination, generation, ohmic and Schottky contacts; coupled
   Newton on the potential and both quasi-Fermi levels with
   Scharfetter-Gummel fluxes), `solve_quasi_equilibrium` (the C-V model),
-  `iv_curve`, `cv_curve`, `Transport`, `Contact`, `bernoulli`.
+  `iv_curve`, `cv_curve`, `cv_curve_quantum` (C-V with quantum
+  electrons), `Transport`, `Contact`, `bernoulli`.
   `StackLayer` gains `acceptors` and `acceptor_depth`.
 - `kpenvelope.phonons`: `PolarPhonons`, `GAN_BARKER1973`,
   `single_interface_modes`, `slab_modes` (uniaxial dielectric continuum
@@ -47,7 +48,9 @@ printed before.
 - `kpenvelope.gui`: the app (`kpenvelope-app`, `python -m
   kpenvelope.gui`), a local page with plain-language results, error
   bars, C-V and I-V sweeps, the line-charge tools, and a Python script
-  of every calculation.
+  of every calculation. Each result opens with a one-sentence summary,
+  the "?" explanations open on tap, and results are marked out of date
+  when the sample changes.
 
 ### Changed
 
@@ -56,6 +59,8 @@ printed before.
   recommendation: 0 for the PBEsol and HSE sets (as before) and the
   Table III bowing for the Vurgaftman set.
 - `solve_electrons` refuses layers with acceptors (it has no holes).
+- The publish workflow runs on ubuntu-24.04, as the tests do (it was on
+  ubuntu-latest, which has moved to a newer image).
 
 ### Corrected
 
@@ -67,7 +72,7 @@ printed before.
 
 ### Tests
 
-42 new tests (224 in all): the copied tables against the PDFs, the
+43 new tests (225 in all): the copied tables against the PDFs, the
 ScAlN fits against the percentages quoted in that paper, the H and ZB
 difference, drift-diffusion against Ohm's law, the built-in potential,
 the short-diode current, a generation-recombination profile and the
