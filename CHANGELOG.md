@@ -4,6 +4,77 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.18.0 (2026-11-18)
+
+The nitride part grows into a device tool. InGaN, InAlN and ScAlN are
+built in from cited tables, a drift-diffusion solver gives current and
+capacitance curves, the interface phonons of a layer follow from the
+dielectric continuum model, what is known about the misfit-line charge
+can be combined and planned for, and everything opens as an app in the
+browser. 0.17.0 was not released to PyPI on its own; this release
+includes it. NumPy stays the only dependency (SciPy, when present, only
+speeds up the banded solves). README examples 1 to 18 print what they
+printed before.
+
+### Added
+
+- `ingan`, `inaln`, `scaln` and `gan(pset)`: relaxed In(x)Ga(1-x)N,
+  In(x)Al(1-x)N and Sc(x)Al(1-x)N (0 <= x <= 0.5) and the GaN partner of
+  a set. New sets: `"vurgaftman2003"` (Vurgaftman and Meyer, J. Appl.
+  Phys. 94, 3675 (2003), Tables I and III, e31 and e33 from the moduli)
+  and `"ambacher2021"` (Ambacher et al., J. Appl. Phys. 130, 045102
+  (2021), ScAlN fits). InN band numbers from the same Table I, the
+  wurtzite InN/GaN valence-band offset, and InN eps33 = 14.4 (Davydov et
+  al. 1999, as listed by the Ioffe database). `with_numbers` swaps any
+  number of a record for yours, with your source. Every record carries
+  its `parameter_set`, and `interface_charges` warns when two sets meet.
+  `NitrideMaterial` accepts NaN piezoelectric constants for a layer that
+  is only used unstrained.
+- `kpenvelope.driftdiffusion`: `solve_drift_diffusion` (electrons and
+  holes, Fermi-Dirac or Boltzmann statistics, donors and acceptors with
+  complete or incomplete ionization, SRH, radiative and Auger
+  recombination, generation, ohmic and Schottky contacts; coupled
+  Newton on the potential and both quasi-Fermi levels with
+  Scharfetter-Gummel fluxes), `solve_quasi_equilibrium` (the C-V model),
+  `iv_curve`, `cv_curve`, `Transport`, `Contact`, `bernoulli`.
+  `StackLayer` gains `acceptors` and `acceptor_depth`.
+- `kpenvelope.phonons`: `PolarPhonons`, `GAN_BARKER1973`,
+  `single_interface_modes`, `slab_modes` (uniaxial dielectric continuum
+  model) and `frohlich_constant`.
+- `kpenvelope.linecharge`: `PUBLISHED_CONSTRAINTS`, `combine_line_charge`
+  (Gaussian estimates and upper limits, closed form), `plan_holography`,
+  `plan_sum_rule`, `line_charge_error_from_density`.
+- `kpenvelope.gui`: the app (`kpenvelope-app`, `python -m
+  kpenvelope.gui`), a local page with plain-language results, error
+  bars, C-V and I-V sweeps, the line-charge tools, and a Python script
+  of every calculation.
+
+### Changed
+
+- `algan` takes `polarization="vurgaftman2003"` too, and its
+  `psp_bowing` now defaults to None, meaning the set's own
+  recommendation: 0 for the PBEsol and HSE sets (as before) and the
+  Table III bowing for the Vurgaftman set.
+- `solve_electrons` refuses layers with acceptors (it has no holes).
+
+### Corrected
+
+- The documentation said the H and ZB references differ only at second
+  order in the strain. They differ by 2 eps_c P_ZB of the film plus
+  second-order terms: about 1.5 percent of the charge for AlGaN on GaN,
+  and 10 percent for In0.15Ga0.85N. The numbers computed were right;
+  only the statement was wrong.
+
+### Tests
+
+42 new tests (224 in all): the copied tables against the PDFs, the
+ScAlN fits against the percentages quoted in that paper, the H and ZB
+difference, drift-diffusion against Ohm's law, the built-in potential,
+the short-diode current, a generation-recombination profile and the
+Schottky 1/C^2 slope, against the electron solver, phonon modes
+against closed forms, the line-charge combination, and the app
+against the library.
+
 ## 0.17.0 (2026-11-18)
 
 The package now covers where the fixed charge of a nitride stack comes

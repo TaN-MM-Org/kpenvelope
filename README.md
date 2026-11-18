@@ -52,6 +52,28 @@ questions such as:
 - Would an experiment be precise enough to tell charge bound to a
   dislocation from electrons trapped on it?
 
+Since version 0.18.0 it also covers the rest of a nitride device
+stack. InGaN, InAlN and ScAlN are built in, each number copied from a
+cited table or fit (Vurgaftman and Meyer 2003, Dreyer et al. 2016,
+Ambacher et al. 2021), and layers from different number sets that meet
+at an interface draw a warning. A one-dimensional drift-diffusion
+solver adds holes, doping of both kinds, recombination, ohmic and metal
+contacts, and current-voltage and capacitance-voltage curves. The
+optical phonons of a layer follow from the dielectric continuum model.
+What is known about the misfit-line charge can be combined into one
+estimate, and a planned measurement can be judged before it is grown.
+And everything above can be used without writing code, in an app that
+opens in your web browser (`kpenvelope-app`) and says what each result
+means in plain words. It also answers:
+
+- What is the charge at an InAlN/GaN, InGaN/GaN or ScAlN/GaN interface,
+  and how far apart are the published number sets?
+- Where is the threshold of my transistor layer in a C-V sweep, and how
+  much current does a p-n junction pass?
+- At what energies do the interface phonons of a GaN layer sit?
+- Combining every published constraint, how well is the misfit-line
+  charge known, and which experiment would pin it down?
+
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
 says why, instead of returning a number that looks fine but is not.
@@ -60,8 +82,10 @@ says why, instead of returning a number that looks fine but is not.
 
 - [A short guide to the words used here](#a-short-guide-to-the-words-used-here)
 - [Install, units and conventions](#install-units-and-conventions)
+- [The app](#the-app) (no code needed)
 - [Examples](#examples) (each with the output it prints; 15 to 18 for
-  nitride stacks, electrons, error bars and fits)
+  nitride stacks, electrons, error bars and fits; 19 to 23 for InAlN and
+  ScAlN, C-V, a p-n diode, phonons, and the misfit-line charge)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -160,6 +184,26 @@ says why, instead of returning a number that looks fine but is not.
 - **2DEG** -- two-dimensional electron gas, the electron sheet of a GaN
   transistor.
 
+### Words for the device and phonon part (new in 0.18.0)
+
+- **Number set** (`parameter_set`) -- whose published polarization
+  numbers a layer uses. The charge at an interface is a small difference
+  of two large numbers, so both sides should come from one set.
+- **Drift-diffusion** -- the standard model of current in a
+  semiconductor: carriers drift in the electric field and spread out
+  where their density changes.
+- **Quasi-Fermi level** -- the energy that sets the electron (or hole)
+  density when a current flows; with no current it is the Fermi level.
+- **Quasi-equilibrium** -- the electrons keep the Fermi level of their
+  contact while only the gate moves: the usual model of a C-V sweep.
+- **Recombination** -- an electron filling a hole. SRH (through a
+  defect level), radiative (giving light) and Auger (giving the energy
+  to a third carrier) are included.
+- **Optical phonon** -- a vibration in which the two atoms of a cell
+  move against each other. In a polar crystal it carries an electric
+  field. **TO** and **LO** are its transverse and longitudinal kinds; an
+  **interface phonon** is one whose field is tied to an interface.
+
 ## Install, units and conventions
 
 ```
@@ -168,7 +212,10 @@ pip install kpenvelope
 
 It needs Python 3.9 or newer and NumPy 1.22 or newer, and nothing
 else. The tests also use SciPy 1.8 or newer and pytest
-(`pip install -e .[test]` from a clone of the repository).
+(`pip install -e .[test]` from a clone of the repository). When SciPy is
+installed, the drift-diffusion solver uses its banded LAPACK solver,
+which is about ten times faster than the NumPy one it falls back to; the
+results are the same.
 
 Units and conventions, used everywhere:
 
@@ -197,6 +244,50 @@ Units and conventions, used everywhere:
   line charges in elementary charges per nm (e/nm), donor densities in
   nm^-3 (1e18 cm^-3 = 1e-3 nm^-3). `E_PER_NM2_PER_C_M2` (6.2415) converts
   C/m^2 to e/nm^2. The electron solver puts the Fermi level at 0 eV.
+- Drift-diffusion (new in 0.18.0): the inputs use the same units as
+  above, and the results give carrier densities in cm^-3, current
+  densities in A/cm^2 (positive along +z, from the bottom to the top),
+  charges on a contact in C/cm^2 and capacitances in F/cm^2. A positive
+  voltage on a contact lowers its Fermi level by that many eV. Phonon
+  energies are in meV (`CM1_TO_MEV` converts from cm^-1).
+
+## The app
+
+```
+kpenvelope-app
+```
+
+(or `python -m kpenvelope.gui`) opens the app in your web browser. It
+runs on your own computer, on 127.0.0.1 only, and needs nothing beyond
+kpenvelope and NumPy. You build the layer stack on the left (from an
+example or from scratch), choose whose published numbers to use, and
+read the results on the right:
+
+- **Charges**: the fixed charge at each interface, with what it does
+  ("attracts electrons"), how much the layer is stretched or squeezed,
+  how much of the charge comes from dislocation lines, and the source
+  of every number.
+- **Electrons**: the band diagram and the electron density, the sheet
+  density as one big number, and the lowest energy levels.
+- **Error bars**: how sure the electron density is, from the errors you
+  give for each composition, thickness and the surface barrier, with a
+  bar chart of where the error comes from (or a spread of random
+  samples).
+- **Device**: a C-V sweep (no transport numbers needed) or an I-V sweep
+  (with your transport numbers and their source).
+- **Dislocation charge**: what the published data say about the charge
+  of the misfit lines, combined, and how precisely a planned holography
+  measurement would pin it down.
+- **Python code**: the same calculation as a script you can rerun or
+  put in a supplement, and the last curve as a CSV file.
+
+Every box has a short explanation, the words are plain, and when an
+input cannot give a trustworthy answer the app says why in a sentence
+(for example, that ScAlN has no published band offset and asks you for
+yours). Samples can be saved to a file and opened again. The tests run
+the app's calculations against the library directly, check that the
+script it writes gives the same number, and check that the local server
+answers only the page it served (each start makes a random token).
 
 ## Examples
 
@@ -998,6 +1089,178 @@ J. Appl. Phys. 133, 145705 (2023). Build such a stack with
 then the barrier: the strain of each layer follows from the one below
 (`layer_strains`).
 
+### 19. InAlN and ScAlN on GaN, and how far the number sets agree (new in 0.18.0)
+
+```python
+from kpenvelope import StackLayer, gan, inaln, scaln, interface_charges
+
+# InAlN matched to GaN, with the two sets that have InN
+for pset in ("hse-dreyer2016", "vurgaftman2003"):
+    layers = [StackLayer(gan(pset), 1000.0),
+              StackLayer(inaln(0.17, polarization=pset), 10.0)]
+    c = interface_charges(layers)[0]
+    print(f"In0.17Al0.83N/GaN, {pset}: {c.sigma_cm2:.3e} per cm^2")
+
+# ScAlN on the GaN of the same paper
+layers = [StackLayer(gan("ambacher2021"), 1000.0), StackLayer(scaln(0.18), 10.0)]
+for ref in ("H", "ZB"):
+    c = interface_charges(layers, reference=ref)[0]
+    print(f"Sc0.18Al0.82N/GaN, reference {ref}: {c.sigma_cm2:.3e} per cm^2")
+```
+
+```
+In0.17Al0.83N/GaN, hse-dreyer2016: 1.335e+13 per cm^2
+In0.17Al0.83N/GaN, vurgaftman2003: 2.490e+13 per cm^2
+Sc0.18Al0.82N/GaN, reference H: 5.977e+13 per cm^2
+Sc0.18Al0.82N/GaN, reference ZB: 6.025e+13 per cm^2
+```
+
+In0.17Al0.83N is close to lattice matched to GaN, so its charge is
+almost all spontaneous polarization, and there the two sets that have
+InN differ by nearly a factor of two. That is the honest size of the
+uncertainty of the published numbers for this interface, and why
+`parameter_set` is recorded with every layer. `gan(pset)` gives the GaN
+of the same set. ScAlN comes from the composition fits of Ambacher et
+al. (2021), with its own GaN (`gan("ambacher2021")`, which can only be
+the unstrained bottom layer: the paper gives no GaN piezoelectric
+constants). The H and ZB references differ by less than 1 percent here.
+ScAlN has no published band offset, gap or mass in that paper, so for
+electrons add yours with `with_numbers(scaln(0.18), "your source",
+ec=..., eg=..., me=...)`.
+
+### 20. The C-V curve of a transistor layer
+
+```python
+import numpy as np
+from kpenvelope import Contact, StackLayer, algan, cv_curve
+
+layers = [StackLayer(algan(0.0), 1000.0), StackLayer(algan(0.25), 25.0)]
+V, C, Q, res = cv_curve(layers, np.arange(-7.0, 0.01, 1.0),
+                        top=Contact("schottky", barrier=1.0),
+                        bottom=Contact("zero-field"), dz=0.25)
+for v, c, r in zip(V, C, res):
+    print(f"{v:5.1f} V  C = {c * 1e9:6.1f} nF/cm^2   n_s = {r.sheet():.3e} per cm^2")
+```
+
+```
+ -7.0 V  C =    0.0 nF/cm^2   n_s = 2.351e+05 per cm^2
+ -6.0 V  C =  323.3 nF/cm^2   n_s = 1.030e+12 per cm^2
+ -5.0 V  C =  341.7 nF/cm^2   n_s = 3.125e+12 per cm^2
+ -4.0 V  C =  345.5 nF/cm^2   n_s = 5.272e+12 per cm^2
+ -3.0 V  C =  347.4 nF/cm^2   n_s = 7.435e+12 per cm^2
+ -2.0 V  C =  348.8 nF/cm^2   n_s = 9.607e+12 per cm^2
+ -1.0 V  C =  351.3 nF/cm^2   n_s = 1.179e+13 per cm^2
+  0.0 V  C =  362.7 nF/cm^2   n_s = 1.401e+13 per cm^2
+```
+
+`cv_curve` moves the metal on top while the electrons keep the Fermi
+level of the side contacts (quasi-equilibrium, the usual model of a C-V
+sweep; no transport numbers are needed). The capacitance sits just
+below that of the 25 nm barrier and drops to zero where the electron
+sheet empties, between -7 and -6 V for this layer and this 1 eV barrier.
+Each sheet density equals that of `solve_electrons` with the matching
+surface barrier (see the checks). The electrons here are classical;
+use `solve_electrons` for the subbands.
+
+### 21. A GaN p-n junction (illustrative transport numbers)
+
+```python
+import math
+from kpenvelope import Contact, StackLayer, Transport, algan, iv_curve
+
+# Illustrative transport numbers, NOT data: replace them with yours.
+tr = Transport(mobility_n=1000.0, mobility_p=10.0, hole_dos_mass=1.0,
+               reference="illustrative values for this example",
+               tau_n=1e-9, tau_p=1e-9)
+g = algan(0.0)
+layers = [StackLayer(g, 500.0, donors=1e-3),        # n-GaN, 1e18 cm^-3
+          StackLayer(g, 500.0, acceptors=1e-3)]     # p-GaN, 1e18 cm^-3, fully ionized
+V, J, res = iv_curve(layers, tr, [2.6, 2.7, 2.8], top=Contact("ohmic"),
+                     dz=0.5)
+for v, j in zip(V, J):
+    print(f"{v:.1f} V  J = {-j:.3e} A/cm^2")
+n = 0.1 / (8.617333262e-5 * 300 * math.log(J[1] / J[0]))
+print(f"ideality from 2.6 to 2.7 V: {n:.3f}")
+```
+
+```
+2.6 V  J = 1.373e-05 A/cm^2
+2.7 V  J = 1.056e-04 A/cm^2
+2.8 V  J = 8.966e-04 A/cm^2
+ideality from 2.6 to 2.7 V: 1.896
+```
+
+`solve_drift_diffusion` and `iv_curve` solve for the potential and the
+two quasi-Fermi levels together (Newton, Scharfetter-Gummel fluxes),
+ramping the voltage from equilibrium. With SRH recombination in the
+junction the ideality factor comes out near 2, as it should; without
+recombination it is 1 (checked in the tests against the closed-form
+diode current). The transport numbers above are placeholders to show
+the call, not data: the current scales with them directly. Check the
+grid: this current changes by 11 percent between `dz=2` and `dz=1` nm
+and by 0.1 percent between 0.5 and 0.25 nm.
+
+### 22. Interface phonons of GaN
+
+```python
+from kpenvelope import GAN_BARKER1973, single_interface_modes, slab_modes
+
+g = GAN_BARKER1973
+print(f"GaN LO phonons: {g.w_LO_perp:.2f} meV (E1), {g.w_LO_par:.2f} meV (A1)")
+print(f"LST check: eps_0 perp {g.eps0_perp:.3f} (listed 9.5)")
+print(f"GaN surface phonon (GaN/vacuum): {single_interface_modes(g, 1.0)[0]:.2f} meV")
+r = slab_modes(g, 1.0, 3.0, [0.05, 0.5, 5.0])
+for name in ("even", "odd"):
+    print(name, ["%.2f" % w for w in r[name][0]], "meV at q = 0.05, 0.5, 5 /nm")
+```
+
+```
+GaN LO phonons: 92.49 meV (E1), 92.24 meV (A1)
+LST check: eps_0 perp 9.528 (listed 9.5)
+GaN surface phonon (GaN/vacuum): 88.94 meV
+even ['76.65', '87.64', '88.94'] meV at q = 0.05, 0.5, 5 /nm
+odd ['91.93', '89.91', '88.94'] meV at q = 0.05, 0.5, 5 /nm
+```
+
+The phonon energies are those of Barker and Ilegems (1973) as listed by
+the Ioffe database, checked against each other with the
+Lyddane-Sachs-Teller relation. A thin GaN slab in vacuum has its even
+mode near the TO phonon and its odd mode near the LO phonon; a thick
+one has both at the surface-phonon energy, as in the dielectric
+continuum model of Fuchs and Kliewer. Put your own cited numbers in a
+`PolarPhonons` record for AlN, InN or an alloy.
+
+### 23. How well is the misfit-line charge known, and what would pin it down?
+
+```python
+from kpenvelope import (algan, combine_line_charge, plan_holography,
+                        plan_sum_rule)
+
+post = combine_line_charge(["shen-density-pbesol", "shen-mobility"])
+print(f"Lambda = {post.mean:.3f} +- {post.sd:.3f} e/nm "
+      f"(68%: {post.interval68[0]:.3f} to {post.interval68[1]:.3f})")
+print(f"the mobility limit removed {100 * post.removed:.1f} percent")
+
+film, sub = algan(0.25), algan(0.0)
+eps = (sub.a - film.a) / film.a
+print(f"holography, one layer relaxed 50%: +- {plan_holography(film, eps, 0.5):.3f} e/nm")
+```
+
+```
+Lambda = -0.652 +- 0.403 e/nm (68%: -1.074 to -0.234)
+the mobility limit removed 20.8 percent
+holography, one layer relaxed 50%: +- 0.326 e/nm
+```
+
+`combine_line_charge` multiplies the Gaussian estimates and cuts the
+result where an upper limit excludes it, in closed form. The measured
+mobility removes the part of the density fit that it rules out, which
+moves the estimate and shrinks it from +- 0.53 to +- 0.40 e/nm. The
+relative error stays about 60 percent: no calculation can do better
+without new data. `plan_holography` and `plan_sum_rule` say how well a
+planned measurement would do; `line_charge_error_from_density` does the
+same for a planned Hall density.
+
 ## Tutorials
 
 Three scripts in `examples/` go from data to a final result with error
@@ -1287,8 +1550,15 @@ example) gives its inputs, units and conventions.
   `POLARIZATION_SETS` holds the two shipped sets.
   `polarization_quantum(a)` and `zinc_blende_formal_polarization(a)`
   (3/4 of the quantum) give the reference charges.
-- `StackLayer(material, thickness, relaxation, donors, donor_depth)` --
-  one layer of a stack, listed bottom first; `layer_strains` gives the
+- `ingan(x)`, `inaln(x)`, `scaln(x)` and `gan(pset)` (new in 0.18.0)
+  -- relaxed In(x)Ga(1-x)N, In(x)Al(1-x)N, Sc(x)Al(1-x)N (0 <= x <=
+  0.5) and the GaN partner of a set; `with_numbers(material, source,
+  ...)` swaps any number of a record for yours and adds your source to
+  its reference. Every record carries its `parameter_set`;
+  `VURGAFTMAN2003` and `AMBACHER2021_SCALN` hold the copied tables.
+- `StackLayer(material, thickness, relaxation, donors, donor_depth,
+  acceptors, acceptor_depth)` -- one layer of a stack, listed bottom
+  first (acceptors are new in 0.18.0, for the drift-diffusion solver); `layer_strains` gives the
   mismatch, strain and in-plane lattice of every layer, each relaxed
   relative to the one below.
 - `interface_charges(layers, line_charge, reference)` -- an
@@ -1318,6 +1588,50 @@ example) gives its inputs, units and conventions.
   `line_charge_from_mobility_drop` -- scattering of the electron sheet
   by charged lines in the interface, and the line charge a measured
   mobility allows.
+
+**Devices: drift-diffusion and C-V (new in 0.18.0)**
+
+- `solve_drift_diffusion(layers, transport, top, bottom, ...)` -- the
+  steady state with electrons and holes (Fermi-Dirac or Boltzmann),
+  donors and acceptors (complete or incomplete ionization), SRH,
+  radiative and Auger recombination, optional generation, and ohmic or
+  metal (Schottky) contacts, for any bias. Returns a
+  `DriftDiffusionResult` (bands, quasi-Fermi levels, densities, currents,
+  the charge on the top contact). `Transport` holds the mobilities, hole
+  mass, lifetimes and recombination constants of a layer, with a
+  required reference; `Contact` a contact.
+- `solve_quasi_equilibrium(layers, top, bottom, ...)` -- the
+  semiconductor at the Fermi level of its bottom contact while the top
+  metal is biased, with holes optional; bottom "ohmic" or "zero-field".
+- `iv_curve` and `cv_curve` -- current and quasi-static capacitance
+  sweeps, warm-started from point to point; `bernoulli` -- the stable
+  Bernoulli function of the fluxes.
+
+**Phonons (new in 0.18.0)**
+
+- `PolarPhonons` -- the E1 and A1 TO and LO phonons and high-frequency
+  dielectric constants of one wurtzite material (with a reference), its
+  dielectric functions and Lyddane-Sachs-Teller static constants;
+  `GAN_BARKER1973` is the shipped GaN record.
+- `single_interface_modes(m1, m2)` and `slab_modes(slab, outside, d,
+  q)` -- interface phonons of one interface and of a slab in the
+  dielectric continuum model, for uniaxial media; `frohlich_constant`
+  -- the Froehlich electron-LO-phonon coupling constant.
+
+**The misfit-line charge (new in 0.18.0)**
+
+- `PUBLISHED_CONSTRAINTS` -- the published numbers that bear on the line
+  charge, each a `Constraint` with its source and assumptions.
+- `combine_line_charge(constraints)` -- one estimate from Gaussian
+  estimates and upper limits, in closed form (`LineChargePosterior`).
+- `plan_holography`, `plan_sum_rule`, `line_charge_error_from_density`
+  -- the error a planned measurement would give.
+
+**The app (new in 0.18.0)**
+
+- `kpenvelope-app` (or `python -m kpenvelope.gui`) -- the app in your
+  browser; `kpenvelope.gui.api` holds its calculations as plain
+  functions, and `kpenvelope.gui.make_server` its local server.
 
 **Error bars and fits (new in 0.17.0)**
 
@@ -1379,7 +1693,33 @@ because the literature has not settled the numbers:
   and II: P_H = 1.312, 1.351 and 1.026 C/m^2 (GaN, AlN, InN), proper
   e31 = -0.551, -0.676 and -0.604, e33 = 1.020, 1.569 and 1.238 C/m^2.
   That paper gives no C13/C33, so `algan` takes the PBEsol ratio unless
-  you pass your own, and its `reference` string says which.
+  you pass your own, and `ingan` and `inaln` take c13 and c33 of
+  Vurgaftman and Meyer; each `reference` string says which.
+- `"vurgaftman2003"` (new in 0.18.0): Vurgaftman and Meyer, J. Appl.
+  Phys. 94, 3675 (2003), Table I: spontaneous polarization with the
+  zinc-blende reference (-0.034, -0.090 and -0.042 C/m^2 for GaN, AlN
+  and InN), elastic constants c11, c12, c13, c33 (390, 145, 106, 398;
+  396, 137, 108, 373; 223, 115, 92, 224 GPa) and piezoelectric moduli
+  d13, d33 (-1.6, 3.1; -2.1, 5.4; -3.5, 7.6 pm/V), and the polarization
+  bowings of Table III (C = -0.021, -0.037 and -0.070 C/m^2 for AlGaN,
+  GaInN and AlInN). e31 and e33 follow from the moduli by e31 = (c11 +
+  c12) d13 + c13 d33 and e33 = 2 c13 d13 + c33 d33 (Eqs. 40a and 40b of
+  Ambacher et al. 2021), which gives e31 = -0.527, -0.536 and -0.484 and
+  e33 = 0.895, 1.561 and 1.058 C/m^2.
+- `"ambacher2021"` (new in 0.18.0): Ambacher et al., J. Appl. Phys.
+  130, 045102 (2021), for Sc(x)Al(1-x)N with 0 <= x <= 0.5: a(x) (Eq.
+  3a), P_SP(x) (Eq. 18c, zinc-blende reference), C13(x), C33(x) (Eqs.
+  23c, 23d), e31(x), e33(x) (Eqs. 39b, 39c) and eps33(x) (Eq. 8), each
+  copied from the printed equation and checked in the tests against the
+  percentages the paper quotes in its text. Its GaN has a = 3.1986
+  Angstrom and P_SP = -0.034 C/m^2 (Eqs. 1a and 18a at x = 1). The paper
+  does not say whether its e31 is proper; it uses it with the
+  zinc-blende reference, which is this package's ZB recipe, so it is
+  taken as the proper constant.
+
+Sets that give the polarization with the zinc-blende reference are
+converted to the H branch on the lattice of the relaxed alloy, P_H =
+P_ZB + e sqrt(3) / (2 a^2), so that every record means the same thing.
 
 The rest of `algan` comes from Vurgaftman and Meyer, J. Appl. Phys. 94,
 3675 (2003) (in-plane lattice constants at 300 K, 0.3189 and
@@ -1390,9 +1730,30 @@ Phys. 87, 334 (2000) (dielectric constants along c, 10.4 and 10.7;
 conduction-band share of the gap difference, 0.7). Alloys follow
 Vegard's rule except the gap. These are the numbers of the misfit
 analysis the tests reproduce; `cbo_fraction` and `psp_bowing` exist
-for sensitivity tests. No band numbers are shipped for InN, so InGaN,
-ScAlN or any other layer is described by filling a `NitrideMaterial`
-with your own cited numbers.
+for sensitivity tests.
+
+InGaN and InAlN (new in 0.18.0) add InN from the same Table I (a =
+0.3545 nm, gap 0.78 eV with Varshni 0.245 meV/K and 624 K, mass 0.07
+m0), the gap bowings of Table III (GaInN 1.4 eV; AlInN 2.5 eV, which
+the authors call provisional) and the wurtzite InN/GaN valence-band
+offset of 0.5 eV with no bowing of the offsets (their Sec. II F). For
+InAlN the valence band is linear between InN and AlN, which is
+transitivity: an assumption, since Vurgaftman and Meyer leave the
+wurtzite InN/AlN offset open. InN's static dielectric constant along c,
+14.4, is from Davydov et al., Appl. Phys. Lett. 75, 3297 (1999), as
+listed by the Ioffe NSM database (the abstract of that paper gives the
+ratio 0.91 of the two directions, which matches 13.1/14.4). ScAlN has
+no band numbers in its source, so `scaln` leaves them NaN for you to
+fill with `with_numbers`.
+
+Phonons (new in 0.18.0): GaN only, from Barker and Ilegems, Phys. Rev.
+B 7, 743 (1973) (LO phonons 746 and 744 cm^-1, static constants 9.5
+and 10.4, eps_inf 5.35) with TO phonons of 559 cm^-1 (Lemos et al.
+1972) and 533 cm^-1 (Manchon et al. 1970), all as listed by the Ioffe
+NSM database. The listed numbers pass the Lyddane-Sachs-Teller check to
+0.3 percent. No transport number (mobility, lifetime, recombination
+constant, hole mass) is shipped: there is no single accepted set, so
+`Transport` asks for yours with a reference.
 
 The misfit-line charge is not shipped as a default. The misfit analysis
 measured -0.84 +- 0.53 e/nm, or 0.32 +- 0.20 of the bare-end charge
@@ -1523,9 +1884,32 @@ For nitride stacks (new in 0.17.0) it also refuses:
   correlation outside [-1, 1] or a correlation matrix that is not
   positive semidefinite.
 
+Since 0.18.0 it also refuses (or warns):
+
+- a strained layer whose record has no piezoelectric constants (the GaN
+  of the ScAlN paper, which can only be the bottom layer), a set without
+  the material you ask for (the PBEsol set has no InN), an In fraction
+  outside [0, 1] or a Sc fraction outside [0, 0.5];
+- `with_numbers` without a source, or with a field it cannot replace;
+  it also drops the record's `parameter_set` when you change a
+  polarization or lattice number, since it is no longer the published
+  set;
+- it warns (UserWarning) when two layers of different sets meet;
+- `solve_electrons` on a layer with acceptors (it has no holes);
+- a `Transport` without a reference, with only one SRH lifetime, or
+  with a mobility or mass that is not positive; a Schottky contact
+  without a barrier; a "zero-field" bottom in a current calculation;
+  an ohmic contact on a layer with no neutral level; a quasi-equilibrium
+  solve of a stack with acceptors but no hole mass;
+- a drift-diffusion bias ramp that does not converge, with the likely
+  reason (a region with almost no free carriers between the contacts,
+  where a vertical current is not defined) and what to use instead;
+- a `PolarPhonons` record without a reference or with an LO phonon
+  below its TO phonon.
+
 ## How the results are checked
 
-182 automated tests run on every push and pull request, on Python 3.9,
+224 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -1769,6 +2153,52 @@ the tests use:
   1e-15 + 1e-12 k eV; spins are in-plane, unit length, perpendicular
   to k and opposite to 1e-12; the two energies at k = 0 are equal
   exactly; 4.5e-4 eV nm at 0.1 nm^-1 gives 9e-5 eV to 1e-19.
+
+**InGaN, InAlN, ScAlN, devices, phonons and the app (new in 0.18.0)**
+
+- The Vurgaftman-Meyer and Ambacher numbers equal the printed tables
+  and equations; e31 and e33 from the moduli equal a hand calculation;
+  the polarization bowings, the lattice-matched InAlN (x = 0.178) and
+  ScAlN (x = 0.202 on the GaN of that paper), and the InGaN and InAlN
+  band edges follow their rules exactly. The ScAlN fits reproduce the
+  numbers quoted in the paper's text (e33 = 3.641 at x = 0.5; changes of
+  64, 148 and 233 percent in C33, e33 and P_SP, and 235 percent in
+  eps33).
+- The H recipe minus the ZB recipe equals 2 eps_c P_ZB of the film plus
+  a second-order term, for AlGaN, InGaN and ScAlN on GaN: about 1.5
+  percent of the charge for Al0.25Ga0.75N and 10 percent for
+  In0.15Ga0.85N. The ScAlN charge equals the ZB recipe of Ambacher et
+  al. (their Eq. 46) to 1e-14 C/m^2.
+- Drift-diffusion against closed forms: Ohm's law for a doped resistor
+  to 1e-9; zero current in equilibrium; the built-in potential of a p-n
+  junction, kT ln(N_A N_D / n_i^2), to 1e-10 V; the short-diode current
+  to 0.5 percent at 0.4 and 0.5 V, with ideality 1 to 0.1 percent; the
+  minority-carrier profile of a bar under uniform generation with SRH
+  recombination, G tau [1 - cosh(z/L) / cosh(W/2L)], to 1e-4; the slope
+  of 1/C^2 of a metal on n-GaN, -2 / (q eps N_D), to 1e-3, by both
+  solvers. Against the other electron solver: band edges within 1 meV
+  and the sheet density to 1e-3 for an AlGaN/GaN layer, and the
+  quasi-equilibrium C-V sheet densities to 1e-3 at three gate voltages.
+  The NumPy banded solver equals a dense solve and gives the same
+  current as SciPy's.
+- Phonons: the GaN numbers equal the listed ones and pass the
+  Lyddane-Sachs-Teller check (9.53 against 9.5); the slab modes equal
+  the closed form of Fuchs and Kliewer to 1e-9 at every q, with the TO,
+  LO and surface limits; an interface of two isotropic media equals the
+  roots of its quadratic, and the GaN surface mode of the uniaxial model
+  equals the root of eps_perp eps_par = 1; the Froehlich constant equals
+  a second form of the same formula.
+- The app: its charges and electron densities equal the library's, the
+  Python script it writes gives the same density to 1e-12, its errors
+  come back as sentences, its uncertainty budget sums to 1, and its
+  server refuses a request without the page's token. Not in the test
+  suite: the page was also driven through every tab in a headless
+  browser, in light and dark mode and at phone width, with no script
+  errors.
+- The line-charge tools: the published constraints equal the archived
+  numbers; the combination equals a truncated normal written out
+  separately, and two Gaussians combine by inverse variance; the
+  planners reproduce the archived predictions.
 
 **Nitride stacks, electrons, error bars and fits (new in 0.17.0)**
 
@@ -2063,12 +2493,34 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   -0.84 +- 0.53 e/nm, an error of about 60 percent, and the
   electron-counting value comes from ideal surfaces, not real
   dislocations. So pass it with its error bar and read the spread.
-- The two polarization sets still differ (P_H 1.337 against 1.312 C/m^2
-  for GaN, e31 and e33 of GaN 20 to 25 percent apart), and the two
-  references differ at second order in the strain; for large
-  mismatches compare both. Alloys use Vegard's rule for the
-  polarization (bowing only through `psp_bowing`). Only Al(x)Ga(1-x)N is
-  built in; other layers need your cited numbers.
+- The polarization sets still differ (P_H 1.337 against 1.312 C/m^2
+  for GaN, e31 and e33 of GaN 20 to 25 percent apart, and nearly a
+  factor of two in the charge of lattice-matched InAlN/GaN), so compare
+  sets where it matters. The two references differ by 2 eps_c P_ZB plus
+  second-order terms: about 1.5 percent for AlGaN on GaN, 10 percent for
+  In0.15Ga0.85N; compare both for large strains. Alloys use Vegard's
+  rule for the polarization except where the source gives a bowing.
+  InN and the In alloys rest on the Vurgaftman-Meyer band numbers,
+  whose InN offsets and AlInN gap bowing the authors themselves call
+  provisional. ScAlN comes with no band numbers, and its source covers
+  only 0 <= x <= 0.5 (a cubic phase appears near 0.45). AlN, InN and
+  alloy phonons are not shipped.
+- Drift-diffusion: no thermionic emission or tunneling over abrupt
+  offsets (an abrupt offset passes current like a very thin graded
+  layer, which overestimates transport over tall barriers), no field
+  dependence of the mobility or velocity saturation, no heating, no
+  time dependence or small-signal AC (the capacitance is quasi-static).
+  Metal contacts keep the carriers at their equilibrium densities
+  (infinite surface recombination velocity). A vertical current needs
+  a conducting path: across an undoped, insulating buffer it is not
+  defined, and the solver says so; use the quasi-equilibrium model for
+  C-V there. The electrons are classical (use `solve_electrons` for
+  subbands). Check the grid by halving `dz`: recombination in a
+  forward-biased junction needs about 0.5 nm (example 21).
+- Phonons: only the interface (decaying) modes of the dielectric
+  continuum model, not the confined or half-space modes, and no
+  phonon-limited mobility. The single-oscillator dielectric function
+  ignores damping.
 - `solve_electrons` uses one isotropic, parabolic conduction band with
   the mass along c, and no holes (use the six-band solvers for hole
   gases). The 2DEG is the quantum window you choose; outside it
@@ -2109,7 +2561,13 @@ The nitride-stack part (new in 0.17.0) implements Eqs. 1 to 3 of
 whose analysis it reproduces, and builds on Dreyer et al., Phys. Rev. X
 6, 021038 (2016), and Wang et al., Appl. Phys. Lett. 124, 263502
 (2024). The electron solver follows the self-consistency scheme of
-Trellakis et al., J. Appl. Phys. 81, 7880 (1997).
+Trellakis et al., J. Appl. Phys. 81, 7880 (1997). The material tables of
+0.18.0 are copied from Vurgaftman and Meyer, J. Appl. Phys. 94, 3675
+(2003), and Ambacher et al., J. Appl. Phys. 130, 045102 (2021); the
+drift-diffusion fluxes are those of Scharfetter and Gummel, IEEE Trans.
+Electron Devices 16, 64 (1969); the interface phonons follow the
+dielectric continuum model of Fuchs and Kliewer, Phys. Rev. 140, A2076
+(1965), and Mori and Ando, Phys. Rev. B 40, 6175 (1989).
 
 ## Citing, support and license
 
