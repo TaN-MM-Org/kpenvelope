@@ -69,7 +69,7 @@ from .electrons import (ElectronResult, fermi_dirac_half,
 from .uncertainty import Propagation, propagate
 from .fitting import FitResult, fit_interface_series, fit_least_squares
 from .driftdiffusion import (Contact, DriftDiffusionResult, Transport,
-                             bernoulli, cv_curve, iv_curve,
+                             bernoulli, cv_curve, cv_curve_quantum, iv_curve,
                              solve_drift_diffusion, solve_quasi_equilibrium)
 from .phonons import (CM1_TO_MEV, GAN_BARKER1973, PolarPhonons,
                       frohlich_constant, single_interface_modes, slab_modes)
@@ -120,6 +120,7 @@ __all__ = [
     "line_charge_error_from_density",
     "solve_drift_diffusion", "DriftDiffusionResult", "Transport", "Contact",
     "iv_curve", "cv_curve", "bernoulli", "solve_quasi_equilibrium",
+    "cv_curve_quantum",
     "PolarPhonons", "GAN_BARKER1973", "CM1_TO_MEV", "single_interface_modes",
     "slab_modes", "frohlich_constant",
 ]
