@@ -24,7 +24,8 @@ import warnings
 
 import numpy as np
 
-from ..driftdiffusion import Contact, Transport, cv_curve, iv_curve
+from ..driftdiffusion import (Contact, Transport, cv_curve, cv_curve_quantum,
+                              iv_curve)
 from ..electrons import solve_electrons
 from ..interfaces import StackLayer, interface_charges
 from ..linecharge import (PUBLISHED_CONSTRAINTS, combine_line_charge,
@@ -333,10 +334,31 @@ def run_device(spec):
                                 "needed: enter the hole mass and its source.")
             hm = _num(t, "hole_mass", what="the hole mass (in electron masses)",
                       lo=1e-3)
-        V, C, Q, res = cv_curve(layers, V, top=top, bottom=bottom,
-                                hole_mass=hm, **kw)
         tot = sum(L.thickness for L in layers)
         lo = max(0.0, tot - min(tot, 150.0))
+        if dev.get("quantum"):
+            if top.kind != "schottky" or bottom.kind != "zero-field":
+                raise SpecError("Quantum C-V works with a metal gate on top and "
+                                "a thick base at the bottom.")
+            if hm is not None:
+                raise SpecError("Quantum C-V has no holes, so it cannot treat "
+                                "p-type layers; untick it.")
+            if len(V) > 41:
+                raise SpecError("Quantum C-V is slow: use at most 41 voltage "
+                                "points (a larger step).")
+            V, C, Q, res = cv_curve_quantum(
+                layers, V, barrier=top.barrier, temperature_K=T, interfaces=ic,
+                quantum_window=_window(layers, spec))
+            sheets = []
+            for r in res:
+                m = (r.z >= lo - 1e-9)
+                zz, nn = r.z[m], r.n[m]
+                sheets.append(float(np.sum(0.5 * (nn[1:] + nn[:-1]) * np.diff(zz)) * 1e14))
+            return {"mode": "cv", "v": list(map(float, V)),
+                    "c_nF_cm2": (C * 1e9).tolist(), "sheet_cm2": sheets,
+                    "quantum": True, "warnings": warn}
+        V, C, Q, res = cv_curve(layers, V, top=top, bottom=bottom,
+                                hole_mass=hm, **kw)
         return {"mode": "cv", "v": list(map(float, V)),
                 "c_nF_cm2": (C * 1e9).tolist(),
                 "sheet_cm2": [r.sheet(lo, tot) for r in res],

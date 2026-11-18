@@ -39,7 +39,16 @@ button:disabled{opacity:.5;cursor:default}
 .muted{color:var(--muted)}
 .small{font-size:13px}
 .note{font-size:13px;color:var(--muted);margin:4px 0}
-.help{display:inline-block;width:17px;height:17px;border-radius:50%;background:var(--chip);color:var(--muted);text-align:center;font-size:12px;line-height:17px;cursor:help;margin-left:4px;border:1px solid var(--line)}
+.help{display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--chip);color:var(--muted);text-align:center;font-size:12px;line-height:18px;cursor:pointer;margin-left:4px;border:1px solid var(--line);user-select:none}
+.help:hover,.help[aria-expanded=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.helptext{display:block;font-size:13px;color:var(--ink);background:var(--soft);border-radius:6px;padding:6px 8px;margin:4px 0 2px;font-weight:400}
+.guide{display:flex;gap:10px;flex-wrap:wrap;margin:0;padding:10px 20px;background:var(--soft);border-bottom:1px solid var(--line);font-size:14px}
+.guide span{display:inline-flex;align-items:center;gap:6px}
+.guide b{display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);text-align:center;line-height:22px;font-size:13px}
+.summary{border-left:4px solid var(--accent);background:var(--soft);border-radius:6px;padding:8px 12px;margin:10px 0;font-size:15px}
+.summary b{font-weight:700}
+.lead{color:var(--muted);margin:-4px 0 10px;font-size:14px}
+.stale{border-radius:8px;padding:6px 10px;margin:0 0 8px;font-size:13px;background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
 .layer{border:1px solid var(--line);border-left:6px solid var(--gan);border-radius:8px;padding:8px 10px;margin:8px 0;background:var(--panel)}
 .layer .top{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .layer .top strong{font-size:14px}
@@ -75,8 +84,13 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
 <body>
 <header>
   <h1>kpenvelope</h1>
-  <p>Charges and electrons in GaN-family layer stacks, with honest error bars.</p>
+  <p>See the built-in charges, the electron layer and the device curves of GaN-type layer stacks, with honest error bars.</p>
 </header>
+<div class="guide" aria-label="How to use this app">
+  <span><b>1</b> Pick an example, or build your own layers.</span>
+  <span><b>2</b> Choose a results tab.</span>
+  <span><b>3</b> Press the blue button. Tap a "?" for help.</span>
+</div>
 <main>
 <section class="card" aria-labelledby="s1">
   <h2 id="s1">1. Your sample</h2>
@@ -93,7 +107,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   </div>
   <p class="note">Examples only set the layer structure. Check every number against your own sample.</p>
 
-  <label for="pset">Which published numbers to use <span class="help" title="The built-in charge at an interface is a small difference of large numbers, so it matters whose numbers you use. All layers use the same set.">?</span></label>
+  <label for="pset">Which published numbers to use <span class="help" title="Different research groups published slightly different material numbers. The charge at an interface is a small difference of two large numbers, so this choice matters. All layers use the same set, so they stay consistent.">?</span></label>
   <select id="pset"></select>
   <p class="note" id="psetAbout"></p>
 
@@ -107,7 +121,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   <button id="addLayer">+ Add a layer on top</button>
 
   <div id="lineBox" class="hidden">
-    <h3>Charge on the dislocation lines <span class="help" title="A layer that has relaxed back toward its own size does so by forming lines of defects (misfit dislocations) at its bottom. Their charge changes the interface charge, and it is not well known.">?</span></h3>
+    <h3>Charge on the dislocation lines <span class="help" title="A layer that has relaxed back toward its own size does so by forming lines of defects at its bottom (misfit dislocations). These lines can carry charge, which changes the interface charge. How much charge they carry is not well known, so you choose.">?</span></h3>
     <select id="lineMode"></select>
     <div id="lineCustom" class="row hidden">
       <div><label for="lineVal">Value (charges per nm)</label><input id="lineVal" type="number" step="0.01" value="-0.84"></div>
@@ -117,11 +131,11 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   </div>
 
   <div id="scBox" class="hidden">
-    <h3>ScAlN band numbers (yours) <span class="help" title="The ScAlN paper gives no band gap, band offset or electron mass. To see electrons or device curves, enter values from a source you trust.">?</span></h3>
+    <h3>ScAlN band numbers (yours) <span class="help" title="The ScAlN paper gives the charges but not the energy numbers an electron calculation needs. Enter them from a source you trust to see electrons or device curves. The charges work without them.">?</span></h3>
     <div class="grid2">
       <div><label for="scEg">Band gap (eV)</label><input id="scEg" type="number" step="0.01"></div>
-      <div><label for="scEc">Conduction band above GaN's (eV)</label><input id="scEc" type="number" step="0.01"></div>
-      <div><label for="scMe">Electron mass (x free electron)</label><input id="scMe" type="number" step="0.01"></div>
+      <div><label for="scEc">Energy step for electrons, above GaN (eV)</label><input id="scEc" type="number" step="0.01"></div>
+      <div><label for="scMe">Electron mass (times a free electron's)</label><input id="scMe" type="number" step="0.01"></div>
       <div><label for="scSrc">Where these come from</label><input id="scSrc" type="text" placeholder="paper or measurement"></div>
     </div>
   </div>
@@ -140,16 +154,18 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   <div class="tabs" role="tablist" id="tabs"></div>
 
   <div class="panel" id="p-charges" role="tabpanel">
-    <p>Each interface between two layers carries a fixed electric charge, set by the two materials, how much they are stretched, and any dislocations. A <b>positive</b> charge pulls electrons to the interface (this is what makes the electron layer of a GaN transistor). A <b>negative</b> one pulls holes.</p>
+    <p class="lead">Fixed charge at each boundary between layers.</p>
+    <p>Each boundary between two layers holds a fixed electric charge. It is set by the two materials, by how much they are stretched, and by any defect lines. A <b>positive</b> charge pulls electrons to the boundary (this is what makes the electron layer of a GaN transistor). A <b>negative</b> one pulls holes.</p>
     <button class="primary" id="runCharges">Work out the charges</button>
     <div id="outCharges"></div>
   </div>
 
   <div class="panel" id="p-electrons" role="tabpanel">
-    <p>Solves for where the electrons sit, using quantum mechanics near the surface and simple statistics deeper down.</p>
+    <p class="lead">Where the free electrons collect, and how many there are.</p>
+    <p>The app works out where the free electrons settle. Near the surface it uses quantum mechanics (exact); deeper down a simpler model is enough.</p>
     <div class="grid2">
-      <div><label for="phiB">Surface barrier (eV) <span class="help" title="How far the conduction band sits above the Fermi level at the top surface. It depends on the surface and any metal on it; there is no single correct value, so use one that fits your sample.">?</span></label><input id="phiB" type="number" step="0.05" value="1.0"></div>
-      <div><label for="qdepth">Quantum region, nm from the top <span class="help" title="Electrons in this top region are treated with quantum mechanics. 120 nm covers most transistor layers.">?</span></label><input id="qdepth" type="number" step="10" value="120" min="1"></div>
+      <div><label for="phiB">Surface energy step (eV) <span class="help" title="How much energy an electron would need at the very top surface (in the textbooks: the conduction band minus the Fermi level there, or the surface barrier). It depends on the surface and on any metal on it. There is no single correct value, so use one that fits your sample. A higher step pushes electrons away.">?</span></label><input id="phiB" type="number" step="0.05" value="1.0"></div>
+      <div><label for="qdepth">Depth treated exactly (nm from the top) <span class="help" title="Electrons in this top region are worked out with quantum mechanics. Below it a simpler model is used. 120 nm covers most transistor layers.">?</span></label><input id="qdepth" type="number" step="10" value="120" min="1"></div>
     </div>
     <p><button class="primary" id="runElectrons">Find the electrons</button></p>
     <div id="outElectrons"></div>
@@ -158,12 +174,13 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   </div>
 
   <div class="panel" id="p-errors" role="tabpanel">
-    <p>How sure is the electron density? Enter how well you know each input (one standard deviation). Leave a box at 0 if you know that number exactly.</p>
+    <p class="lead">How sure can you be of the electron count?</p>
+    <p>No input is known perfectly. Enter how far off each one could be (one standard deviation, the usual "plus or minus"). Leave a box at 0 if you know that number exactly.</p>
     <div id="errBoxes"></div>
     <div class="grid2">
-      <div><label for="errPhi">Surface barrier error (eV)</label><input id="errPhi" type="number" step="0.05" value="0.1" min="0"></div>
+      <div><label for="errPhi">Surface energy step: plus or minus (eV)</label><input id="errPhi" type="number" step="0.05" value="0.1" min="0"></div>
       <div><label for="errMethod">How to work it out</label>
-        <select id="errMethod"><option value="linear">Quick (straight-line estimate)</option><option value="monte-carlo">Thorough (random samples, slower)</option></select></div>
+        <select id="errMethod"><option value="linear">Quick estimate (a few seconds)</option><option value="monte-carlo">Thorough: try many random samples (slower)</option></select></div>
     </div>
     <p><button class="primary" id="runErrors">Work out the error bar</button></p>
     <div id="outErrors"></div>
@@ -171,25 +188,27 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   </div>
 
   <div class="panel" id="p-device" role="tabpanel">
-    <p>Puts a metal on top and sweeps its voltage. <b>Capacitance (C-V)</b> shows how the electron layer empties as the voltage goes negative. <b>Current (I-V)</b> shows how much current flows from top to bottom.</p>
+    <p class="lead">What a measurement with a metal contact on top would show.</p>
+    <p>The app puts a metal contact on top and steps its voltage. <b>Capacitance (C-V)</b> shows how the electron layer empties as the voltage goes negative, which tells you where a transistor switches off. <b>Current (I-V)</b> shows how much current flows from top to bottom.</p>
     <div class="grid2">
       <div><label for="devMode">What to measure</label><select id="devMode"><option value="cv">Capacitance vs voltage (C-V)</option><option value="iv">Current vs voltage (I-V)</option></select></div>
-      <div id="bottomBox"><label for="devBottom">Bottom <span class="help" title="Thick base: the bottom layer is a thick buffer with no electric field at its far end (as in the Electrons tab). In a transistor the electrons are held by the side contacts (source and drain), which this models. Ohmic: a real contact at the bottom.">?</span></label><select id="devBottom"><option value="thick">Thick base (like a transistor)</option><option value="ohmic">Ohmic contact at the bottom</option></select></div>
-      <div><label for="devContact">Top contact</label><select id="devContact"><option value="metal">Metal gate (Schottky)</option><option value="ohmic">Ohmic (no barrier)</option></select></div>
-      <div id="barrierBox"><label for="devBarrier">Metal barrier (eV) <span class="help" title="Height of the conduction band above the metal's Fermi level at the contact. Take it from your metal and surface.">?</span></label><input id="devBarrier" type="number" step="0.05" value="1.0"></div>
+      <div id="bottomBox"><label for="devBottom">Bottom <span class="help" title="Thick base: the bottom layer is a thick buffer with no electric field at its far end (as in the Electrons tab). In a transistor the electrons are held by the side contacts (source and drain), which this models. Ohmic: a real contact at the bottom.">?</span></label><select id="devBottom"><option value="thick">Thick base, electrons held by side contacts (a transistor)</option><option value="ohmic">A contact at the bottom</option></select></div>
+      <div><label for="devContact">Top contact</label><select id="devContact"><option value="metal">Metal gate (with an energy step, a "Schottky" contact)</option><option value="ohmic">Plain contact (no energy step, "ohmic")</option></select></div>
+      <div id="barrierBox"><label for="devBarrier">Metal energy step (eV) <span class="help" title="How much energy an electron needs to pass from the metal into the layer (the Schottky barrier height). It depends on the metal and the surface; take it from your own data or a source you trust.">?</span></label><input id="devBarrier" type="number" step="0.05" value="1.0"></div>
       <div><label for="vStart">From (V)</label><input id="vStart" type="number" step="0.1" value="-6"></div>
       <div><label for="vStop">To (V)</label><input id="vStop" type="number" step="0.1" value="0"></div>
       <div><label for="vStep">Step (V)</label><input id="vStep" type="number" step="0.05" value="0.25" min="0.001"></div>
     </div>
-    <p class="note" id="cvNote">C-V needs no transport numbers. The electrons stay at the Fermi level of the side contacts and only the gate moves; holes are left out, because a fast sweep cannot make them in a wide-gap material.</p>
+    <label id="qBox" style="color:var(--ink)"><input type="checkbox" id="devQuantum"> Treat the electrons with quantum mechanics (more accurate, about ten times slower) <span class="help" title="The quick C-V treats the electrons as a simple gas. Ticking this solves for their quantum states at every voltage, which is closer to a real device. The two usually differ by a few percent.">?</span></label>
+    <p class="note" id="cvNote">C-V needs none of the numbers below. The electrons stay connected to the side contacts and only the gate voltage changes. Holes are left out, because a quick sweep cannot create them in these materials.</p>
     <div id="trBox">
     <h3>Transport numbers (yours)</h3>
     <p class="note" id="trNote">There is no single accepted set, so the app asks you. The current depends on them directly.</p>
     <div class="grid2">
-      <div class="ivOnly"><label for="muN">Electron mobility (cm2/Vs)</label><input id="muN" type="number" step="10"></div>
-      <div class="ivOnly"><label for="muP">Hole mobility (cm2/Vs)</label><input id="muP" type="number" step="1"></div>
-      <div><label for="mH">Hole mass (x free electron)</label><input id="mH" type="number" step="0.1"></div>
-      <div class="ivOnly"><label for="tau">Carrier lifetime (s, optional)</label><input id="tau" type="number" step="1e-9" placeholder="leave empty for none"></div>
+      <div class="ivOnly"><label for="muN">Electron mobility: how easily they move (cm²/Vs)</label><input id="muN" type="number" step="10"></div>
+      <div class="ivOnly"><label for="muP">Hole mobility (cm²/Vs)</label><input id="muP" type="number" step="1"></div>
+      <div><label for="mH">Hole mass (times a free electron's)</label><input id="mH" type="number" step="0.1"></div>
+      <div class="ivOnly"><label for="tau">How long a carrier lasts before it recombines (s, optional)</label><input id="tau" type="number" step="1e-9" placeholder="leave empty for none"></div>
       <div style="grid-column:1/-1"><label for="trSrc">Where these come from</label><input id="trSrc" type="text" placeholder="for example: Hall measurement of my sample"></div>
     </div>
     </div>
@@ -200,26 +219,28 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
   </div>
 
   <div class="panel" id="p-lines" role="tabpanel">
-    <p>What is known about the charge of the dislocation lines, from published data. Tick what to combine. The result is only as good as the assumptions listed.</p>
+    <p class="lead">How much charge sits on the defect lines of a relaxed layer.</p>
+    <p>This charge is the least known number in a relaxed layer. Below is what published measurements say about it. Tick the ones to combine; each lists what it assumes.</p>
     <div id="consBoxes"></div>
     <p><button class="primary" id="runLines">Combine</button></p>
     <div id="outLines"></div>
     <canvas id="cvLines" aria-label="Line charge"></canvas>
     <h3>Plan a measurement</h3>
-    <p class="note">How precisely would electron holography pin the line charge down for a layer you could grow?</p>
+    <p class="note">How well would a planned measurement pin this charge down? Electron holography is a microscope method that maps electric charge; enter how precisely it measures.</p>
     <div class="grid2">
       <div><label for="plMat">Layer</label><select id="plMat"></select></div>
       <div><label for="plX">Fraction (Al, In or Sc)</label><input id="plX" type="number" step="0.01" value="0.25" min="0" max="1"></div>
       <div><label for="plR">Relaxed (%)</label><input id="plR" type="number" step="5" value="50" min="0.1" max="100"></div>
-      <div><label for="plE">Charge precision (C/m2)</label><input id="plE" type="number" step="0.0005" value="0.001" min="0"></div>
+      <div><label for="plE">Measurement precision (C/m²)</label><input id="plE" type="number" step="0.0005" value="0.001" min="0"></div>
     </div>
     <p><button id="runPlan">Estimate</button></p>
     <div id="outPlan"></div>
   </div>
 
   <div class="panel" id="p-code" role="tabpanel">
-    <p>The same calculation as a Python script, so you can repeat it, change it, or put it in a paper's supplement.</p>
-    <p><button id="runCode">Make the script</button> <button id="copyCode">Copy</button> <button id="saveCsv">Save last curve as CSV</button></p>
+    <p class="lead">Keep, repeat or share what you did.</p>
+    <p>The app can write the same calculation as a Python script (to repeat it, change it, or add it to a paper's supplement), and save the last curve as a spreadsheet file (CSV).</p>
+    <p><button id="runCode">Make the script</button> <button id="copyCode">Copy</button> <button id="saveCsv">Save last curve (CSV)</button></p>
     <pre id="code">Press "Make the script".</pre>
   </div>
 
@@ -230,10 +251,15 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <dt>Relaxed</dt><dd>A thin layer on a different base is squeezed or stretched to fit it. Above some thickness it relaxes back toward its own size by forming dislocation lines. 0 percent means it fits the layer below exactly.</dd>
       <dt>Interface charge</dt><dd>A fixed charge at the boundary between two layers. In nitrides it comes from polarization: the crystals are electrically polar, and the polarity changes from one layer to the next.</dd>
       <dt>Electron sheet density</dt><dd>How many free electrons sit in the thin layer at an interface, per square centimeter. Transistors use these electrons.</dd>
-      <dt>Surface barrier</dt><dd>Where the energy levels sit at the top surface. It depends on the surface and on any metal there.</dd>
+      <dt>Surface energy step (surface barrier)</dt><dd>How much energy an electron would need at the top surface. It depends on the surface and on any metal there.</dd>
+      <dt>Energy an electron needs (conduction band)</dt><dd>The blue line in the Electrons plot. Where it dips below the filling level, electrons collect.</dd>
+      <dt>Filling level (Fermi level)</dt><dd>States below it are filled with electrons, states above it are empty. The plots put it at 0.</dd>
+      <dt>Metal gate and plain contact (Schottky and ohmic)</dt><dd>A metal gate has an energy step that blocks electrons, so its voltage controls them. A plain contact lets electrons pass freely.</dd>
+      <dt>Mobility</dt><dd>How easily a carrier moves when pushed by a voltage. Higher means more current.</dd>
+      <dt>Holes</dt><dd>Missing electrons, which act like positive carriers.</dd>
       <dt>Error bar</dt><dd>The range the answer probably lies in (one standard deviation), given how well the inputs are known.</dd>
-      <dt>Capacitance-voltage (C-V)</dt><dd>A standard measurement: as the gate voltage goes more negative, electrons leave, and the capacitance drops. The voltage where it drops is the threshold.</dd>
-      <dt>What this app does not do</dt><dd>It has no current over or through barriers by tunneling, no heating, and no time dependence. It uses one conduction band for electrons. All of these are stated in the documentation.</dd>
+      <dt>Capacitance-voltage (C-V)</dt><dd>A standard measurement: as the gate voltage goes more negative, electrons leave, and the capacitance drops. The voltage where it drops is where the transistor switches off (the threshold).</dd>
+      <dt>What this app does not do</dt><dd>It does not follow electrons jumping or tunneling through thin barriers, heating, or fast changes in time. These limits are listed in the documentation.</dd>
     </dl>
     <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
   </div>
@@ -245,7 +271,7 @@ const TOKEN = "__KPE_TOKEN__";
 let OPT = null, LAST = null;
 const $ = id => document.getElementById(id);
 const COLORS = {GaN:"var(--gan)",AlGaN:"var(--algan)",InGaN:"var(--ingan)",InAlN:"var(--inaln)",ScAlN:"var(--scaln)"};
-const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","Error bars"],["device","Device"],["lines","Dislocation charge"],["code","Python code"],["help","Help"]];
+const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["code","Save and share"],["help","Help and words"]];
 
 let state = {parameter_set:"pbesol-mahim2026", temperature:300, layers:[
   {material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none",doping_cm3:1e16},
@@ -306,7 +332,7 @@ function renderLayers(){
        <div><label>Material</label><select data-k="material">${mats}</select></div>
        <div class="${mi.x_name?"":"hidden"}"><label>${mi.x_name?esc(mi.x_name[0].toUpperCase()+mi.x_name.slice(1))+" fraction (0 to "+mi.x_max+")":""}</label><input type="number" data-k="x" step="0.01" min="0" max="${mi.x_max||1}" value="${L.x}"></div>
        <div><label>Thickness (nm)</label><input type="number" data-k="thickness" step="1" min="0.001" value="${L.thickness}"></div>
-       <div class="${isBottom?"hidden":""}"><label>Relaxed (%) <span class="help" title="0 = fits the layer below exactly (fully strained). 100 = back to its own size.">?</span></label><input type="number" data-k="relaxation" step="1" min="0" max="100" value="${L.relaxation||0}"></div>
+       <div class="${isBottom?"hidden":""}"><label>Relaxed (%) <span class="help" title="A thin layer is stretched or squeezed to fit the layer below. 0 means it fits exactly. 100 means it is back to its own natural size.">?</span></label><input type="number" data-k="relaxation" step="1" min="0" max="100" value="${L.relaxation||0}"></div>
        <div><label>Doping</label><select data-k="doping"><option value="none" ${L.doping==="none"?"selected":""}>None</option><option value="n" ${L.doping==="n"?"selected":""}>n-type (donors)</option><option value="p" ${L.doping==="p"?"selected":""}>p-type (acceptors)</option></select></div>
        <div class="${L.doping==="none"?"hidden":""}"><label>Doping (per cm³, like 1e18)</label><input type="text" inputmode="decimal" data-k="doping_cm3" value="${Number(L.doping_cm3||1e18).toExponential()}"></div>
       </div>`;
@@ -343,7 +369,16 @@ function renderErrBoxes(){
       <div><label for="et${i}">Layer ${i+1}: thickness error (nm)</label><input id="et${i}" type="number" step="0.5" min="0" value="${keep["et"+i]??(i===0?0:1)}"></div>`;
     box.appendChild(d); });
 }
-function save(){ try{ localStorage.setItem("kpe-sample",JSON.stringify(readSpec())); }catch(e){} }
+function save(){ try{ localStorage.setItem("kpe-sample",JSON.stringify(readSpec())); }catch(e){} markStale(); }
+const OUTS=["outCharges","outElectrons","outErrors","outDevice","outLines"];
+let READY=false;
+function markStale(){ if(!READY) return; OUTS.forEach(id=>{ const o=$(id); if(o&&o.innerHTML.trim()&&!o.querySelector(".stale")) o.insertAdjacentHTML("afterbegin",'<div class="stale" role="status">Your sample changed. Press the button again to update these results.</div>'); }); }
+document.addEventListener("click",e=>{ const h=e.target.closest(".help"); if(!h||!h.title&&!h.dataset.tip) return; e.preventDefault(); e.stopPropagation();
+  if(!h.dataset.tip){ h.dataset.tip=h.title; h.removeAttribute("title"); }
+  const nx=h.parentElement.querySelector(".helptext"); if(nx){ nx.remove(); h.setAttribute("aria-expanded","false"); return; }
+  const t=document.createElement("span"); t.className="helptext"; t.textContent=h.dataset.tip; h.parentElement.appendChild(t); h.setAttribute("aria-expanded","true"); });
+document.addEventListener("keydown",e=>{ if((e.key==="Enter"||e.key===" ")&&e.target.classList&&e.target.classList.contains("help")){ e.preventDefault(); e.target.click(); } });
+new MutationObserver(()=>document.querySelectorAll(".help:not([tabindex])").forEach(h=>{ if(h.getAttribute("aria-hidden")) return; h.setAttribute("tabindex","0"); h.setAttribute("role","button"); h.setAttribute("aria-label","Explain"); })).observe(document.body,{childList:true,subtree:true});
 function load(s){
   if(!s||!Array.isArray(s.layers)) return;
   state.layers=s.layers; if(s.parameter_set&&OPT.sets[s.parameter_set]) $("pset").value=s.parameter_set;
@@ -376,6 +411,7 @@ function plot(cv, series, o){
   const yt=o.logy?niceTicks(Math.ceil(y0),Math.floor(y1)).filter(Number.isInteger).map(e=>Math.pow(10,e)):niceTicks(y0,y1);
   yt.forEach(t=>{ g.beginPath(); g.moveTo(L,Y(t)); g.lineTo(W-R,Y(t)); g.stroke(); g.textAlign="right"; g.fillText(o.logy?sci(t,0):fmt(t),L-6,Y(t)+4); });
   if(o.y2){ const zt=o.logy2?niceTicks(Math.ceil(z0),Math.floor(z1)).filter(Number.isInteger).map(e=>Math.pow(10,e)):niceTicks(z0,z1); g.textAlign="left"; zt.forEach(t=>g.fillText(o.logy2?sci(t,0):fmt(t),W-R+6,Z(t)+4)); }
+  if(o.hline!==undefined&&o.hline>=(o.logy?Math.pow(10,y0):y0)&&o.hline<=(o.logy?Math.pow(10,y1):y1)){ g.save(); g.setLineDash([6,4]); g.strokeStyle=ink; g.globalAlpha=0.6; g.beginPath(); g.moveTo(L,Y(o.hline)); g.lineTo(W-R,Y(o.hline)); g.stroke(); g.restore(); }
   (o.vlines||[]).forEach(v=>{ g.save(); g.setLineDash([4,4]); g.strokeStyle=muted; g.beginPath(); g.moveTo(X(v),T); g.lineTo(X(v),H-B); g.stroke(); g.restore(); });
   g.fillStyle=ink; g.textAlign="center"; g.fillText(o.xlabel||"",L+(W-L-R)/2,H-8);
   g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText(o.ylabel||"",0,0); g.restore();
@@ -401,6 +437,8 @@ $("runCharges").onclick=()=>busy($("runCharges"),$("outCharges"),async()=>{
   let h=warnings(r)+`<table><tr><th>Interface</th><th>Fixed charge (per cm²)</th><th>What it does</th><th>Fit to layer below</th></tr>`;
   r.interfaces.forEach(c=>{ h+=`<tr><td>${esc(c.between)}<br><span class="muted small">${fmt(c.depth_nm)} nm above the bottom</span></td><td><b>${sci(c.charge_cm2)}</b>${c.relaxation_percent>0?`<br><span class="muted small">${sci(c.from_lines_cm2)} of it from the dislocation lines</span>`:""}</td><td>${c.meaning}</td><td>${c.relaxation_percent>0?`relaxed ${fmt(c.relaxation_percent)}%<br><span class="muted small">of a ${fmt(Math.abs(c.mismatch_percent))}% size mismatch</span>`:c.mismatch_percent===0?"same size":`fits exactly (strained)<br><span class="muted small">${c.mismatch_percent>0?"stretched":"squeezed"} ${fmt(Math.abs(c.mismatch_percent))}% to fit</span>`}</td></tr>`; });
   h+="</table>";
+  const best=r.interfaces.reduce((a,c)=>Math.abs(c.charge_cm2)>Math.abs(a.charge_cm2)?c:a, r.interfaces[0]);
+  if(best) h=`<div class="summary"><b>In short:</b> the strongest charge, ${sci(Math.abs(best.charge_cm2))} per cm², sits between ${esc(best.between.replace(" (below) and "," and ").replace(" (above)",""))}. ${best.charge_cm2>0?"It pulls electrons there, which is where the electron layer forms.":best.charge_cm2<0?"It is negative, so it pushes electrons away and pulls holes.":""}</div>`+h;
   if(r.line_charge_sigma>0) h+=`<p class="note">The dislocation-line charge has an error of ±${fmt(r.line_charge_sigma)} charges per nm; the Error bars tab carries it through.</p>`;
   h+=`<h3>Sources of the numbers</h3><table>${r.layers.map((L,i)=>`<tr><td>Layer ${i+1} ${esc(L.label)}</td><td class="small muted">${esc(L.reference)}</td></tr>`).join("")}</table>`;
   out.innerHTML=h; });
@@ -408,25 +446,30 @@ $("runCharges").onclick=()=>busy($("runCharges"),$("outCharges"),async()=>{
 $("runElectrons").onclick=()=>busy($("runElectrons"),$("outElectrons"),async()=>{
   const r=await call("electrons"); const out=$("outElectrons");
   if(r.error){ out.innerHTML=msg("err",r.error); return; } LAST={name:"electrons",cols:["depth_nm","conduction_band_eV","electrons_per_cm3"],rows:r.z.map((z,i)=>[z,r.ec[i],r.n_cm3[i]])};
-  out.innerHTML=warnings(r)+`<div class="big">${sci(r.sheet_cm2)} <small>electrons per cm² in the quantum region</small></div>`+
-   (r.sheet_classical_cm2>1e9?`<p class="note">Plus ${sci(r.sheet_classical_cm2)} per cm² deeper down (outside the quantum region).</p>`:"")+
-   (r.subbands_eV.length?`<p class="note">Lowest energy levels (eV from the Fermi level): ${r.subbands_eV.slice(0,4).map(e=>fmt(e)).join(", ")}</p>`:"")+
+  const top0=r.z[r.z.length-1]; let pk=0; r.n_cm3.forEach((v,i)=>{ if(v>r.n_cm3[pk]) pk=i; });
+  const lv=r.subbands_eV.slice(0,3).map(e=>e<0?`${fmt(-1000*e)} meV below the filling level (filled)`:`${fmt(1000*e)} meV above it (mostly empty)`);
+  out.innerHTML=warnings(r)+`<div class="big">${sci(r.sheet_cm2)} <small>free electrons per cm²</small></div>`+
+   `<div class="summary"><b>In short:</b> ${r.sheet_cm2>1e9?`the electrons form a thin layer whose densest point is ${fmt(top0-r.z[pk])} nm below the surface.`:"almost no free electrons collect in this sample with this surface step."}</div>`+
+   (r.sheet_classical_cm2>1e9?`<p class="note">Plus ${sci(r.sheet_classical_cm2)} per cm² deeper down, below the exactly treated region.</p>`:"")+
+   (lv.length?`<p class="note">Lowest electron energy levels: ${lv.join("; ")}.</p>`:"")+
+   `<p class="note">How to read the plot: the blue line is the energy an electron needs; where it dips below the dashed 0 line (the filling level), electrons collect. The red line is how many electrons are there (right axis). Dotted lines mark the layer boundaries.</p>`+
    (r.converged?"":msg("warn","The calculation did not fully settle; try a finer step or a different barrier."));
   const top=r.z[r.z.length-1], lo=Math.max(0,top-Math.max(150,(top-r.window[0])*1.2));
   const sel=r.z.map((z,i)=>z>=lo?i:-1).filter(i=>i>=0);
   const d=top; // show depth from the surface
-  plot($("cvBand"),[{x:sel.map(i=>d-r.z[i]),y:sel.map(i=>r.ec[i]),color:"#1f6feb",label:"Conduction band (eV)"},
+  plot($("cvBand"),[{x:sel.map(i=>d-r.z[i]),y:sel.map(i=>r.ec[i]),color:"#1f6feb",label:"Energy an electron needs (eV)"},
     {x:sel.map(i=>d-r.z[i]),y:sel.map(i=>Math.max(r.n_cm3[i],1e10)),color:"#e5534b",label:"Electrons (per cm³)",right:true}],
-    {xlabel:"Depth below the surface (nm)",ylabel:"Energy (eV), Fermi level = 0",y2:true,logy2:true,y2label:"Electrons per cm³",vlines:r.interfaces.map(z=>d-z)});
+    {xlabel:"Depth below the surface (nm)",ylabel:"Energy (eV); 0 = filling level",y2:true,logy2:true,y2label:"Electrons per cm³",vlines:r.interfaces.map(z=>d-z),hline:0});
   $("roBand").dataset.z=JSON.stringify(sel.map(i=>[d-r.z[i],r.ec[i],r.n_cm3[i]]));
 });
-hover($("cvBand"),$("roBand"),i=>{ const a=JSON.parse($("roBand").dataset.z||"[]")[i]; return a?`depth ${fmt(a[0])} nm: band ${fmt(a[1])} eV, ${sci(a[2])} electrons per cm³`:""; });
+hover($("cvBand"),$("roBand"),i=>{ const a=JSON.parse($("roBand").dataset.z||"[]")[i]; return a?`At ${fmt(a[0])} nm deep: an electron needs ${fmt(a[1])} eV; ${sci(a[2])} electrons per cm³`:""; });
 
 $("runErrors").onclick=()=>busy($("runErrors"),$("outErrors"),async()=>{
   const layers=state.layers.map((L,i)=>({x:$("ex"+i)?.value||0,thickness:$("et"+i)?.value||0}));
   const r=await call("uncertainty",{uncertainty:{method:$("errMethod").value,barrier:$("errPhi").value,layers,samples:120}}); const out=$("outErrors");
   if(r.error){ out.innerHTML=msg("err",r.error); $("cvHist").classList.add("hidden"); return; }
-  let h=`<div class="big">${sci(r.value_cm2)} ± ${sci(r.sigma_cm2)} <small>electrons per cm²</small></div><p class="note">That is about ±${(100*r.sigma_cm2/Math.abs(r.value_cm2)).toPrecision(2)} percent.</p>`;
+  let h=`<div class="big">${sci(r.value_cm2)} ± ${sci(r.sigma_cm2)} <small>electrons per cm²</small></div>`+
+   `<div class="summary"><b>In short:</b> the electron count is known to about ±${(100*r.sigma_cm2/Math.abs(r.value_cm2)).toPrecision(2)} percent${r.budget&&r.budget.length?`, and most of that comes from the ${esc(r.budget[0].input)}`:""}.</div>`;
   if(r.budget){ h+=`<h3>Where the error comes from</h3><table>${r.budget.map(b=>`<tr><td>${esc(b.input)}</td><td style="width:50%"><div class="bar" style="width:${Math.max(1,100*b.share)}%"></div></td><td>${(100*b.share).toPrecision(2)}%</td></tr>`).join("")}</table>`; $("cvHist").classList.add("hidden"); }
   if(r.percentiles){ h+=`<p class="note">68 percent of the samples lie between ${sci(r.percentiles["16"])} and ${sci(r.percentiles["84"])}; 95 percent between ${sci(r.percentiles["2.5"])} and ${sci(r.percentiles["97.5"])}.</p>`;
     const s=r.samples.slice().sort((a,b)=>a-b), nb=20, lo=s[0], hi=s[s.length-1]||lo+1, w=(hi-lo)/nb||1, c=new Array(nb).fill(0); s.forEach(v=>c[Math.min(nb-1,Math.floor((v-lo)/w))]++);
@@ -435,22 +478,30 @@ $("runErrors").onclick=()=>busy($("runErrors"),$("outErrors"),async()=>{
 
 $("devContact").onchange=()=>$("barrierBox").classList.toggle("hidden",$("devContact").value!=="metal");
 function devView(){ const iv=$("devMode").value==="iv", pdoped=state.layers.some(L=>L.doping==="p");
-  $("bottomBox").classList.toggle("hidden",iv); $("cvNote").classList.toggle("hidden",iv);
+  $("bottomBox").classList.toggle("hidden",iv); $("cvNote").classList.toggle("hidden",iv); $("qBox").classList.toggle("hidden",iv);
   $("trBox").classList.toggle("hidden",!iv&&!pdoped);
   document.querySelectorAll(".ivOnly").forEach(e=>e.classList.toggle("hidden",!iv));
   $("trNote").textContent=iv?"There is no single accepted set, so the app asks you. The current depends on them directly.":"Your sample has p-type layers, so holes are included: give the hole mass and its source.";
   if(iv&&$("vStart").value==="-6"){ $("vStart").value="-2"; $("vStop").value="2"; $("vStep").value="0.1"; } }
 $("devMode").onchange=devView;
 $("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
-  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
+  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,quantum:$("devQuantum").checked,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
     transport:{mobility_n:$("muN").value,mobility_p:$("muP").value,hole_mass:$("mH").value,lifetime:$("tau").value,source:$("trSrc").value}}); const out=$("outDevice");
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
   out.innerHTML=warnings(r);
   if(r.mode==="cv"){ LAST={name:"cv",cols:["voltage_V","capacitance_nF_per_cm2","electrons_per_cm2_top150nm"],rows:r.v.map((v,i)=>[v,r.c_nF_cm2[i],r.sheet_cm2[i]])};
+    // switch-off point: scanning up from the most negative voltage, where C first reaches
+    // half of its typical (median) on-state value; the median ignores the jump at
+    // positive gate voltages where electrons pile up under the metal
+    const order=r.v.map((v,i)=>i).sort((a,b)=>r.v[a]-r.v[b]); const pos=r.c_nF_cm2.filter(c=>c>0).sort((a,b)=>a-b);
+    const med=pos.length?pos[Math.floor(pos.length/2)]:0; let th=null;
+    for(let k=1;k<order.length&&med>0;k++){ const i=order[k], j=order[k-1]; if(r.c_nF_cm2[i]>=0.5*med&&r.c_nF_cm2[j]<0.5*med){ th=[r.v[j],r.v[i]]; break; } }
+    $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> ${th?`the electron layer empties (the transistor switches off) between ${fmt(Math.min(...th))} and ${fmt(Math.max(...th))} V. Use a smaller step to narrow it down.`:"the electron layer does not empty within this voltage range; try a more negative start voltage."}</div>`;
     plot($("cvDev"),[{x:r.v,y:r.c_nF_cm2,color:"#1f6feb",label:"Capacitance (nF/cm²)",dots:true},{x:r.v,y:r.sheet_cm2,color:"#e5534b",label:"Electrons near the top (per cm²)",right:true}],{xlabel:"Gate voltage (V)",ylabel:"nF per cm²",y2:true,y2label:"Electrons per cm²"});
     $("roDev").dataset.v=JSON.stringify(LAST.rows); }
   else { LAST={name:"iv",cols:["voltage_V","current_A_per_cm2"],rows:r.v.map((v,i)=>[v,r.j_A_cm2[i]])};
-    plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"|Current| (A/cm²)",dots:true}],{xlabel:"Top contact voltage (V)",ylabel:"A per cm²",logy:true});
+    const jl=r.j_A_cm2[r.j_A_cm2.length-1]; $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> at ${fmt(r.v[r.v.length-1])} V about ${sci(Math.abs(jl))} A flows through each cm². The plot uses a log scale, so each grid line is ten times more current.</div>`;
+    plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"Current size (A/cm²)",dots:true}],{xlabel:"Top contact voltage (V)",ylabel:"A per cm²",logy:true});
     $("roDev").dataset.v=JSON.stringify(LAST.rows); } });
 hover($("cvDev"),$("roDev"),i=>{ const a=JSON.parse($("roDev").dataset.v||"[]")[i]; return a?a.map((v,k)=>(k?sci(v):fmt(v))).join("   "):""; });
 
@@ -460,7 +511,7 @@ $("runLines").onclick=()=>busy($("runLines"),$("outLines"),async()=>{
   const names=[...document.querySelectorAll("#consBoxes input:checked")].map(e=>e.value);
   const r=await call("line_charge",{constraints:names}); const out=$("outLines");
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
-  out.innerHTML=`<div class="big">${fmt(r.mean)} ± ${fmt(r.sd)} <small>charges per nm</small></div><p class="note">68 percent range ${fmt(r.interval68[0])} to ${fmt(r.interval68[1])}; 95 percent range ${fmt(r.interval95[0])} to ${fmt(r.interval95[1])}. The limits removed ${fmt(100*r.removed)} percent of the first estimate.</p>`;
+  out.innerHTML=`<div class="big">${fmt(r.mean)} ± ${fmt(r.sd)} <small>charges per nm of line</small></div><div class="summary"><b>In short:</b> the best estimate is ${fmt(r.mean)} electron charges on every nanometer of defect line, give or take ${fmt(r.sd)}. That is still uncertain by about ${Math.round(100*r.sd/Math.abs(r.mean))} percent; only new measurements can shrink it.</div><p class="note">68 percent range ${fmt(r.interval68[0])} to ${fmt(r.interval68[1])}; 95 percent range ${fmt(r.interval95[0])} to ${fmt(r.interval95[1])}. The limits removed ${fmt(100*r.removed)} percent of the first estimate.</p>`;
   plot($("cvLines"),[{x:r.grid,y:r.density,color:"#1f6feb",label:"How likely each value is"}],{xlabel:"Charge per length of the dislocation lines (charges per nm)",ylabel:"Probability density"}); });
 $("runPlan").onclick=()=>busy($("runPlan"),$("outPlan"),async()=>{
   const r=await call("plan",{plan:{material:$("plMat").value,x:$("plX").value,relaxation:$("plR").value,charge_error:$("plE").value}}); const out=$("outPlan");
@@ -489,6 +540,8 @@ $("lineMode").onchange=()=>{ $("lineCustom").classList.toggle("hidden",$("lineMo
   renderCons(); $("lineMode").onchange();
   let saved=null; try{ saved=JSON.parse(localStorage.getItem("kpe-sample")||"null"); }catch(e){}
   if(saved) load(saved); else onSet();
+  document.querySelectorAll(".help:not([tabindex])").forEach(h=>{ if(h.getAttribute("aria-hidden")) return; h.setAttribute("tabindex","0"); h.setAttribute("role","button"); h.setAttribute("aria-label","Explain"); });
+  READY=true;
 })();
 </script>
 </body>
