@@ -744,3 +744,28 @@ def test_frohlich_constant_two_forms():
         frohlich_constant(0.2, 92.0, 9.5, 5.35)
     with pytest.raises(ValueError):
         PolarPhonons("x", 90.0, 70.0, 70.0, 90.0, 5.0, 5.0, reference="t")
+
+
+def test_quantum_cv_charge_and_sheets():
+    from kpenvelope import cv_curve_quantum
+    L = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 25.0)]
+    V, C, Q, res = cv_curve_quantum(L, [-3.0, -1.0], barrier=1.0)
+    for v, r in zip(V, res):
+        e = solve_electrons(L, phi_B=1.0 - v, dz=0.2,
+                            quantum_window=(205.0, 325.0), classical_outside=True)
+        assert r.sheet_quantum_cm2 == pytest.approx(e.sheet_quantum_cm2, rel=1e-12)
+    # the metal's charge moves by q times the change of all the electrons
+    ns = [r.sheet_quantum_cm2 + r.sheet_classical_cm2 for r in res]
+    assert (Q[1] - Q[0]) == pytest.approx(_Q * (ns[1] - ns[0]), rel=2e-3)
+    eps_d = (0.25 * 10.7 + 0.75 * 10.4) * _EPS0 / 25e-9 * 1e-4
+    assert np.all(C > 0.85 * eps_d) and np.all(C < eps_d)
+    # within a few percent of the classical quasi-equilibrium C-V
+    Vc, Cc, Qc, _ = cv_curve(L, [-3.0, -1.0], top=Contact("schottky", barrier=1.0),
+                             bottom=Contact("zero-field"), dz=0.2)
+    assert np.allclose(C, Cc, rtol=0.03)
+    r = gui_api.handle("device", dict(_HEMT, layers=[
+        {"material": "GaN", "thickness": 300}, {"material": "AlGaN", "x": 0.25,
+                                                "thickness": 25}],
+        device={"mode": "cv", "barrier": 1.0, "v_start": -1, "v_stop": -1,
+                "v_step": 1, "bottom": "thick", "quantum": True}))
+    assert r["quantum"] and r["c_nF_cm2"][0] == pytest.approx(C[1] * 1e9, rel=1e-9)
