@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kpenvelope"
-version = "0.16.0"
-description = "Six-band k.p envelope-function solver for wurtzite heterostructures, self-consistent with Poisson"
+version = "0.17.0"
+description = "Polarization charge, misfit-dislocation charge and 2D electron and hole gases in wurtzite nitride stacks, with error bars: six-band k.p holes, Schroedinger-Poisson electrons, fits to measured data"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Tanvir M. Mahim", email = "tanvir.mahim@bracu.ac.bd" }]
 requires-python = ">=3.9"
-keywords = ["k.p", "envelope function", "wurtzite", "GaN", "2DHG", "subband", "semiconductor"]
+keywords = ["k.p", "envelope function", "wurtzite", "GaN", "AlGaN", "2DHG", "2DEG", "polarization", "misfit dislocation", "Schrodinger-Poisson", "uncertainty", "subband", "semiconductor"]
 dependencies = ["numpy>=1.22"]
 classifiers = [
   "Development Status :: 3 - Alpha",

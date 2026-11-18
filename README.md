@@ -12,7 +12,18 @@ charge, so the trapping potential is not guessed: it follows from the
 balance between the fixed charge at the interface and the hole gas.
 It was built for polarization-induced two-dimensional hole gases, and
 works for any layered wurtzite structure you can supply cited material
-numbers for. It answers questions such as:
+numbers for.
+
+Since version 0.17.0 it also works out where that fixed charge comes
+from. For a stack of c-plane nitride layers (GaN, AlN, AlGaN, or any
+layer you describe with cited numbers) it computes the charge at every
+interface, also when a layer has partly relaxed, and it makes the one
+number the usual recipes hide explicit: the charge carried by the
+misfit dislocations through which the layer relaxed. It solves the
+electron gases of such stacks with doping and a pinned surface,
+carries error bars through any of these calculations, and fits the
+calibration and misfit-line charges to measured series. It answers
+questions such as:
 
 - Where are the hole energy levels in my layer, and what are they made
   of (heavy-hole, light-hole or split-off character)?
@@ -31,6 +42,15 @@ numbers for. It answers questions such as:
   frequencies and masses should the computed hole gas show?
 - How much does each computed level depend on each material number,
   and what error bar do the uncertainties of those numbers give it?
+- What fixed charge sits at each interface of my nitride stack when a
+  layer has partly relaxed, and how much of it depends on the charge of
+  the misfit dislocations, which neither polarization reference decides?
+- How many electrons does an AlGaN/GaN or AlN/GaN stack hold, with its
+  doping and a pinned surface, and with what error bar?
+- Which misfit-line charge, and which calibration charge, do my measured
+  densities across a thickness or relaxation series imply?
+- Would an experiment be precise enough to tell charge bound to a
+  dislocation from electrons trapped on it?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -40,7 +60,8 @@ says why, instead of returning a number that looks fine but is not.
 
 - [A short guide to the words used here](#a-short-guide-to-the-words-used-here)
 - [Install, units and conventions](#install-units-and-conventions)
-- [Examples](#examples) (each with the output it prints)
+- [Examples](#examples) (each with the output it prints; 15 to 18 for
+  nitride stacks, electrons, error bars and fits)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -119,6 +140,26 @@ says why, instead of returning a number that looks fine but is not.
   oscillations fade as the temperature rises, at a rate set by the
   **cyclotron mass**.
 
+### Words for the nitride-stack part (new in 0.17.0)
+
+- **Polarization reference** -- polarization can only be computed
+  relative to a crystal you call zero. The **H** reference is the
+  layered hexagonal structure (each nitrogen halfway between two metal
+  layers); the **ZB** reference is zinc blende. They give the same
+  charge for a fully strained layer and differ once it relaxes.
+- **Relaxation r** -- the share of its mismatch to the layer below that
+  a layer has given up: 0 is fully strained (coherent), 1 fully relaxed.
+- **Misfit dislocation** -- the line where an extra (or missing) half
+  plane of atoms ends at an interface; it is how a layer relaxes. Its
+  charge per length is **Lambda** (e/nm).
+- **Bare end, neutral, electron counting** -- three choices for Lambda:
+  the full polarization charge of a crystal plane that just stops (what
+  the H recipe assumes), zero (what the ZB recipe assumes), and the small
+  charge left when the broken bonds are filled by the electron-counting
+  rule (empty metal bonds, full nitrogen bonds).
+- **2DEG** -- two-dimensional electron gas, the electron sheet of a GaN
+  transistor.
+
 ## Install, units and conventions
 
 ```
@@ -148,6 +189,14 @@ Units and conventions, used everywhere:
 - In the hard-wall solvers the walls sit one grid step outside the
   first and last grid points, so a grid from 0 to `L` behaves like a
   well of width `L + 2 dz`.
+- Nitride stacks (new in 0.17.0): layers are listed from the bottom
+  (the relaxed substrate or buffer) up to the surface, z runs along
+  [0001] of a metal-polar crystal, and the charge at an interface is
+  P below minus P above. Polarizations are in C/m^2, interface charges
+  are returned in C/m^2 and in elementary charges per nm^2 and per cm^2,
+  line charges in elementary charges per nm (e/nm), donor densities in
+  nm^-3 (1e18 cm^-3 = 1e-3 nm^-3). `E_PER_NM2_PER_C_M2` (6.2415) converts
+  C/m^2 to e/nm^2. The electron solver puts the Fermi level at 0 eV.
 
 ## Examples
 
@@ -784,6 +833,171 @@ same in every in-plane direction. For other momenta, solve at
 (here the same number as a central difference of two solves,
 -0.021761 eV nm); it needs no step size.
 
+### 15. The charge at a relaxed AlGaN/GaN interface (new in 0.17.0)
+
+```python
+from kpenvelope import StackLayer, algan, interface_charges
+
+gan, bar = algan(0.0), algan(0.22)                 # PBEsol polarization set
+for lc in ("bare", "neutral", "electron-counting"):
+    stack = [StackLayer(gan, 2000.0), StackLayer(bar, 103.0, relaxation=0.78)]
+    c = interface_charges(stack, line_charge=lc)[0]
+    print(f"{lc:18s} Lambda = {c.line_charge:+.3f} e/nm   sigma = {c.sigma_cm2:.3e} cm^-2")
+c0 = interface_charges([StackLayer(gan, 2000.0), StackLayer(bar, 103.0)])[0]
+print(f"coherent barrier                        sigma = {c0.sigma_cm2:.3e} cm^-2")
+print(f"mismatch {c.eps_c:.5f}, misfit lines {c.line_density * 1e7:.3e} cm/cm^2")
+```
+
+```
+bare               Lambda = -2.645 e/nm   sigma = 3.564e+12 cm^-2
+neutral            Lambda = +0.000 e/nm   sigma = 1.051e+13 cm^-2
+electron-counting  Lambda = +0.085 e/nm   sigma = 1.073e+13 cm^-2
+coherent barrier                        sigma = 1.432e+13 cm^-2
+mismatch 0.00534, misfit lines 2.626e+05 cm/cm^2
+```
+
+The barrier is the 103 nm Al0.22Ga0.78N of Shen et al., Appl. Phys.
+Lett. 76, 2746 (2000), relaxed by 78 percent (their X-ray maps).
+Relaxation lowers the charge below the coherent value either way, but
+by how much depends on the charge of the misfit dislocations: bare
+ends (what the H recipe assumes, 2.645 electron charges per nanometer
+of line here) take away nearly three times as much as neutral lines
+(what the ZB recipe assumes). Ends whose broken bonds follow electron
+counting sit close to neutral. `interface_charges` refuses a relaxed
+interface unless you choose, because no reference decides it. Each
+`InterfaceCharge` also carries the three terms of Eq. 2 of the misfit
+paper (`coherent`, `relaxation_term`, `lines`) and the mismatch,
+strains and line density behind them.
+
+### 16. The electron gas of that sample, with an error bar
+
+```python
+from kpenvelope import (E_PER_NM2_PER_C_M2, StackLayer, algan, propagate,
+                        solve_electrons)
+
+T = 77.0
+gan, bar = algan(0.0, T), algan(0.22, T)
+calib = -0.004430561884400016 * E_PER_NM2_PER_C_M2   # e/nm^2, see the text
+
+def two_deg(lam):
+    stack = [StackLayer(gan, 80.0), StackLayer(bar, 3.0, relaxation=0.78),
+             StackLayer(bar, 100.0, donors=1.26e-3)]          # 1.26e18 cm^-3
+    r = solve_electrons(stack, phi_B=0.5, temperature_K=T, line_charge=lam,
+                        extra_sheet={0: calib}, quantum_window=(40.0, 84.0),
+                        classical_outside=True)
+    return r.sheet_quantum_cm2
+
+for lc in ("bare", "neutral"):
+    print(f"{lc:8s} 2DEG = {two_deg(lc):.3e} cm^-2")
+p = propagate(two_deg, {"lam": -0.84}, {"lam": 0.53})
+print(f"Lambda = -0.84 +- 0.53 e/nm: 2DEG = {p.value:.3e} +- {p.sigma:.1e} cm^-2")
+```
+
+```
+bare     2DEG = 2.228e+12 cm^-2
+neutral  2DEG = 8.380e+12 cm^-2
+Lambda = -0.84 +- 0.53 e/nm: 2DEG = 6.423e+12 +- 1.2e+12 cm^-2
+```
+
+`solve_electrons` solves the Schroedinger and Poisson equations
+together for the whole stack: 80 nm of GaN, a 3 nm spacer and 100 nm
+of doped barrier, the surface Fermi level 0.5 eV below the barrier
+conduction band, and the 2DEG treated quantum mechanically within
+40 nm below and 4 nm above the interface (outside it, the undepleted
+barrier holds a classical electron gas, `sheet_classical`). The extra
+sheet `calib` is the fixed calibration charge that the misfit analysis
+fitted to the four coherent samples of the same series (it absorbs
+errors in the constants and in the Al content); without it, use your
+own. The two limits bracket the measured 0.645e13 cm^-2 at 77 K, and
+`propagate` carries the measured line charge, -0.84 +- 0.53 e/nm, into
+an error bar on the density (to first order; `method="monte-carlo"`
+gives percentiles instead). Each solve takes about half a second.
+
+### 17. The misfit-line charge from a measured series
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan, fit_interface_series
+
+T = 77.0
+gan, bar = algan(0.0, T), algan(0.22, T)
+# Shen et al. (2000), Fig. 2(b), as digitized in the misfit analysis:
+# doped-barrier thickness (nm), relaxation, 77 K Hall density (1e13 cm^-2)
+t = [25, 35, 50, 65, 100]
+R = [0.0, 0.0, 0.0, 0.0, 0.78]
+n = np.array([1.302, 1.132, 1.214, 1.059, 0.645]) * 1e13 * 1e-14   # nm^-2
+
+def build(row):
+    thickness, relaxation = row
+    return [StackLayer(gan, 80.0), StackLayer(bar, 3.0, relaxation=relaxation),
+            StackLayer(bar, thickness, donors=1.26e-3)]
+
+fit = fit_interface_series(build, np.column_stack([t, R]), n,
+                           theta0=(-0.027, -0.8), phi_B=0.5, temperature_K=T,
+                           quantum_window=(40.0, 84.0), classical_outside=True)
+cal, lam = fit.theta
+dcal, dlam = fit.sigma
+print(f"calibration charge {cal * 1e14:.3e} +- {dcal * 1e14:.1e} cm^-2")
+print(f"misfit-line charge {lam:.3f} +- {dlam:.3f} e/nm")
+print(f"fraction of the bare-end charge {lam / -2.645:.2f} +- {dlam / 2.645:.2f}")
+```
+
+```
+calibration charge -2.723e+12 +- 6.0e+11 cm^-2
+misfit-line charge -0.845 +- 0.512 e/nm
+fraction of the bare-end charge 0.32 +- 0.19
+```
+
+`fit_interface_series` fits the calibration charge and the line charge
+together to the five samples whose relaxation is known (under a
+minute: every prediction is a full solve). With no reading errors
+given, the error scale comes from the scatter of the readings about
+the fit. Give `sheet_sigma` and `settings_sigma` (for example 0.05 on
+the relaxation read from an X-ray map) and the errors of the settings
+enter the error bars too: here the line charge then comes out as
+-0.845 +- 0.532 e/nm. Both fits agree with the labplan fits of the
+misfit analysis to better than one part in a million (see
+[How the results are checked](#how-the-results-are-checked)).
+
+### 18. Bound charge or trapped electrons? A test without constants
+
+```python
+from kpenvelope import (LineCharge, algan, charge_change_per_relaxation,
+                        line_charge_limits, trapped_from_sum_rule)
+
+gan, aln, film = algan(0.0), algan(1.0), algan(0.3)
+e_t = (gan.a - film.a) / film.a        # stretched on relaxed GaN
+e_c = (aln.a - film.a) / film.a        # compressed on GaN held at AlN
+q = 0.313 * abs(line_charge_limits(film, e_t)["bare"])   # e/nm, if all trapped
+for name, lc in (("bound", LineCharge(bound_fraction=0.313)),
+                 ("trapped", LineCharge(trapped=q))):
+    yp = charge_change_per_relaxation(film, e_t, lc)
+    ym = charge_change_per_relaxation(film, e_c, lc)
+    print(f"{name:8s} y+ = {yp:+.4f}  y- = {ym:+.4f}  sum = {yp + ym:+.4f} C/m^2"
+          f"  -> q = {round(trapped_from_sum_rule(yp, ym, film.a), 3) + 0.0:.3f} e/nm")
+print(f"mismatches: {e_t:+.4f} (tension), {e_c:+.4f} (compression)")
+```
+
+```
+bound    y+ = -1.1913  y- = +1.1913  sum = +0.0000 C/m^2  -> q = 0.000 e/nm
+trapped  y+ = -1.1913  y- = +0.3552  sum = -0.8361 C/m^2  -> q = 0.826 e/nm
+mismatches: +0.0073 (tension), -0.0170 (compression)
+```
+
+`charge_change_per_relaxation` gives y, the change of the interface
+charge per unit of relieved areal strain, 2 r |eps_c|. Charge bound to
+partly filled bonds flips sign between a stretched and a compressed
+layer, like the piezoelectric term; electrons trapped on the line do
+not. So for one alloy grown both ways the sum y+ + y- cancels every
+polarization constant and leaves only the trapped electrons,
+-2 q e / b (Eq. 3 of the misfit paper), and `trapped_from_sum_rule`
+reads q back. The compressed layer here is Al0.3Ga0.7N on a GaN channel
+thin enough to keep the lattice of AlN, as grown by Elwaradi et al.,
+J. Appl. Phys. 133, 145705 (2023). Build such a stack with
+`StackLayer(algan(1.0), ...)`, then `StackLayer(algan(0.0), 20.0)`,
+then the barrier: the strain of each layer follows from the one below
+(`layer_strains`).
+
 ## Tutorials
 
 Three scripts in `examples/` go from data to a final result with error
@@ -1061,6 +1275,65 @@ structure, line and errors.
 Each function's docstring (`help(kpenvelope.solve_subbands)`, for
 example) gives its inputs, units and conventions.
 
+**Nitride stacks: interface charges (new in 0.17.0)**
+
+- `NitrideMaterial` -- one relaxed layer material: in-plane lattice
+  constant `a` (nm, also the edge component `b` of its misfit lines),
+  `P_H` (H-referenced spontaneous polarization), proper `e31`, `e33`,
+  `c13_over_c33`, a required `reference`, and for the electron solver
+  the gap `eg`, conduction-band edge `ec` relative to GaN, mass `me` and
+  permittivity `eps_r`. `algan(x, temperature_K, polarization)` builds
+  relaxed Al(x)Ga(1-x)N from the cited end points (next section).
+  `POLARIZATION_SETS` holds the two shipped sets.
+  `polarization_quantum(a)` and `zinc_blende_formal_polarization(a)`
+  (3/4 of the quantum) give the reference charges.
+- `StackLayer(material, thickness, relaxation, donors, donor_depth)` --
+  one layer of a stack, listed bottom first; `layer_strains` gives the
+  mismatch, strain and in-plane lattice of every layer, each relaxed
+  relative to the one below.
+- `interface_charges(layers, line_charge, reference)` -- an
+  `InterfaceCharge` per interface: the charge in C/m^2, e/nm^2 and
+  cm^-2, the mismatch, the misfit-line density and line charge, and the
+  three terms of Eq. 2. `line_charge` is "bare", "neutral",
+  "electron-counting", `LineCharge(bound_fraction, trapped)`, a number
+  in e/nm, or a dict per interface.
+- `strained_polarization`, `misfit_line_density` (Eq. 1),
+  `line_charge_limits` (bare, electron-counting and neutral line
+  charges), `charge_change_per_relaxation` and `trapped_from_sum_rule`
+  (Eq. 3, the test of bound against trapped charge).
+
+**Nitride stacks: electron gases (new in 0.17.0)**
+
+- `solve_electrons(layers, phi_B, temperature_K, line_charge, ...)` --
+  self-consistent Schroedinger-Poisson electrons for the stack, with
+  donors (complete or incomplete ionization), a pinned surface, a
+  quantum window and an optional classical electron gas outside it.
+  Returns an `ElectronResult` (band edge, densities, the 2DEG and the
+  classical sheet densities, subband energies).
+- `fermi_dirac_half` -- F_1/2 and F_-1/2.
+- `two_carrier_hall`, `split_two_carrier` -- the single-field Hall pair
+  of two parallel channels, and its exact inverse, to remove a parallel
+  channel from a measurement.
+- `line_scattering_rate`, `line_charge_mobility_bound`,
+  `line_charge_from_mobility_drop` -- scattering of the electron sheet
+  by charged lines in the interface, and the line charge a measured
+  mobility allows.
+
+**Error bars and fits (new in 0.17.0)**
+
+- `propagate(func, values, sigmas, method)` -- the error of any
+  calculation from the errors of its inputs, to first order (with an
+  error budget and optional correlations) or by Monte Carlo (with
+  percentiles and optional bounds). Returns a `Propagation`.
+- `fit_least_squares(model, x, y, theta0, y_sigma, x_sigma)` --
+  weighted least squares (Levenberg-Marquardt), with errors in the
+  settings as well as the readings (orthogonal-distance regression);
+  error scale from the scatter when no reading errors are given.
+  Returns a `FitResult`.
+- `fit_interface_series(build_layers, settings, sheet_measured, ...)`
+  -- the calibration charge and misfit-line charge that reproduce a
+  measured series, each prediction a full `solve_electrons` run.
+
 ## Cited parameter sets
 
 No physical number in this package is made up, and none is accepted
@@ -1089,6 +1362,43 @@ literature (e.g. Vurgaftman and Meyer, J. Appl. Phys. 94, 3675
 potential or Rashba coefficient is shipped either: they depend on the
 material, the strain and the sample, so you supply them, with a
 citation.
+
+For nitride stacks (new in 0.17.0) two polarization sets are shipped,
+because the literature has not settled the numbers:
+
+- `"pbesol-mahim2026"` (default): Berry-phase calculations with the
+  PBEsol functional in Quantum ESPRESSO 6.7: P_H = 1.33685 (GaN) and
+  1.33299 C/m^2 (AlN), proper e31 = -0.43876 and -0.66484, e33 =
+  0.76211 and 1.64001 C/m^2, C13/C33 = 0.24177 and 0.30257. Every input
+  and output file is archived in T. M. Mahim, nitride-misfit-polarization
+  v1.3.1, [doi:10.5281/zenodo.24315036](https://doi.org/10.5281/zenodo.24315036);
+  the package keeps the full precision of its
+  `results/dft_polarization.json`.
+- `"hse-dreyer2016"`: the hybrid-functional values of Dreyer, Janotti,
+  Van de Walle and Vanderbilt, Phys. Rev. X 6, 021038 (2016), Tables I
+  and II: P_H = 1.312, 1.351 and 1.026 C/m^2 (GaN, AlN, InN), proper
+  e31 = -0.551, -0.676 and -0.604, e33 = 1.020, 1.569 and 1.238 C/m^2.
+  That paper gives no C13/C33, so `algan` takes the PBEsol ratio unless
+  you pass your own, and its `reference` string says which.
+
+The rest of `algan` comes from Vurgaftman and Meyer, J. Appl. Phys. 94,
+3675 (2003) (in-plane lattice constants at 300 K, 0.3189 and
+0.3112 nm; gaps at 0 K, 3.510 and 6.25 eV, with Varshni alpha 0.909
+and 1.799 meV/K and beta 830 and 1462 K; electron masses along c, 0.20
+and 0.32 m0; AlGaN gap bowing 0.7 eV) and Ambacher et al., J. Appl.
+Phys. 87, 334 (2000) (dielectric constants along c, 10.4 and 10.7;
+conduction-band share of the gap difference, 0.7). Alloys follow
+Vegard's rule except the gap. These are the numbers of the misfit
+analysis the tests reproduce; `cbo_fraction` and `psp_bowing` exist
+for sensitivity tests. No band numbers are shipped for InN, so InGaN,
+ScAlN or any other layer is described by filling a `NitrideMaterial`
+with your own cited numbers.
+
+The misfit-line charge is not shipped as a default. The misfit analysis
+measured -0.84 +- 0.53 e/nm, or 0.32 +- 0.20 of the bare-end charge
+(0.22 +- 0.20 with the HSE constants), in one AlGaN/GaN series; pass it
+as `LineCharge(bound_fraction=0.32)` or as a number if you want it, and
+carry its error with `propagate`.
 
 ## When it refuses, and why
 
@@ -1192,9 +1502,30 @@ it fills) this is checked at every grid momentum since 0.15.0, so a
 branch that rises above its `k = 0` energy before it falls is caught
 too.
 
+For nitride stacks (new in 0.17.0) it also refuses:
+
+- a relaxed interface without a `line_charge` (the error says which
+  choices exist, since no polarization reference decides it), or a line
+  charge it cannot read;
+- a bottom layer with a relaxation other than 0 (the bottom layer is the
+  relaxed substrate; put the layer it relaxed on below it);
+- a relaxation outside [0, 1], a thickness or donor density that is not
+  positive and finite, a `NitrideMaterial` without a reference or with a
+  non-positive lattice constant, mass or permittivity, an Al fraction
+  outside [0, 1] or an unknown polarization set;
+- an electron solve on a material whose `ec`, `me` or `eps_r` is NaN,
+  or an extra sheet at an interface that does not exist;
+- a two-carrier split in which the parallel channel alone would carry
+  more than the measurement;
+- a fit with errors in the settings but none in the readings (their
+  balance cannot come from the scatter), or with fewer readings than
+  parameters; a propagation with a sigma for an unknown input, a
+  correlation outside [-1, 1] or a correlation matrix that is not
+  positive semidefinite.
+
 ## How the results are checked
 
-151 automated tests run on every push and pull request, on Python 3.9,
+182 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -1439,6 +1770,67 @@ the tests use:
   to k and opposite to 1e-12; the two energies at k = 0 are equal
   exactly; 4.5e-4 eV nm at 0.1 nm^-1 gives 9e-5 eV to 1e-19.
 
+**Nitride stacks, electrons, error bars and fits (new in 0.17.0)**
+
+Independent references: the archived results of the misfit analysis
+(T. M. Mahim, nitride-misfit-polarization v1.3.1,
+doi:10.5281/zenodo.24315036), computed there with a separate code
+(SciPy eigensolvers and root searches, and the labplan fitting
+package); Tables I and II of Dreyer et al. (2016); closed forms; SciPy
+quadrature.
+
+- The shipped HSE constants are those of Tables I and II of Dreyer et
+  al., number by number; the zinc-blende reference is 3/4 of a
+  polarization quantum to 1e-15 relative for three lattice constants;
+  `algan` reproduces Vegard's rule, the Varshni gaps, the bowing and
+  the offset rule to 1e-14 relative, and the mismatch of
+  Al0.22Ga0.78N on GaN used throughout the misfit analysis.
+- Interface charges equal the archived values of Table S6 of the misfit
+  paper (coherent charge, and the fully relaxed charge for bare,
+  electron-counting, neutral, bound and trapped lines) to 1e-12
+  relative, for GaN on AlN with both constant sets and for Al0.3Ga0.7N
+  on GaN held at the lattice of AlN; the bare and electron-counting
+  line charges of Al0.22Ga0.78N (-2.645 and +0.085 e/nm), the line
+  density and spacing of the relaxed Shen barrier, to 1e-10 to 1e-12.
+- Eq. 2 holds exactly (coherent + relaxation + lines, to 1e-15 C/m^2)
+  for both references; the two references differ by an r-independent
+  constant equal to its closed form and smaller than 1e-3 C/m^2; the H
+  recipe minus the ZB recipe is -2 r eps_c P_H (the formula of Wang et
+  al., Appl. Phys. Lett. 124, 263502 (2024)) to 1e-12 relative.
+- The sum rule (Eq. 3): the archived slopes, sum (-0.83683 C/m^2) and
+  trapped charge (0.82679 e/nm) for Al0.3Ga0.7N stretched and
+  compressed, to 1e-12 relative; any bound charge cancels in the sum to
+  1e-14 C/m^2; the slope agrees with a full stack calculation.
+- `solve_electrons` reproduces the archived 2DEG and barrier densities
+  of the Shen series (a coherent 25 nm and 100 nm barrier, and the
+  relaxed one with bare, electron-counting and neutral lines) to 1e-9
+  relative (the agreement is 1e-13 in practice). Physics checks: the
+  electrons sit next to the interface, the lowest level is occupied,
+  the sheet grows with the barrier thickness and stays below the
+  interface charge. F_1/2 agrees with SciPy quadrature to 1e-8 relative
+  and its derivative with a finite difference; the tridiagonal solver
+  with a dense solve.
+- The mobility bound and the four mobility-drop estimates of the Shen
+  analysis (1.2778 and 0.983 to 1.017 e/nm) to 1e-12 relative; the
+  two-carrier Hall split inverts the forward relations to 1e-12.
+- `propagate` is exact for linear functions (with and without a
+  correlation), its budget sums to 1, Monte Carlo agrees with it within
+  the sampling error, truncation respects the bounds, and the error of
+  an interface charge equals the error of Lambda times L_A.
+- `fit_least_squares` equals the closed-form weighted straight-line fit
+  and its covariance (also when the error scale comes from the
+  scatter), and the closed-form Deming slope when the settings have
+  errors; the line charge fitted to the relaxed Shen sample equals the
+  archived -0.8286 e/nm (found there by a Brent search with a tolerance
+  of 1e-3).
+- Not in the test suite, because each takes about a minute: the full
+  joint fit of example 17. With the error scale from the scatter it
+  gives a calibration of -2.7227374e12 +- 6.004988e11 cm^-2 and a line
+  charge of -0.8448566 +- 0.5116510 e/nm, against -2.7227373e12 +-
+  6.004990e11 and -0.8448566 +- 0.5116511 from labplan in the misfit
+  analysis; with reading errors equal to that scatter and an error of
+  0.05 on the relaxation, +- 0.5323733 e/nm against +- 0.5323734.
+
 ## Corrections in earlier versions
 
 **0.16.0 (this release) fixed two silent errors and one source of
@@ -1661,6 +2053,38 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   occupied momenta, which the package does not do. As in
   `level_transitions`, pass complete levels.
 
+- Nitride stacks (new in 0.17.0). Eq. 2 is first order in the strain.
+  The misfit lines are a uniform sheet of charge: right for the total
+  number of electrons as long as the strip each line depletes is
+  narrower than the line spacing (about 13 nm against 110 nm in the
+  relaxed Shen sample), not for scattering details near a line or for
+  charge on threading segments. The line charge itself is the least
+  known input: the only published series that measures it gives
+  -0.84 +- 0.53 e/nm, an error of about 60 percent, and the
+  electron-counting value comes from ideal surfaces, not real
+  dislocations. So pass it with its error bar and read the spread.
+- The two polarization sets still differ (P_H 1.337 against 1.312 C/m^2
+  for GaN, e31 and e33 of GaN 20 to 25 percent apart), and the two
+  references differ at second order in the strain; for large
+  mismatches compare both. Alloys use Vegard's rule for the
+  polarization (bowing only through `psp_bowing`). Only Al(x)Ga(1-x)N is
+  built in; other layers need your cited numbers.
+- `solve_electrons` uses one isotropic, parabolic conduction band with
+  the mass along c, and no holes (use the six-band solvers for hole
+  gases). The 2DEG is the quantum window you choose; outside it
+  electrons are classical only if you ask for it. The quantum window is
+  diagonalized as a dense matrix, so its cost grows as the cube of its
+  number of points (about half a second for a 44 nm window at 0.1 nm on
+  one core, in the Shen example). F_1/2 is tabulated for -40 <= eta <= 40
+  and uses its asymptotic forms outside.
+- The mobility bound uses one model of scattering by charged lines
+  (Thomas-Fermi screening, Fang-Howard form factors) with the
+  electron mass and permittivity you pass. Other defects created during
+  relaxation lower the mobility too, so the bound stays a bound.
+- `propagate` (linear) is first order: where it and the Monte Carlo
+  spread disagree, the result is not linear over the error bars.
+  `fit_least_squares` gives first-order (Gaussian) error bars.
+
 ## Where it comes from
 
 The package's methodological basis is
@@ -1674,6 +2098,18 @@ The package's methodological basis is
 and follows S. L. Chuang and C. S. Chang, Phys. Rev. B 54, 2491
 (1996). This package is the general-purpose tool; the paper repository
 reproduces the specific published study.
+
+The nitride-stack part (new in 0.17.0) implements Eqs. 1 to 3 of
+
+> T. M. Mahim, "The charge of misfit dislocations decides the
+> polarization charge at relaxed nitride interfaces" (2026, manuscript);
+> code and data: https://github.com/Tanvir-Mahmud-Mahim/nitride-misfit-polarization,
+> archived at https://doi.org/10.5281/zenodo.24315036
+
+whose analysis it reproduces, and builds on Dreyer et al., Phys. Rev. X
+6, 021038 (2016), and Wang et al., Appl. Phys. Lett. 124, 263502
+(2024). The electron solver follows the self-consistency scheme of
+Trellakis et al., J. Appl. Phys. 81, 7880 (1997).
 
 ## Citing, support and license
 

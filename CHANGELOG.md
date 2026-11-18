@@ -4,6 +4,66 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.17.0 (2026-11-18)
+
+The package now covers where the fixed charge of a nitride stack comes
+from, not only what it does to the holes. Four new parts: the charge at
+every interface of a c-plane stack, coherent or partly relaxed, with the
+charge of the misfit dislocations made explicit; a Schroedinger-Poisson
+solver for electron gases; error propagation through any calculation;
+and least-squares fits with errors in the settings, including the
+calibration and misfit-line charges of a measured series. Nothing that
+existed before changes: no earlier module was edited, and README
+examples 1 to 14 print exactly what they printed with 0.16.0. NumPy
+stays the only dependency.
+
+### Added
+
+- `kpenvelope.nitride`: `NitrideMaterial` (one layer material, every
+  number cited, `reference` required) and `algan(x, temperature_K,
+  polarization)` for relaxed Al(x)Ga(1-x)N, with two polarization sets:
+  PBEsol Berry-phase values archived in nitride-misfit-polarization
+  v1.3.1 (doi:10.5281/zenodo.24315036) and the HSE values of Dreyer et
+  al., Phys. Rev. X 6, 021038 (2016), Tables I and II. Band numbers from
+  Vurgaftman and Meyer (2003) and Ambacher et al. (2000).
+  `polarization_quantum`, `zinc_blende_formal_polarization`,
+  `E_PER_NM2_PER_C_M2`.
+- `kpenvelope.interfaces`: `StackLayer`, `layer_strains`,
+  `interface_charges` (Eq. 2 of the misfit paper: coherent charge,
+  relaxation term and misfit-line charge, for the H or ZB reference),
+  `LineCharge(bound_fraction, trapped)`, `line_charge_limits` (bare,
+  electron-counting, neutral), `misfit_line_density` (Eq. 1),
+  `strained_polarization`, `charge_change_per_relaxation` and
+  `trapped_from_sum_rule` (Eq. 3). A relaxed interface is refused unless
+  a line charge is chosen.
+- `kpenvelope.electrons`: `solve_electrons` (single-band
+  Schroedinger-Poisson with donors, a pinned surface, a quantum window
+  and an optional classical gas; Trellakis et al. self-consistency),
+  `fermi_dirac_half`, `two_carrier_hall`, `split_two_carrier`,
+  `line_scattering_rate`, `line_charge_mobility_bound`,
+  `line_charge_from_mobility_drop`.
+- `kpenvelope.uncertainty`: `propagate` (first order with an error
+  budget and correlations, or Monte Carlo with percentiles and bounds).
+- `kpenvelope.fitting`: `fit_least_squares` (Levenberg-Marquardt, errors
+  in readings and settings) and `fit_interface_series`.
+- README examples 15 to 18, a word list for the nitride part, and new
+  entries under cited parameter sets, refusals, checks and limits.
+
+### Checked against
+
+- The archived results of the misfit analysis, computed with a separate
+  code: interface charges of Table S6 and the sum rule (1e-12
+  relative), Schroedinger-Poisson densities of the Shen et al. series
+  (1e-9 required, 1e-13 found), mobility bounds (1e-12), the line charge
+  fitted to the relaxed sample, and (outside the suite, about a minute
+  each) the joint labplan fits, to better than one part in a million.
+- Dreyer et al. Tables I and II; closed forms (Eq. 2 exactly, the
+  references' r-independent difference, the formula of Wang et al., the
+  3/4 quantum, the two-carrier Hall relations, weighted straight-line
+  and Deming fits); SciPy quadrature for F_1/2.
+
+31 new tests; 182 in all.
+
 ## 0.16.0 (2026-11-10)
 
 Intersubband transitions for light polarized in the plane (the
