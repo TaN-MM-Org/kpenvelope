@@ -9,6 +9,13 @@ misfit dislocations made explicit (`interface_charges`), solves the
 electron gases of such stacks (`solve_electrons`), carries error bars
 through any calculation (`propagate`), and fits the calibration and
 misfit-line charges to measured series (`fit_interface_series`).
+Since v0.18.0 it builds InGaN, InAlN and ScAlN from cited tables
+(`ingan`, `inaln`, `scaln`), solves drift-diffusion with both carriers,
+recombination and contacts (`solve_drift_diffusion`, `iv_curve`,
+`cv_curve`), gives the interface phonons of the dielectric continuum
+model (`slab_modes`), combines what is known about the misfit-line charge
+(`combine_line_charge`), and opens as an app in the browser
+(`kpenvelope-app`).
 
 Methodological basis: T. M. Mahim, A. S. M. Mohsin and M. M. Rahman,
 "Origin of the conflicting hole masses in the GaN/AlN two-dimensional
@@ -46,9 +53,10 @@ from .isb import (degenerate_levels, depolarization_shift, isb_lineshape,
                   level_transitions, overlap_geometry_integral)
 from .sensitivity import PARAMETER_NAMES, parameter_sensitivities
 from .velocity import inplane_transitions, velocity_matrix
-from .nitride import (E_PER_NM2_PER_C_M2, POLARIZATION_SETS, NitrideMaterial,
-                      algan, polarization_quantum,
-                      zinc_blende_formal_polarization)
+from .nitride import (AMBACHER2021_SCALN, E_PER_NM2_PER_C_M2,
+                      POLARIZATION_SETS, VURGAFTMAN2003, NitrideMaterial,
+                      algan, gan, inaln, ingan, polarization_quantum, scaln,
+                      with_numbers, zinc_blende_formal_polarization)
 from .interfaces import (InterfaceCharge, LineCharge, StackLayer,
                          charge_change_per_relaxation, interface_charges,
                          layer_strains, line_charge_limits,
@@ -60,8 +68,17 @@ from .electrons import (ElectronResult, fermi_dirac_half,
                         solve_electrons, split_two_carrier, two_carrier_hall)
 from .uncertainty import Propagation, propagate
 from .fitting import FitResult, fit_interface_series, fit_least_squares
+from .driftdiffusion import (Contact, DriftDiffusionResult, Transport,
+                             bernoulli, cv_curve, iv_curve,
+                             solve_drift_diffusion, solve_quasi_equilibrium)
+from .phonons import (CM1_TO_MEV, GAN_BARKER1973, PolarPhonons,
+                      frohlich_constant, single_interface_modes, slab_modes)
+from .linecharge import (PUBLISHED_CONSTRAINTS, Constraint,
+                         LineChargePosterior, combine_line_charge,
+                         line_charge_error_from_density, plan_holography,
+                         plan_sum_rule)
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -86,6 +103,8 @@ __all__ = [
     "parameter_sensitivities", "PARAMETER_NAMES",
     "velocity_matrix", "inplane_transitions",
     "NitrideMaterial", "algan", "POLARIZATION_SETS", "E_PER_NM2_PER_C_M2",
+    "ingan", "inaln", "scaln", "gan", "with_numbers", "VURGAFTMAN2003",
+    "AMBACHER2021_SCALN",
     "polarization_quantum", "zinc_blende_formal_polarization",
     "StackLayer", "LineCharge", "InterfaceCharge", "interface_charges",
     "layer_strains", "line_charge_limits", "misfit_line_density",
@@ -96,4 +115,11 @@ __all__ = [
     "line_charge_mobility_bound", "line_charge_from_mobility_drop",
     "propagate", "Propagation",
     "fit_least_squares", "FitResult", "fit_interface_series",
+    "PUBLISHED_CONSTRAINTS", "Constraint", "LineChargePosterior",
+    "combine_line_charge", "plan_holography", "plan_sum_rule",
+    "line_charge_error_from_density",
+    "solve_drift_diffusion", "DriftDiffusionResult", "Transport", "Contact",
+    "iv_curve", "cv_curve", "bernoulli", "solve_quasi_equilibrium",
+    "PolarPhonons", "GAN_BARKER1973", "CM1_TO_MEV", "single_interface_modes",
+    "slab_modes", "frohlich_constant",
 ]

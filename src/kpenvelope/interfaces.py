@@ -53,13 +53,24 @@ Implementation. With reference="H" the charge is the difference of the
 H-branch polarizations at the actual strains (which contains bare-end
 lines) plus (Lambda - Lambda_bare) L_A; with reference="ZB" it is the
 difference of the ZB-referenced polarizations plus Lambda L_A. Both are
-Eq. 2 exactly, with their own coherent charge; the two coherent charges
-differ only at second order in the strain (Dreyer et al.).
+Eq. 2 exactly, with their own coherent charge. The two coherent charges
+are not identical: the H result minus the ZB result is 2 eps_c P_ZB of the
+film plus terms of second order in the strain. P_ZB is small for AlGaN
+(-0.03 to -0.10 C/m^2 across the shipped sets), so this is about 1.5
+percent of the coherent charge of AlGaN on GaN; it grows with |P_ZB| and
+with the strain (about 10 percent for In(0.15)Ga(0.85)N on GaN, where the
+strain is -1.6 percent), so compare both references there (both checked
+in the tests).
+
+Parameter sets. The charge is a small difference of large polarizations,
+so both sides of an interface should come from one set; `interface_charges`
+warns when two layers with different `parameter_set` names meet.
 """
 from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 
 from .nitride import (E_PER_NM2_PER_C_M2, NitrideMaterial,
                       zinc_blende_formal_polarization)
@@ -85,6 +96,11 @@ class StackLayer:
     donor_depth : donor level below the conduction band (eV), or None for
         complete ionization.
     name : optional label (defaults to the material name).
+    acceptors : ionizable acceptor density (nm^-3), used by the
+        drift-diffusion solver (new in v0.18.0; the electron solver, which
+        has no holes, refuses layers with acceptors).
+    acceptor_depth : acceptor level above the valence band (eV), or None
+        for complete ionization.
     """
 
     material: NitrideMaterial
@@ -93,6 +109,8 @@ class StackLayer:
     donors: float = 0.0
     donor_depth: float = None
     name: str = None
+    acceptors: float = 0.0
+    acceptor_depth: float = None
 
     def __post_init__(self):
         if not isinstance(self.material, NitrideMaterial):
@@ -108,6 +126,13 @@ class StackLayer:
                 math.isfinite(self.donor_depth) and self.donor_depth > 0.0):
             raise ValueError("StackLayer.donor_depth must be None or a positive "
                              "energy in eV")
+        if not (math.isfinite(self.acceptors) and self.acceptors >= 0.0):
+            raise ValueError("StackLayer.acceptors (nm^-3) must be finite and "
+                             ">= 0")
+        if self.acceptor_depth is not None and not (
+                math.isfinite(self.acceptor_depth) and self.acceptor_depth > 0.0):
+            raise ValueError("StackLayer.acceptor_depth must be None or a "
+                             "positive energy in eV")
 
     @property
     def label(self):
@@ -177,6 +202,16 @@ class InterfaceCharge:
 def strained_polarization(m: NitrideMaterial, strain: float,
                           reference: str = "H") -> float:
     """Formal polarization (C/m^2) of `m` under biaxial in-plane strain."""
+    if reference not in ("H", "ZB"):
+        raise ValueError(f"reference must be 'H' or 'ZB'; got {reference!r}")
+    if strain == 0.0:
+        return m.P_H if reference == "H" else m.P_ZB
+    if not m.has_piezo:
+        raise ValueError(
+            f"{m.name} is strained here (in-plane strain {strain:.4g}) but its "
+            "record has no piezoelectric or elastic constants (NaN); use it "
+            "only unstrained (as the relaxed bottom layer), or add cited "
+            "numbers with with_numbers(...)")
     e3 = -2.0 * m.c13_over_c33 * strain
     if reference == "H":
         return m.P_H + 2.0 * strain * (m.e31 - m.P_H) + e3 * m.e33
@@ -266,12 +301,26 @@ def interface_charges(layers, line_charge=None, reference: str = "H"):
         dict keyed by interface index (0 = between layers 0 and 1). Needed
         only where a layer has relaxed; refused (with an explanation) when
         missing there.
-    reference : "H" (default) or "ZB"; changes the result only at second
-        order in the strain.
+    reference : "H" (default) or "ZB"; the two differ by 2 eps_c P_ZB of
+        the film plus second-order terms (about 1.5 percent for AlGaN on
+        GaN, about 10 percent for In(0.15)Ga(0.85)N on GaN).
+
+    Warns (UserWarning) when two layers from different parameter sets
+    meet at an interface.
     """
     if reference not in ("H", "ZB"):
         raise ValueError(f"reference must be 'H' or 'ZB'; got {reference!r}")
     st = layer_strains(layers)
+    for i in range(len(layers) - 1):
+        s0 = layers[i].material.parameter_set
+        s1 = layers[i + 1].material.parameter_set
+        if s0 and s1 and s0 != s1:
+            warnings.warn(
+                f"interface {i} joins {layers[i].label} of the set {s0!r} and "
+                f"{layers[i + 1].label} of the set {s1!r}. The charge is a "
+                "small difference of large polarizations; take both sides from "
+                "one set (for example gan(polarization=...)).", UserWarning,
+                stacklevel=2)
     out = []
     z = 0.0
     for i in range(len(layers) - 1):
@@ -283,8 +332,11 @@ def interface_charges(layers, line_charge=None, reference: str = "H"):
         p_b = strained_polarization(below, sb, reference)
         sigma_actual = p_b - strained_polarization(film, sa, reference)
         sigma_coh = p_b - strained_polarization(film, eps_c, reference)
-        k = film.e31 - film.e33 * film.c13_over_c33
-        relax_term = 2.0 * r * eps_c * k
+        if r > 0.0 and eps_c != 0.0:
+            k = film.e31 - film.e33 * film.c13_over_c33
+            relax_term = 2.0 * r * eps_c * k
+        else:
+            relax_term = 0.0
         if r > 0.0 and eps_c != 0.0:
             LA = misfit_line_density(r, eps_c, film.a)
             lam = _resolve(line_charge, film, eps_c, i)
@@ -321,6 +373,9 @@ def charge_change_per_relaxation(film: NitrideMaterial, eps_c: float,
     """
     if eps_c == 0.0:
         raise ValueError("eps_c must be nonzero")
+    if not film.has_piezo:
+        raise ValueError(f"{film.name} has no piezoelectric or elastic "
+                         "constants (NaN); the slope needs them")
     lam = _resolve(line_charge, film, eps_c, 0) / E_PER_NM2_PER_C_M2  # C/m
     k = film.e31 - film.e33 * film.c13_over_c33
     s = 1.0 if eps_c > 0 else -1.0

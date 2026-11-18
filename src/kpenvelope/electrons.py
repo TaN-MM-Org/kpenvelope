@@ -222,6 +222,10 @@ def solve_electrons(layers, phi_B: float, temperature_K: float = 300.0,
     for L in layers:
         if not isinstance(L, StackLayer):
             raise ValueError("layers must be StackLayer objects, bottom first")
+        if L.acceptors > 0.0:
+            raise ValueError(f"layer {L.label!r} has acceptors; this solver "
+                             "has no holes. Use solve_drift_diffusion, which "
+                             "has both carriers.")
     if not (math.isfinite(phi_B)):
         raise ValueError("phi_B must be finite (eV)")
     if not (math.isfinite(temperature_K) and temperature_K > 0.0):
