@@ -3,6 +3,12 @@
 Solves the six-band valence envelope-function problem on a 1D grid,
 self-consistently with Poisson's equation, for polarization-induced
 two-dimensional hole gases and related wurtzite heterostructures.
+Since v0.17.0 it also computes the fixed charge at every interface of a
+c-plane nitride stack, coherent or partly relaxed, with the charge of the
+misfit dislocations made explicit (`interface_charges`), solves the
+electron gases of such stacks (`solve_electrons`), carries error bars
+through any calculation (`propagate`), and fits the calibration and
+misfit-line charges to measured series (`fit_interface_series`).
 
 Methodological basis: T. M. Mahim, A. S. M. Mohsin and M. M. Rahman,
 "Origin of the conflicting hole masses in the GaN/AlN two-dimensional
@@ -40,8 +46,22 @@ from .isb import (degenerate_levels, depolarization_shift, isb_lineshape,
                   level_transitions, overlap_geometry_integral)
 from .sensitivity import PARAMETER_NAMES, parameter_sensitivities
 from .velocity import inplane_transitions, velocity_matrix
+from .nitride import (E_PER_NM2_PER_C_M2, POLARIZATION_SETS, NitrideMaterial,
+                      algan, polarization_quantum,
+                      zinc_blende_formal_polarization)
+from .interfaces import (InterfaceCharge, LineCharge, StackLayer,
+                         charge_change_per_relaxation, interface_charges,
+                         layer_strains, line_charge_limits,
+                         misfit_line_density, strained_polarization,
+                         trapped_from_sum_rule)
+from .electrons import (ElectronResult, fermi_dirac_half,
+                        line_charge_from_mobility_drop,
+                        line_charge_mobility_bound, line_scattering_rate,
+                        solve_electrons, split_two_carrier, two_carrier_hall)
+from .uncertainty import Propagation, propagate
+from .fitting import FitResult, fit_interface_series, fit_least_squares
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -65,4 +85,15 @@ __all__ = [
     "heterostructure_energies", "degenerate_levels", "level_transitions",
     "parameter_sensitivities", "PARAMETER_NAMES",
     "velocity_matrix", "inplane_transitions",
+    "NitrideMaterial", "algan", "POLARIZATION_SETS", "E_PER_NM2_PER_C_M2",
+    "polarization_quantum", "zinc_blende_formal_polarization",
+    "StackLayer", "LineCharge", "InterfaceCharge", "interface_charges",
+    "layer_strains", "line_charge_limits", "misfit_line_density",
+    "strained_polarization", "charge_change_per_relaxation",
+    "trapped_from_sum_rule",
+    "solve_electrons", "ElectronResult", "fermi_dirac_half",
+    "two_carrier_hall", "split_two_carrier", "line_scattering_rate",
+    "line_charge_mobility_bound", "line_charge_from_mobility_drop",
+    "propagate", "Propagation",
+    "fit_least_squares", "FitResult", "fit_interface_series",
 ]
