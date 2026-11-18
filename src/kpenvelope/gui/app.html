@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kpenvelope app</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1d2430; --muted:#5b6575; --line:#dde2ea;
+  --accent:#1f6feb; --accent-ink:#ffffff; --good:#137a3a; --warn:#9a5b00; --bad:#b42318;
+  --soft:#eef3fd; --chip:#f0f2f5;
+  --gan:#8aa3c8; --algan:#e3b25a; --ingan:#9b7fd1; --inaln:#6cbf9a; --scaln:#e07a7a;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#11151c; --panel:#181e27; --ink:#e6eaf0; --muted:#9aa6b8; --line:#2a3342;
+    --accent:#4c8dff; --accent-ink:#0b1220; --good:#5ad08a; --warn:#f0b44c; --bad:#ff7a6b;
+    --soft:#1d2a40; --chip:#222b38; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+header h1{font-size:19px;margin:0}
+header p{margin:0;color:var(--muted)}
+main{display:grid;grid-template-columns:minmax(330px,420px) 1fr;gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+h2{font-size:16px;margin:0 0 8px}
+h3{font-size:14px;margin:14px 0 6px}
+label{display:block;font-size:13px;color:var(--muted);margin:8px 0 3px}
+input,select,button,textarea{font:inherit;color:inherit}
+input[type=number],input[type=text],select,textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+input:focus,select:focus,button:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{border:1px solid var(--line);background:var(--chip);border-radius:6px;padding:6px 10px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.small{padding:2px 8px;font-size:13px}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;align-items:end}
+.row > *{flex:1}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.note{font-size:13px;color:var(--muted);margin:4px 0}
+.help{display:inline-block;width:17px;height:17px;border-radius:50%;background:var(--chip);color:var(--muted);text-align:center;font-size:12px;line-height:17px;cursor:help;margin-left:4px;border:1px solid var(--line)}
+.layer{border:1px solid var(--line);border-left:6px solid var(--gan);border-radius:8px;padding:8px 10px;margin:8px 0;background:var(--panel)}
+.layer .top{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.layer .top strong{font-size:14px}
+.stackpic{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:6px 0 2px}
+.stackpic div{font-size:12px;padding:2px 8px;color:#101418;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:-4px -4px 12px;padding:0 4px}
+.tabs button{border:none;background:none;border-bottom:3px solid transparent;border-radius:0;padding:8px 10px;color:var(--muted)}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.panel{display:none}
+.panel.on{display:block}
+.big{font-size:28px;font-weight:700;margin:4px 0}
+.big small{font-size:15px;font-weight:500;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);padding:6px 6px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:13px}
+.msg{border-radius:8px;padding:8px 10px;margin:8px 0;font-size:14px}
+.msg.err{background:color-mix(in srgb,var(--bad) 12%,transparent);color:var(--bad)}
+.msg.warn{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
+.msg.ok{background:color-mix(in srgb,var(--good) 12%,transparent);color:var(--good)}
+canvas{width:100%;height:320px;display:block;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.readout{font-size:13px;color:var(--muted);min-height:18px;margin-top:4px}
+.bar{height:10px;background:var(--accent);border-radius:5px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:13px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:r 1s linear infinite;vertical-align:-2px}
+@keyframes r{to{transform:rotate(360deg)}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:600px){.grid2{grid-template-columns:1fr}}
+dl dt{font-weight:600;margin-top:10px}
+dl dd{margin:2px 0 0 0;color:var(--muted)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>kpenvelope</h1>
+  <p>Charges and electrons in GaN-family layer stacks, with honest error bars.</p>
+</header>
+<main>
+<section class="card" aria-labelledby="s1">
+  <h2 id="s1">1. Your sample</h2>
+  <label for="preset">Start from an example</label>
+  <div class="row">
+    <select id="preset">
+      <option value="">Choose an example...</option>
+      <option value="hemt">AlGaN on GaN transistor layer</option>
+      <option value="inaln">InAlN on GaN (matched to GaN)</option>
+      <option value="scaln">ScAlN on GaN</option>
+      <option value="qw">InGaN quantum well in GaN</option>
+      <option value="relaxed">Partly relaxed AlGaN on GaN</option>
+    </select>
+  </div>
+  <p class="note">Examples only set the layer structure. Check every number against your own sample.</p>
+
+  <label for="pset">Which published numbers to use <span class="help" title="The built-in charge at an interface is a small difference of large numbers, so it matters whose numbers you use. All layers use the same set.">?</span></label>
+  <select id="pset"></select>
+  <p class="note" id="psetAbout"></p>
+
+  <div class="row">
+    <div><label for="temp">Temperature (K)</label><input id="temp" type="number" value="300" min="1" step="1"></div>
+  </div>
+
+  <h3>Layers <span class="muted small">(top of the list = top of the sample)</span></h3>
+  <div class="stackpic" id="stackpic" aria-hidden="true"></div>
+  <div id="layers"></div>
+  <button id="addLayer">+ Add a layer on top</button>
+
+  <div id="lineBox" class="hidden">
+    <h3>Charge on the dislocation lines <span class="help" title="A layer that has relaxed back toward its own size does so by forming lines of defects (misfit dislocations) at its bottom. Their charge changes the interface charge, and it is not well known.">?</span></h3>
+    <select id="lineMode"></select>
+    <div id="lineCustom" class="row hidden">
+      <div><label for="lineVal">Value (charges per nm)</label><input id="lineVal" type="number" step="0.01" value="-0.84"></div>
+      <div><label for="lineSig">Error (+-)</label><input id="lineSig" type="number" step="0.01" value="0.53" min="0"></div>
+    </div>
+    <p class="note" id="lineNote"></p>
+  </div>
+
+  <div id="scBox" class="hidden">
+    <h3>ScAlN band numbers (yours) <span class="help" title="The ScAlN paper gives no band gap, band offset or electron mass. To see electrons or device curves, enter values from a source you trust.">?</span></h3>
+    <div class="grid2">
+      <div><label for="scEg">Band gap (eV)</label><input id="scEg" type="number" step="0.01"></div>
+      <div><label for="scEc">Conduction band above GaN's (eV)</label><input id="scEc" type="number" step="0.01"></div>
+      <div><label for="scMe">Electron mass (x free electron)</label><input id="scMe" type="number" step="0.01"></div>
+      <div><label for="scSrc">Where these come from</label><input id="scSrc" type="text" placeholder="paper or measurement"></div>
+    </div>
+  </div>
+
+  <h3>Files</h3>
+  <div class="row">
+    <button id="saveSpec">Save sample</button>
+    <label class="hidden" for="loadSpec">Load sample</label>
+    <button id="loadBtn">Open sample...</button>
+    <input id="loadSpec" type="file" accept=".json,application/json" class="hidden">
+  </div>
+</section>
+
+<section class="card" aria-labelledby="s2">
+  <h2 id="s2" class="hidden">2. Results</h2>
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <div class="panel" id="p-charges" role="tabpanel">
+    <p>Each interface between two layers carries a fixed electric charge, set by the two materials, how much they are stretched, and any dislocations. A <b>positive</b> charge pulls electrons to the interface (this is what makes the electron layer of a GaN transistor). A <b>negative</b> one pulls holes.</p>
+    <button class="primary" id="runCharges">Work out the charges</button>
+    <div id="outCharges"></div>
+  </div>
+
+  <div class="panel" id="p-electrons" role="tabpanel">
+    <p>Solves for where the electrons sit, using quantum mechanics near the surface and simple statistics deeper down.</p>
+    <div class="grid2">
+      <div><label for="phiB">Surface barrier (eV) <span class="help" title="How far the conduction band sits above the Fermi level at the top surface. It depends on the surface and any metal on it; there is no single correct value, so use one that fits your sample.">?</span></label><input id="phiB" type="number" step="0.05" value="1.0"></div>
+      <div><label for="qdepth">Quantum region, nm from the top <span class="help" title="Electrons in this top region are treated with quantum mechanics. 120 nm covers most transistor layers.">?</span></label><input id="qdepth" type="number" step="10" value="120" min="1"></div>
+    </div>
+    <p><button class="primary" id="runElectrons">Find the electrons</button></p>
+    <div id="outElectrons"></div>
+    <canvas id="cvBand" aria-label="Band diagram"></canvas>
+    <div class="readout" id="roBand"></div>
+  </div>
+
+  <div class="panel" id="p-errors" role="tabpanel">
+    <p>How sure is the electron density? Enter how well you know each input (one standard deviation). Leave a box at 0 if you know that number exactly.</p>
+    <div id="errBoxes"></div>
+    <div class="grid2">
+      <div><label for="errPhi">Surface barrier error (eV)</label><input id="errPhi" type="number" step="0.05" value="0.1" min="0"></div>
+      <div><label for="errMethod">How to work it out</label>
+        <select id="errMethod"><option value="linear">Quick (straight-line estimate)</option><option value="monte-carlo">Thorough (random samples, slower)</option></select></div>
+    </div>
+    <p><button class="primary" id="runErrors">Work out the error bar</button></p>
+    <div id="outErrors"></div>
+    <canvas id="cvHist" class="hidden" aria-label="Spread of results"></canvas>
+  </div>
+
+  <div class="panel" id="p-device" role="tabpanel">
+    <p>Puts a metal on top and sweeps its voltage. <b>Capacitance (C-V)</b> shows how the electron layer empties as the voltage goes negative. <b>Current (I-V)</b> shows how much current flows from top to bottom.</p>
+    <div class="grid2">
+      <div><label for="devMode">What to measure</label><select id="devMode"><option value="cv">Capacitance vs voltage (C-V)</option><option value="iv">Current vs voltage (I-V)</option></select></div>
+      <div id="bottomBox"><label for="devBottom">Bottom <span class="help" title="Thick base: the bottom layer is a thick buffer with no electric field at its far end (as in the Electrons tab). In a transistor the electrons are held by the side contacts (source and drain), which this models. Ohmic: a real contact at the bottom.">?</span></label><select id="devBottom"><option value="thick">Thick base (like a transistor)</option><option value="ohmic">Ohmic contact at the bottom</option></select></div>
+      <div><label for="devContact">Top contact</label><select id="devContact"><option value="metal">Metal gate (Schottky)</option><option value="ohmic">Ohmic (no barrier)</option></select></div>
+      <div id="barrierBox"><label for="devBarrier">Metal barrier (eV) <span class="help" title="Height of the conduction band above the metal's Fermi level at the contact. Take it from your metal and surface.">?</span></label><input id="devBarrier" type="number" step="0.05" value="1.0"></div>
+      <div><label for="vStart">From (V)</label><input id="vStart" type="number" step="0.1" value="-6"></div>
+      <div><label for="vStop">To (V)</label><input id="vStop" type="number" step="0.1" value="0"></div>
+      <div><label for="vStep">Step (V)</label><input id="vStep" type="number" step="0.05" value="0.25" min="0.001"></div>
+    </div>
+    <p class="note" id="cvNote">C-V needs no transport numbers. The electrons stay at the Fermi level of the side contacts and only the gate moves; holes are left out, because a fast sweep cannot make them in a wide-gap material.</p>
+    <div id="trBox">
+    <h3>Transport numbers (yours)</h3>
+    <p class="note" id="trNote">There is no single accepted set, so the app asks you. The current depends on them directly.</p>
+    <div class="grid2">
+      <div class="ivOnly"><label for="muN">Electron mobility (cm2/Vs)</label><input id="muN" type="number" step="10"></div>
+      <div class="ivOnly"><label for="muP">Hole mobility (cm2/Vs)</label><input id="muP" type="number" step="1"></div>
+      <div><label for="mH">Hole mass (x free electron)</label><input id="mH" type="number" step="0.1"></div>
+      <div class="ivOnly"><label for="tau">Carrier lifetime (s, optional)</label><input id="tau" type="number" step="1e-9" placeholder="leave empty for none"></div>
+      <div style="grid-column:1/-1"><label for="trSrc">Where these come from</label><input id="trSrc" type="text" placeholder="for example: Hall measurement of my sample"></div>
+    </div>
+    </div>
+    <p><button class="primary" id="runDevice">Run the sweep</button></p>
+    <div id="outDevice"></div>
+    <canvas id="cvDev" aria-label="Device curve"></canvas>
+    <div class="readout" id="roDev"></div>
+  </div>
+
+  <div class="panel" id="p-lines" role="tabpanel">
+    <p>What is known about the charge of the dislocation lines, from published data. Tick what to combine. The result is only as good as the assumptions listed.</p>
+    <div id="consBoxes"></div>
+    <p><button class="primary" id="runLines">Combine</button></p>
+    <div id="outLines"></div>
+    <canvas id="cvLines" aria-label="Line charge"></canvas>
+    <h3>Plan a measurement</h3>
+    <p class="note">How precisely would electron holography pin the line charge down for a layer you could grow?</p>
+    <div class="grid2">
+      <div><label for="plMat">Layer</label><select id="plMat"></select></div>
+      <div><label for="plX">Fraction (Al, In or Sc)</label><input id="plX" type="number" step="0.01" value="0.25" min="0" max="1"></div>
+      <div><label for="plR">Relaxed (%)</label><input id="plR" type="number" step="5" value="50" min="0.1" max="100"></div>
+      <div><label for="plE">Charge precision (C/m2)</label><input id="plE" type="number" step="0.0005" value="0.001" min="0"></div>
+    </div>
+    <p><button id="runPlan">Estimate</button></p>
+    <div id="outPlan"></div>
+  </div>
+
+  <div class="panel" id="p-code" role="tabpanel">
+    <p>The same calculation as a Python script, so you can repeat it, change it, or put it in a paper's supplement.</p>
+    <p><button id="runCode">Make the script</button> <button id="copyCode">Copy</button> <button id="saveCsv">Save last curve as CSV</button></p>
+    <pre id="code">Press "Make the script".</pre>
+  </div>
+
+  <div class="panel" id="p-help" role="tabpanel">
+    <dl>
+      <dt>Layer stack</dt><dd>The layers grown on top of each other, listed from the top down here, with the bottom layer as the thick base (buffer).</dd>
+      <dt>Fraction</dt><dd>How much of the metal in an alloy is the named one. AlGaN with 0.25 means 25 percent aluminum, 75 percent gallium.</dd>
+      <dt>Relaxed</dt><dd>A thin layer on a different base is squeezed or stretched to fit it. Above some thickness it relaxes back toward its own size by forming dislocation lines. 0 percent means it fits the layer below exactly.</dd>
+      <dt>Interface charge</dt><dd>A fixed charge at the boundary between two layers. In nitrides it comes from polarization: the crystals are electrically polar, and the polarity changes from one layer to the next.</dd>
+      <dt>Electron sheet density</dt><dd>How many free electrons sit in the thin layer at an interface, per square centimeter. Transistors use these electrons.</dd>
+      <dt>Surface barrier</dt><dd>Where the energy levels sit at the top surface. It depends on the surface and on any metal there.</dd>
+      <dt>Error bar</dt><dd>The range the answer probably lies in (one standard deviation), given how well the inputs are known.</dd>
+      <dt>Capacitance-voltage (C-V)</dt><dd>A standard measurement: as the gate voltage goes more negative, electrons leave, and the capacitance drops. The voltage where it drops is the threshold.</dd>
+      <dt>What this app does not do</dt><dd>It has no current over or through barriers by tunneling, no heating, and no time dependence. It uses one conduction band for electrons. All of these are stated in the documentation.</dd>
+    </dl>
+    <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
+  </div>
+</section>
+</main>
+<script>
+"use strict";
+const TOKEN = "__KPE_TOKEN__";
+let OPT = null, LAST = null;
+const $ = id => document.getElementById(id);
+const COLORS = {GaN:"var(--gan)",AlGaN:"var(--algan)",InGaN:"var(--ingan)",InAlN:"var(--inaln)",ScAlN:"var(--scaln)"};
+const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","Error bars"],["device","Device"],["lines","Dislocation charge"],["code","Python code"],["help","Help"]];
+
+let state = {parameter_set:"pbesol-mahim2026", temperature:300, layers:[
+  {material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none",doping_cm3:1e16},
+  {material:"AlGaN",x:0.25,thickness:25,relaxation:0,doping:"none",doping_cm3:1e18}]};
+
+const PRESETS = {
+  hemt:{parameter_set:"pbesol-mahim2026",layers:[{material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none"},{material:"AlGaN",x:0.25,thickness:25,relaxation:0,doping:"none"}]},
+  inaln:{parameter_set:"hse-dreyer2016",layers:[{material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none"},{material:"InAlN",x:0.178,thickness:10,relaxation:0,doping:"none"}]},
+  scaln:{parameter_set:"ambacher2021",layers:[{material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none"},{material:"ScAlN",x:0.18,thickness:10,relaxation:0,doping:"none"}]},
+  qw:{parameter_set:"hse-dreyer2016",layers:[{material:"GaN",x:0,thickness:500,relaxation:0,doping:"none"},{material:"InGaN",x:0.15,thickness:3,relaxation:0,doping:"none"},{material:"GaN",x:0,thickness:20,relaxation:0,doping:"none"}]},
+  relaxed:{parameter_set:"pbesol-mahim2026",layers:[{material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none"},{material:"AlGaN",x:0.22,thickness:3,relaxation:78,doping:"none"},{material:"AlGaN",x:0.22,thickness:100,relaxation:0,doping:"n",doping_cm3:1.26e18}]},
+};
+
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function sci(v,d=2){ if(v===null||v===undefined||!isFinite(v)) return "-"; if(v===0) return "0";
+  const e=Math.floor(Math.log10(Math.abs(v))); const m=v/Math.pow(10,e);
+  if(e>=-2&&e<=3) return v.toPrecision(d+1);
+  const sup=String(e).replace(/-/g,"⁻").replace(/[0-9]/g,c=>"⁰¹²³⁴⁵⁶⁷⁸⁹"[c]);
+  return m.toFixed(d)+" × 10"+sup; }
+function msg(kind,text){return `<div class="msg ${kind}">${esc(text)}</div>`;}
+
+async function call(action, extra){
+  const spec = Object.assign({}, readSpec(), extra||{});
+  const r = await fetch("/api/"+action,{method:"POST",headers:{"Content-Type":"application/json","X-Token":TOKEN},body:JSON.stringify(spec)});
+  if(!r.ok) return {error:"The app server did not answer ("+r.status+"). Is it still running?"};
+  return r.json();
+}
+async function busy(btn, out, fn){
+  btn.disabled=true; const old=btn.textContent; btn.innerHTML='<span class="spin"></span> Working...';
+  try{ await fn(); } catch(e){ out.innerHTML=msg("err","Something went wrong: "+e); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
+/* ---------------- sample editor ---------------- */
+function readSpec(){
+  const s = JSON.parse(JSON.stringify(state));
+  s.parameter_set=$("pset").value; s.temperature=$("temp").value;
+  s.line_charge={mode:$("lineMode").value,value:$("lineVal").value,sigma:$("lineSig").value};
+  s.surface_barrier=$("phiB").value; s.quantum_depth=$("qdepth").value;
+  if(state.layers.some(L=>L.material==="ScAlN"))
+    s.band_numbers={ScAlN:{eg:$("scEg").value,ec:$("scEc").value,me:$("scMe").value,source:$("scSrc").value}};
+  return s;
+}
+function allowed(){ return OPT.sets[$("pset").value].materials; }
+function renderLayers(){
+  const box=$("layers"); box.innerHTML="";
+  const n=state.layers.length;
+  for(let k=n-1;k>=0;k--){
+    const L=state.layers[k], i=k, isBottom=(i===0);
+    const d=document.createElement("div"); d.className="layer"; d.style.borderLeftColor=COLORS[L.material]||"var(--gan)";
+    const mats=allowed().map(m=>`<option ${m===L.material?"selected":""}>${m}</option>`).join("");
+    const mi=OPT.materials[L.material]||{};
+    d.innerHTML=`<div class="top"><strong>Layer ${i+1}${isBottom?" (bottom, the base)":i===n-1?" (top)":""}</strong>
+      <span><button class="small" data-act="up" title="Move up" ${i===n-1?"disabled":""}>↑</button>
+      <button class="small" data-act="down" title="Move down" ${i<=1?"disabled":""}>↓</button>
+      <button class="small" data-act="del" title="Remove" ${n<=1?"disabled":""}>Remove</button></span></div>
+      <div class="grid2">
+       <div><label>Material</label><select data-k="material">${mats}</select></div>
+       <div class="${mi.x_name?"":"hidden"}"><label>${mi.x_name?esc(mi.x_name[0].toUpperCase()+mi.x_name.slice(1))+" fraction (0 to "+mi.x_max+")":""}</label><input type="number" data-k="x" step="0.01" min="0" max="${mi.x_max||1}" value="${L.x}"></div>
+       <div><label>Thickness (nm)</label><input type="number" data-k="thickness" step="1" min="0.001" value="${L.thickness}"></div>
+       <div class="${isBottom?"hidden":""}"><label>Relaxed (%) <span class="help" title="0 = fits the layer below exactly (fully strained). 100 = back to its own size.">?</span></label><input type="number" data-k="relaxation" step="1" min="0" max="100" value="${L.relaxation||0}"></div>
+       <div><label>Doping</label><select data-k="doping"><option value="none" ${L.doping==="none"?"selected":""}>None</option><option value="n" ${L.doping==="n"?"selected":""}>n-type (donors)</option><option value="p" ${L.doping==="p"?"selected":""}>p-type (acceptors)</option></select></div>
+       <div class="${L.doping==="none"?"hidden":""}"><label>Doping (per cm³, like 1e18)</label><input type="text" inputmode="decimal" data-k="doping_cm3" value="${Number(L.doping_cm3||1e18).toExponential()}"></div>
+      </div>`;
+    d.querySelectorAll("[data-k]").forEach(el=>el.addEventListener("change",()=>{
+      const key=el.dataset.k; let v=el.value;
+      if(key!=="material"&&key!=="doping"){ v=parseFloat(v); if(!isFinite(v)){ el.style.outline="2px solid var(--bad)"; return; } }
+      L[key]=v; if(key==="material"&&!OPT.materials[v].x_name) L.x=0;
+      if(key==="material"&&L.x>OPT.materials[v].x_max) L.x=OPT.materials[v].x_max;
+      renderLayers(); }));
+    d.querySelectorAll("[data-act]").forEach(b=>b.addEventListener("click",()=>{
+      const a=b.dataset.act;
+      if(a==="del") state.layers.splice(i,1);
+      if(a==="up"&&i<n-1){[state.layers[i],state.layers[i+1]]=[state.layers[i+1],state.layers[i]];}
+      if(a==="down"&&i>1){[state.layers[i],state.layers[i-1]]=[state.layers[i-1],state.layers[i]];}
+      state.layers[0].relaxation=0; renderLayers(); }));
+    box.appendChild(d);
+  }
+  // picture: log-ish heights
+  const pic=$("stackpic"); pic.innerHTML="";
+  for(let k=n-1;k>=0;k--){ const L=state.layers[k]; const e=document.createElement("div");
+    e.style.background=COLORS[L.material]; e.style.height=(14+10*Math.log10(1+L.thickness))+"px";
+    e.textContent=`${L.material}${OPT.materials[L.material].x_name?" "+L.x:""}, ${L.thickness} nm${L.relaxation>0?", relaxed "+L.relaxation+"%":""}`; pic.appendChild(e); }
+  $("lineBox").classList.toggle("hidden",!state.layers.some((L,i)=>i>0&&L.relaxation>0));
+  $("scBox").classList.toggle("hidden",!state.layers.some(L=>L.material==="ScAlN"));
+  renderErrBoxes(); devView(); save();
+}
+function renderErrBoxes(){
+  const box=$("errBoxes"); const old=box.querySelectorAll("input"); const keep={};
+  old.forEach(el=>keep[el.id]=el.value); box.innerHTML="";
+  state.layers.forEach((L,i)=>{
+    const d=document.createElement("div"); d.className="grid2";
+    const xs=OPT.materials[L.material].x_name;
+    d.innerHTML=`<div class="${xs?"":"hidden"}"><label for="ex${i}">Layer ${i+1} ${L.material}: fraction error</label><input id="ex${i}" type="number" step="0.005" min="0" value="${keep["ex"+i]??(xs?0.01:0)}"></div>
+      <div><label for="et${i}">Layer ${i+1}: thickness error (nm)</label><input id="et${i}" type="number" step="0.5" min="0" value="${keep["et"+i]??(i===0?0:1)}"></div>`;
+    box.appendChild(d); });
+}
+function save(){ try{ localStorage.setItem("kpe-sample",JSON.stringify(readSpec())); }catch(e){} }
+function load(s){
+  if(!s||!Array.isArray(s.layers)) return;
+  state.layers=s.layers; if(s.parameter_set&&OPT.sets[s.parameter_set]) $("pset").value=s.parameter_set;
+  if(s.temperature) $("temp").value=s.temperature;
+  if(s.surface_barrier!==undefined) $("phiB").value=s.surface_barrier;
+  if(s.line_charge&&s.line_charge.mode) $("lineMode").value=s.line_charge.mode;
+  onSet(); }
+function onSet(){
+  const s=OPT.sets[$("pset").value]; $("psetAbout").textContent=s.about;
+  state.layers.forEach(L=>{ if(!s.materials.includes(L.material)) { L.material=s.materials[s.materials.length-1]; if(L.x>OPT.materials[L.material].x_max) L.x=OPT.materials[L.material].x_max; }});
+  $("plMat").innerHTML=s.materials.filter(m=>m!=="GaN").map(m=>`<option>${m}</option>`).join("");
+  renderLayers(); }
+
+/* ---------------- plotting ---------------- */
+function niceTicks(lo,hi,n=6){ const span=hi-lo||1; const step0=span/n; const p=Math.pow(10,Math.floor(Math.log10(step0)));
+  const step=[1,2,2.5,5,10].map(f=>f*p).find(s=>s>=step0); const out=[]; for(let v=Math.ceil(lo/step)*step; v<=hi+1e-9*step; v+=step) out.push(+v.toPrecision(12)); return out; }
+function plot(cv, series, o){
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr;
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.body); const ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted"), line=css.getPropertyValue("--line");
+  const L=64,R=o.y2?64:16,T=30,B=44;
+  const xs=series.flatMap(s=>s.x); let x0=o.xmin??Math.min(...xs), x1=o.xmax??Math.max(...xs); if(x0===x1){x0-=1;x1+=1;}
+  const axis=(sel)=>{ const ys=series.filter(sel).flatMap(s=>s.y.filter(v=>v!==null&&isFinite(v)&&(!o.logy||v>0)));
+    let a=Math.min(...ys), b=Math.max(...ys); if(!isFinite(a)){a=0;b=1;} if(a===b){a-=1;b+=1;} if(!o.logy){const m=(b-a)*0.06; a-=m; b+=m;} return [a,b]; };
+  let [y0,y1]=axis(s=>!s.right); if(o.logy){ y0=Math.log10(y0); y1=Math.log10(y1); }
+  let [z0,z1]=o.y2?axis(s=>s.right):[0,1]; if(o.y2&&o.logy2){ z0=Math.log10(Math.max(z0,1e-30)); z1=Math.log10(z1); }
+  const X=v=>L+(v-x0)/(x1-x0)*(W-L-R), Y=v=>T+(1-((o.logy?Math.log10(v):v)-y0)/(y1-y0))*(H-T-B), Z=v=>T+(1-((o.logy2?Math.log10(v):v)-z0)/(z1-z0))*(H-T-B);
+  g.font="12px system-ui,sans-serif"; g.strokeStyle=line; g.fillStyle=muted; g.lineWidth=1;
+  niceTicks(x0,x1).forEach(t=>{ g.beginPath(); g.moveTo(X(t),T); g.lineTo(X(t),H-B); g.stroke(); g.textAlign="center"; g.fillText(fmt(t),X(t),H-B+16); });
+  const yt=o.logy?niceTicks(Math.ceil(y0),Math.floor(y1)).filter(Number.isInteger).map(e=>Math.pow(10,e)):niceTicks(y0,y1);
+  yt.forEach(t=>{ g.beginPath(); g.moveTo(L,Y(t)); g.lineTo(W-R,Y(t)); g.stroke(); g.textAlign="right"; g.fillText(o.logy?sci(t,0):fmt(t),L-6,Y(t)+4); });
+  if(o.y2){ const zt=o.logy2?niceTicks(Math.ceil(z0),Math.floor(z1)).filter(Number.isInteger).map(e=>Math.pow(10,e)):niceTicks(z0,z1); g.textAlign="left"; zt.forEach(t=>g.fillText(o.logy2?sci(t,0):fmt(t),W-R+6,Z(t)+4)); }
+  (o.vlines||[]).forEach(v=>{ g.save(); g.setLineDash([4,4]); g.strokeStyle=muted; g.beginPath(); g.moveTo(X(v),T); g.lineTo(X(v),H-B); g.stroke(); g.restore(); });
+  g.fillStyle=ink; g.textAlign="center"; g.fillText(o.xlabel||"",L+(W-L-R)/2,H-8);
+  g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText(o.ylabel||"",0,0); g.restore();
+  if(o.y2){ g.save(); g.translate(W-10,T+(H-T-B)/2); g.rotate(Math.PI/2); g.fillText(o.y2label||"",0,0); g.restore(); }
+  series.forEach(s=>{ g.strokeStyle=s.color; g.lineWidth=2; g.beginPath(); let pen=false; const F=s.right?Z:Y;
+    s.x.forEach((x,i)=>{ const y=s.y[i]; if(y===null||!isFinite(y)||((s.right?o.logy2:o.logy)&&y<=0)){pen=false;return;} const px=X(x),py=F(y); pen?g.lineTo(px,py):g.moveTo(px,py); pen=true; }); g.stroke();
+    if(s.dots){ g.fillStyle=s.color; s.x.forEach((x,i)=>{ const y=s.y[i]; if(y!==null&&isFinite(y)){ g.beginPath(); g.arc(X(x),F(y),3,0,7); g.fill(); }}); } });
+  let lx=L; series.forEach(s=>{ if(!s.label) return; g.fillStyle=s.color; g.fillRect(lx,10,14,3); g.fillStyle=ink; g.textAlign="left"; g.fillText(s.label,lx+18,15); lx+=g.measureText(s.label).width+40; });
+  cv._map={X,Y,x0,x1,L,R,W,series,o};
+}
+function fmt(v){ const a=Math.abs(v); if(a!==0&&(a<1e-3||a>=1e5)) return v.toExponential(1); return +v.toPrecision(4)+""; }
+function hover(cv, ro, fmtfn){
+  cv.addEventListener("mousemove",ev=>{ const m=cv._map; if(!m) return; const r=cv.getBoundingClientRect(); const px=ev.clientX-r.left;
+    const x=m.x0+(px-m.L)/(m.W-m.L-m.R)*(m.x1-m.x0); const s=m.series[0]; let bi=0,bd=1e300; s.x.forEach((xx,i)=>{const d=Math.abs(xx-x); if(d<bd){bd=d;bi=i;}});
+    ro.textContent=fmtfn(bi); });
+}
+
+/* ---------------- actions ---------------- */
+function warnings(res){ return (res.warnings||[]).map(w=>msg("warn",w)).join(""); }
+$("runCharges").onclick=()=>busy($("runCharges"),$("outCharges"),async()=>{
+  const r=await call("charges"); const out=$("outCharges");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  let h=warnings(r)+`<table><tr><th>Interface</th><th>Fixed charge (per cm²)</th><th>What it does</th><th>Fit to layer below</th></tr>`;
+  r.interfaces.forEach(c=>{ h+=`<tr><td>${esc(c.between)}<br><span class="muted small">${fmt(c.depth_nm)} nm above the bottom</span></td><td><b>${sci(c.charge_cm2)}</b>${c.relaxation_percent>0?`<br><span class="muted small">${sci(c.from_lines_cm2)} of it from the dislocation lines</span>`:""}</td><td>${c.meaning}</td><td>${c.relaxation_percent>0?`relaxed ${fmt(c.relaxation_percent)}%<br><span class="muted small">of a ${fmt(Math.abs(c.mismatch_percent))}% size mismatch</span>`:c.mismatch_percent===0?"same size":`fits exactly (strained)<br><span class="muted small">${c.mismatch_percent>0?"stretched":"squeezed"} ${fmt(Math.abs(c.mismatch_percent))}% to fit</span>`}</td></tr>`; });
+  h+="</table>";
+  if(r.line_charge_sigma>0) h+=`<p class="note">The dislocation-line charge has an error of ±${fmt(r.line_charge_sigma)} charges per nm; the Error bars tab carries it through.</p>`;
+  h+=`<h3>Sources of the numbers</h3><table>${r.layers.map((L,i)=>`<tr><td>Layer ${i+1} ${esc(L.label)}</td><td class="small muted">${esc(L.reference)}</td></tr>`).join("")}</table>`;
+  out.innerHTML=h; });
+
+$("runElectrons").onclick=()=>busy($("runElectrons"),$("outElectrons"),async()=>{
+  const r=await call("electrons"); const out=$("outElectrons");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; } LAST={name:"electrons",cols:["depth_nm","conduction_band_eV","electrons_per_cm3"],rows:r.z.map((z,i)=>[z,r.ec[i],r.n_cm3[i]])};
+  out.innerHTML=warnings(r)+`<div class="big">${sci(r.sheet_cm2)} <small>electrons per cm² in the quantum region</small></div>`+
+   (r.sheet_classical_cm2>1e9?`<p class="note">Plus ${sci(r.sheet_classical_cm2)} per cm² deeper down (outside the quantum region).</p>`:"")+
+   (r.subbands_eV.length?`<p class="note">Lowest energy levels (eV from the Fermi level): ${r.subbands_eV.slice(0,4).map(e=>fmt(e)).join(", ")}</p>`:"")+
+   (r.converged?"":msg("warn","The calculation did not fully settle; try a finer step or a different barrier."));
+  const top=r.z[r.z.length-1], lo=Math.max(0,top-Math.max(150,(top-r.window[0])*1.2));
+  const sel=r.z.map((z,i)=>z>=lo?i:-1).filter(i=>i>=0);
+  const d=top; // show depth from the surface
+  plot($("cvBand"),[{x:sel.map(i=>d-r.z[i]),y:sel.map(i=>r.ec[i]),color:"#1f6feb",label:"Conduction band (eV)"},
+    {x:sel.map(i=>d-r.z[i]),y:sel.map(i=>Math.max(r.n_cm3[i],1e10)),color:"#e5534b",label:"Electrons (per cm³)",right:true}],
+    {xlabel:"Depth below the surface (nm)",ylabel:"Energy (eV), Fermi level = 0",y2:true,logy2:true,y2label:"Electrons per cm³",vlines:r.interfaces.map(z=>d-z)});
+  $("roBand").dataset.z=JSON.stringify(sel.map(i=>[d-r.z[i],r.ec[i],r.n_cm3[i]]));
+});
+hover($("cvBand"),$("roBand"),i=>{ const a=JSON.parse($("roBand").dataset.z||"[]")[i]; return a?`depth ${fmt(a[0])} nm: band ${fmt(a[1])} eV, ${sci(a[2])} electrons per cm³`:""; });
+
+$("runErrors").onclick=()=>busy($("runErrors"),$("outErrors"),async()=>{
+  const layers=state.layers.map((L,i)=>({x:$("ex"+i)?.value||0,thickness:$("et"+i)?.value||0}));
+  const r=await call("uncertainty",{uncertainty:{method:$("errMethod").value,barrier:$("errPhi").value,layers,samples:120}}); const out=$("outErrors");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvHist").classList.add("hidden"); return; }
+  let h=`<div class="big">${sci(r.value_cm2)} ± ${sci(r.sigma_cm2)} <small>electrons per cm²</small></div><p class="note">That is about ±${(100*r.sigma_cm2/Math.abs(r.value_cm2)).toPrecision(2)} percent.</p>`;
+  if(r.budget){ h+=`<h3>Where the error comes from</h3><table>${r.budget.map(b=>`<tr><td>${esc(b.input)}</td><td style="width:50%"><div class="bar" style="width:${Math.max(1,100*b.share)}%"></div></td><td>${(100*b.share).toPrecision(2)}%</td></tr>`).join("")}</table>`; $("cvHist").classList.add("hidden"); }
+  if(r.percentiles){ h+=`<p class="note">68 percent of the samples lie between ${sci(r.percentiles["16"])} and ${sci(r.percentiles["84"])}; 95 percent between ${sci(r.percentiles["2.5"])} and ${sci(r.percentiles["97.5"])}.</p>`;
+    const s=r.samples.slice().sort((a,b)=>a-b), nb=20, lo=s[0], hi=s[s.length-1]||lo+1, w=(hi-lo)/nb||1, c=new Array(nb).fill(0); s.forEach(v=>c[Math.min(nb-1,Math.floor((v-lo)/w))]++);
+    $("cvHist").classList.remove("hidden"); plot($("cvHist"),[{x:c.map((_,i)=>lo+(i+0.5)*w),y:c,color:"#1f6feb",label:"Number of samples",dots:true}],{xlabel:"Electrons per cm²",ylabel:"Samples"}); }
+  out.innerHTML=h; });
+
+$("devContact").onchange=()=>$("barrierBox").classList.toggle("hidden",$("devContact").value!=="metal");
+function devView(){ const iv=$("devMode").value==="iv", pdoped=state.layers.some(L=>L.doping==="p");
+  $("bottomBox").classList.toggle("hidden",iv); $("cvNote").classList.toggle("hidden",iv);
+  $("trBox").classList.toggle("hidden",!iv&&!pdoped);
+  document.querySelectorAll(".ivOnly").forEach(e=>e.classList.toggle("hidden",!iv));
+  $("trNote").textContent=iv?"There is no single accepted set, so the app asks you. The current depends on them directly.":"Your sample has p-type layers, so holes are included: give the hole mass and its source.";
+  if(iv&&$("vStart").value==="-6"){ $("vStart").value="-2"; $("vStop").value="2"; $("vStep").value="0.1"; } }
+$("devMode").onchange=devView;
+$("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
+  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
+    transport:{mobility_n:$("muN").value,mobility_p:$("muP").value,hole_mass:$("mH").value,lifetime:$("tau").value,source:$("trSrc").value}}); const out=$("outDevice");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  out.innerHTML=warnings(r);
+  if(r.mode==="cv"){ LAST={name:"cv",cols:["voltage_V","capacitance_nF_per_cm2","electrons_per_cm2_top150nm"],rows:r.v.map((v,i)=>[v,r.c_nF_cm2[i],r.sheet_cm2[i]])};
+    plot($("cvDev"),[{x:r.v,y:r.c_nF_cm2,color:"#1f6feb",label:"Capacitance (nF/cm²)",dots:true},{x:r.v,y:r.sheet_cm2,color:"#e5534b",label:"Electrons near the top (per cm²)",right:true}],{xlabel:"Gate voltage (V)",ylabel:"nF per cm²",y2:true,y2label:"Electrons per cm²"});
+    $("roDev").dataset.v=JSON.stringify(LAST.rows); }
+  else { LAST={name:"iv",cols:["voltage_V","current_A_per_cm2"],rows:r.v.map((v,i)=>[v,r.j_A_cm2[i]])};
+    plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"|Current| (A/cm²)",dots:true}],{xlabel:"Top contact voltage (V)",ylabel:"A per cm²",logy:true});
+    $("roDev").dataset.v=JSON.stringify(LAST.rows); } });
+hover($("cvDev"),$("roDev"),i=>{ const a=JSON.parse($("roDev").dataset.v||"[]")[i]; return a?a.map((v,k)=>(k?sci(v):fmt(v))).join("   "):""; });
+
+function renderCons(){ $("consBoxes").innerHTML=Object.entries(OPT.constraints).map(([k,c])=>`<label style="color:var(--ink)"><input type="checkbox" value="${k}" ${["shen-density-pbesol","shen-mobility"].includes(k)?"checked":""}> ${esc(c.name)}: ${c.kind==="gaussian"?`${fmt(c.value)} ± ${fmt(c.sigma)}`:`size at most ${fmt(c.value)}`} charges per nm<br><span class="muted small">Measured on ${esc(c.applies_to)}. Assumes: ${esc(plainUnits(c.assumptions))}</span></label>`).join(""); }
+function plainUnits(t){ return String(t).replace(/\|Lambda\|/g,"the size of the line charge").replace(/Lambda/g,"the line charge").replace(/ e\/nm/g," charges per nm"); }
+$("runLines").onclick=()=>busy($("runLines"),$("outLines"),async()=>{
+  const names=[...document.querySelectorAll("#consBoxes input:checked")].map(e=>e.value);
+  const r=await call("line_charge",{constraints:names}); const out=$("outLines");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  out.innerHTML=`<div class="big">${fmt(r.mean)} ± ${fmt(r.sd)} <small>charges per nm</small></div><p class="note">68 percent range ${fmt(r.interval68[0])} to ${fmt(r.interval68[1])}; 95 percent range ${fmt(r.interval95[0])} to ${fmt(r.interval95[1])}. The limits removed ${fmt(100*r.removed)} percent of the first estimate.</p>`;
+  plot($("cvLines"),[{x:r.grid,y:r.density,color:"#1f6feb",label:"How likely each value is"}],{xlabel:"Charge per length of the dislocation lines (charges per nm)",ylabel:"Probability density"}); });
+$("runPlan").onclick=()=>busy($("runPlan"),$("outPlan"),async()=>{
+  const r=await call("plan",{plan:{material:$("plMat").value,x:$("plX").value,relaxation:$("plR").value,charge_error:$("plE").value}}); const out=$("outPlan");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  out.innerHTML=`<p>A layer with ${fmt(r.mismatch_percent)}% size mismatch, measured to that precision, gives the line charge to <b>±${fmt(r.holography_sigma)} charges per nm</b>.</p>`+(r.sum_rule?`<p class="note">${esc(r.sum_rule)}</p>`:""); });
+
+$("runCode").onclick=()=>busy($("runCode"),$("code"),async()=>{ const r=await call("code"); $("code").textContent=r.error?r.error:r.code; });
+$("copyCode").onclick=async()=>{ try{ await navigator.clipboard.writeText($("code").textContent); $("copyCode").textContent="Copied"; setTimeout(()=>$("copyCode").textContent="Copy",1200);}catch(e){} };
+function download(name, text, type){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }
+$("saveCsv").onclick=()=>{ if(!LAST){ $("code").textContent="Run a calculation with a curve first (Electrons or Device)."; return; } download(`kpenvelope_${LAST.name}.csv`,[LAST.cols.join(",")].concat(LAST.rows.map(r=>r.join(","))).join("\n")+"\n","text/csv"); };
+$("saveSpec").onclick=()=>download("kpenvelope_sample.json",JSON.stringify(readSpec(),null,2),"application/json");
+$("loadBtn").onclick=()=>$("loadSpec").click();
+$("loadSpec").onchange=async e=>{ const f=e.target.files[0]; if(!f) return; try{ load(JSON.parse(await f.text())); }catch(err){ alertBox("That file is not a saved sample."); } };
+function alertBox(t){ $("outCharges").innerHTML=msg("err",t); }
+$("addLayer").onclick=()=>{ const m=allowed()[allowed().length-1]; state.layers.push({material:m,x:Math.min(0.2,OPT.materials[m].x_max),thickness:20,relaxation:0,doping:"none",doping_cm3:1e18}); renderLayers(); };
+$("preset").onchange=()=>{ const p=PRESETS[$("preset").value]; if(p){ load(JSON.parse(JSON.stringify(p))); } };
+$("pset").onchange=onSet; $("temp").onchange=save;
+$("lineMode").onchange=()=>{ $("lineCustom").classList.toggle("hidden",$("lineMode").value!=="custom"); $("lineNote").textContent=$("lineMode").value==="measured"?"Measured on one series (AlGaN stretched on GaN). Using it for other layers is an assumption.":""; };
+
+(async function init(){
+  const tb=$("tabs"); TABS.forEach(([k,t],i)=>{ const b=document.createElement("button"); b.textContent=t; b.setAttribute("role","tab"); b.setAttribute("aria-selected",i===0); b.onclick=()=>{ tb.querySelectorAll("button").forEach(x=>x.setAttribute("aria-selected",x===b)); document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("on",p.id==="p-"+k)); }; tb.appendChild(b); });
+  $("p-charges").classList.add("on");
+  OPT=await call("options");
+  $("pset").innerHTML=Object.entries(OPT.sets).map(([k,s])=>`<option value="${k}">${esc(s.label)}</option>`).join("");
+  $("lineMode").innerHTML=Object.entries(OPT.line_modes).map(([k,t])=>`<option value="${k}">${esc(t.replace("+-","±"))}</option>`).join("");
+  renderCons(); $("lineMode").onchange();
+  let saved=null; try{ saved=JSON.parse(localStorage.getItem("kpe-sample")||"null"); }catch(e){}
+  if(saved) load(saved); else onSet();
+})();
+</script>
+</body>
+</html>
