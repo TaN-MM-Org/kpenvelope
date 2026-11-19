@@ -16,6 +16,11 @@ recombination and contacts (`solve_drift_diffusion`, `iv_curve`,
 model (`slab_modes`), combines what is known about the misfit-line charge
 (`combine_line_charge`), and opens as an app in the browser
 (`kpenvelope-app`).
+Since v0.19.0 it simulates whole devices in two and three dimensions
+(`Device`): current between source, gate and drain with a mobility that
+saturates at high field and falls with temperature, deep-level traps that
+fill and empty in time (`Device.transient`), and self-heating through a
+heat equation down to the heat sink (`ThermalModel`, `solve_heat`).
 
 Methodological basis: T. M. Mahim, A. S. M. Mohsin and M. M. Rahman,
 "Origin of the conflicting hole masses in the GaN/AlN two-dimensional
@@ -81,12 +86,16 @@ from .twod import (CrossSection, Gate, cv_cross_section, device_grid,
 from .leakage import (gate_leakage, richardson_constant, richardson_velocity,
                       thermionic_emission_current, tsu_esaki_current,
                       wkb_transmission)
+from .device import (Device, DeviceState, Electrode, Mobility, Surface, Trap,
+                     TransientResult, capture_coefficient)
+from .thermal import (GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalMaterial,
+                      ThermalModel, boundary_resistance, solve_heat)
 from .linecharge import (PUBLISHED_CONSTRAINTS, Constraint,
                          LineChargePosterior, combine_line_charge,
                          line_charge_error_from_density, plan_holography,
                          plan_sum_rule)
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -138,4 +147,8 @@ __all__ = [
     "thermionic_emission_current", "tsu_esaki_current", "wkb_transmission",
     "solve_cross_section", "cv_cross_section", "Gate", "CrossSection",
     "device_grid",
+    "Device", "DeviceState", "Electrode", "Mobility", "Surface", "Trap",
+    "TransientResult", "capture_coefficient",
+    "ThermalMaterial", "ThermalLayer", "ThermalModel", "GAN_BULK", "SIC_4H_ROOM",
+    "boundary_resistance", "solve_heat",
 ]
