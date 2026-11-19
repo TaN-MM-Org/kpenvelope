@@ -63,6 +63,11 @@ A/mm, was 2.2e-11) and one current during the recovery in example 29
   edge and quasi-Fermi levels are NaN.
 - The electrothermal solve and `pulse` step the lattice temperature in
   smaller jumps when one jump is too far for Newton's method.
+- When light (a generation term) cannot be switched on at the final
+  voltages by Newton's method, the solve now switches it on in time
+  (backward-Euler steps growing to steady state). This made the
+  avalanche test pass on processors without AVX-512, where the earlier
+  path failed.
 
 ### Not included (see the README's Limits)
 
