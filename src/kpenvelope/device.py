@@ -2208,6 +2208,7 @@ class Device:
         """Turn the generation on at fixed voltages, in steps of a factor
         (log scale), halving the step when Newton does not converge."""
         G = self.Gopt
+        x0 = x.copy()
         try:
             # try it all at once first; if that fails, start low and climb
             self.Gopt = G
@@ -2233,9 +2234,40 @@ class Device:
                     lstep /= 2
                     if lstep < 1e-3:
                         break
+            # last resort: switch it on in time (pseudo-transient
+            # continuation): the time derivative keeps every step well
+            # conditioned, and the steps grow until the state is steady
+            self.Gopt = G
+            xs = self._pseudo_transient(x0, bias, Tn, tol)
+            if xs is not None:
+                return xs
             raise RuntimeError("could not switch the generation on")
         finally:
             self.Gopt = G
+
+    def _pseudo_transient(self, x, bias, Tn, tol, dt=1e-15, dt_end=1e3):
+        """March dn/dt + div Gamma = -R with backward-Euler steps that grow
+        from `dt` to `dt_end` seconds, then settle with the steady Newton
+        method. Returns the steady state, or None."""
+        if self._transient:
+            return None
+        for _ in range(600):
+            xn, conv, it = self._newton(x, bias, Tn, dt=dt, old=x, tol=tol, max_iter=30)
+            if conv:
+                x = xn
+                if dt >= dt_end:
+                    xs, conv_s, _ = self._newton(x, bias, Tn, tol=tol, max_iter=60)
+                    if conv_s:
+                        return xs
+                    dt_end *= 1e3
+                    if dt_end > 1e15:
+                        return None
+                dt *= 4.0 if it <= 8 else 1.5
+            else:
+                dt /= 4.0
+                if dt < 1e-24:
+                    return None
+        return None
 
     def _check_bias(self, bias):
         for k, v in bias.items():
