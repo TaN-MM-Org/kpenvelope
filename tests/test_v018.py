@@ -769,3 +769,278 @@ def test_quantum_cv_charge_and_sheets():
         device={"mode": "cv", "barrier": 1.0, "v_start": -1, "v_stop": -1,
                 "v_step": 1, "bottom": "thick", "quantum": True}))
     assert r["quantum"] and r["c_nF_cm2"][0] == pytest.approx(C[1] * 1e9, rel=1e-9)
+
+
+# ------------------------------------------------------------ data fits
+from kpenvelope import fit_measurements, correlation_warnings  # noqa: E402
+
+
+def _fit_build(v):
+    return {"layers": [StackLayer(algan(0.0), 200.0),
+                       StackLayer(algan(v["x"]), v.get("t", 25.0))]}
+
+
+def _fit_data(x=0.27, barrier=1.1, t=25.0, surface=0.8):
+    L = _fit_build({"x": x, "t": t})["layers"]
+    V = np.linspace(-7.5, -0.5, 12)
+    _, C, _, _ = cv_curve(L, V, top=Contact("schottky", barrier=barrier),
+                          bottom=Contact("zero-field"), dz=0.5)
+    ns = solve_quasi_equilibrium(L, Contact("schottky", barrier=surface),
+                                 Contact("zero-field"), dz=0.5).sheet()
+    return V, C, ns
+
+
+def test_fit_recovers_noise_free_cv():
+    V, C, ns = _fit_data()
+    f = fit_measurements(_fit_build, {"x": 0.25, "barrier": 1.0},
+                         cv=(V, C, np.full(V.size, 1e-12)))
+    assert f.values["x"] == pytest.approx(0.27, abs=1e-4)
+    assert f.values["barrier"] == pytest.approx(1.1, abs=1e-3)
+    assert np.allclose(f.cv_fitted, C, rtol=1e-4)
+    # a thickness on the grid, interpolated between grid points
+    f = fit_measurements(lambda v: _fit_build(v), {"barrier": 1.0, "t": 23.7},
+                         fixed={"x": 0.27}, cv=(V, C, 1e-12), lengths=("t",))
+    assert f.values["t"] == pytest.approx(25.0, abs=1e-3)
+
+
+def test_fit_joint_cv_and_hall_with_noise():
+    V, C, ns = _fit_data()
+    rng = np.random.default_rng(7)
+    s = 2e-9
+    Cn = C + rng.normal(0, s, V.size)
+    f = fit_measurements(_fit_build, {"barrier": 1.0, "surface": 0.7},
+                         fixed={"x": 0.27}, cv=(V, Cn, s),
+                         sheet=(ns * 1.01, 0.02 * ns))
+    for k, true in (("barrier", 1.1), ("surface", 0.8)):
+        assert abs(f.values[k] - true) < 4 * f.errors[k]
+    assert f.dof == V.size + 1 - 2 and 0 < f.chi2 < 40
+    assert f.sheet_fitted == pytest.approx(ns, rel=0.05)
+
+
+def test_fit_refusals_and_warnings():
+    V, C, ns = _fit_data()
+    with pytest.raises(ValueError, match="errors"):
+        fit_measurements(_fit_build, {"barrier": 1.0},
+                         fixed={"x": 0.27, "surface": 0.8},
+                         cv=(V, C, None), sheet=(ns, None))
+    with pytest.raises(ValueError, match="barrier"):
+        fit_measurements(_fit_build, {"x": 0.25}, cv=(V, C, 1e-9))
+    with pytest.raises(ValueError, match="both fitted and fixed"):
+        fit_measurements(_fit_build, {"x": 0.25, "barrier": 1.0},
+                         fixed={"x": 0.2}, cv=(V, C, 1e-9))
+    w = correlation_warnings(("a", "b", "c"),
+                             np.array([[1, 0.99, 0.1], [0.99, 1, 0], [0.1, 0, 1]]))
+    assert len(w) == 1 and "a and b" in w[0] and "combination" in w[0]
+
+
+def test_app_fit_recovers_the_barrier():
+    L = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 25.0)]
+    V = np.linspace(-7.5, -0.5, 10)
+    _, C, _, _ = cv_curve(L, V, top=Contact("schottky", barrier=1.1),
+                          bottom=Contact("zero-field"), dz=0.5)
+    data = "V, C\n" + "\n".join(f"{v}, {c * 1e9}" for v, c in zip(V, C))
+    spec = dict(_HEMT, layers=[{"material": "GaN", "thickness": 300},
+                               {"material": "AlGaN", "x": 0.25, "thickness": 25}],
+                device={"barrier": 1.0},
+                fit={"data": data, "units": "nF/cm2", "sigma": "0.001",
+                     "unknowns": {"barrier": 1.0}})
+    r = gui_api.handle("fit", spec)
+    assert r["rows"][0]["value"] == pytest.approx(1.1, abs=1e-3)
+    # the same in pF over a 100 um x 100 um gate
+    area = 1e4 * 1e-8
+    spec["fit"] = dict(spec["fit"], units="pF", area_um2="10000",
+                       sigma=str(0.001e-9 * area * 1e12),
+                       data="\n".join(f"{v} {c * area * 1e12}" for v, c in zip(V, C)))
+    assert gui_api.handle("fit", spec)["rows"][0]["value"] == pytest.approx(1.1, abs=1e-3)
+    assert "Tick" in gui_api.handle("fit", dict(spec, fit={"data": data}))["error"]
+
+
+# ----------------------------------------------------------- design finder
+from kpenvelope import (design_error_bars, find_designs,  # noqa: E402
+                        sheet_density, threshold_voltage)
+
+
+def _ds_build(v):
+    return [StackLayer(algan(0.0), 200.0), StackLayer(algan(v["x"]), v.get("t", 25.0))]
+
+
+def test_threshold_is_where_the_sheet_falls_to_one_percent():
+    L = _ds_build({"x": 0.25})
+    vt = threshold_voltage(L, 1.0)
+    n0 = sheet_density(L, 1.0)[0]
+    assert sheet_density(L, 1.0, vt + 0.01)[0] > 0.01 * n0 > sheet_density(L, 1.0, vt - 0.01)[0]
+    # a larger barrier switches off sooner (less negative), by about the
+    # same voltage for a coherent barrier
+    assert threshold_voltage(L, 1.2) > vt
+
+
+def test_find_designs_recovers_a_known_design():
+    true = {"x": 0.3}
+    L = _ds_build(true)
+    vt = threshold_voltage(L, 1.0)
+    nb = sheet_density(L, 0.8)[0]
+    ds = find_designs(_ds_build, {"x": (0.15, 0.4)},
+                      {"threshold": (vt, 0.05), "sheet_bare": (nb, 0.01 * nb)},
+                      barrier=1.0, surface=0.8, n_grid=6, refine=2, top=3)
+    assert ds[0].meets_targets
+    assert ds[0].values["x"] == pytest.approx(0.3, abs=0.01)
+    assert ds[0].score <= ds[-1].score
+    eb = design_error_bars(_ds_build, ds[0].values, {"x": 0.01}, barrier=1.0,
+                           surface=0.8, quantities=("sheet_bare",))
+    p = eb["sheet_bare"]
+    up = sheet_density(_ds_build({"x": ds[0].values["x"] + 0.01}), 0.8)[0]
+    dn = sheet_density(_ds_build({"x": ds[0].values["x"] - 0.01}), 0.8)[0]
+    assert p.sigma == pytest.approx(abs(up - dn) / 2, rel=1e-6)
+    with pytest.raises(ValueError, match="barrier"):
+        find_designs(_ds_build, {"x": (0.1, 0.3)}, {"threshold": (-3, 0.1)})
+    with pytest.raises(ValueError, match="targets"):
+        find_designs(_ds_build, {"x": (0.1, 0.3)}, {"speed": (1, 1)})
+
+
+def test_app_design_finder():
+    spec = dict(_HEMT, layers=[{"material": "GaN", "thickness": 200},
+                               {"material": "AlGaN", "x": 0.25, "thickness": 25}],
+                surface_barrier=0.8, device={"barrier": 1.0})
+    nb = sheet_density(_ds_build({"x": 0.3}), 0.8)[0]
+    spec["design"] = {"layer": 1, "vary_x": [0.15, 0.4], "quick": True,
+                      "targets": {"sheet_bare": [nb, 0.02 * nb]}}
+    r = gui_api.handle("design", spec)
+    assert r["designs"][0]["meets"]
+    assert r["designs"][0]["values"]["x"] == pytest.approx(0.3, abs=0.02)
+    spec["design"] = dict(spec["design"], vary_x=None)
+    assert "Tick what may change" in gui_api.handle("design", spec)["error"]
+
+
+# ------------------------------------------------------- leakage physics
+from kpenvelope import (gate_leakage, richardson_constant,  # noqa: E402
+                        richardson_velocity, thermionic_emission_current,
+                        tsu_esaki_current)
+
+
+def test_richardson_numbers():
+    assert richardson_constant(1.0) == pytest.approx(120.173, rel=1e-4)
+    m = 0.2
+    nc = _nc(m)                                   # cm^-3
+    vr = richardson_constant(m) * 300.0 ** 2 / (_Q * nc)
+    assert richardson_velocity(m, 300.0) == pytest.approx(vr, rel=1e-10)
+
+
+def test_tsu_esaki_limits():
+    z = np.linspace(0.0, 300.0, 3001)
+    ec = np.where((z > 50) & (z < 250), 1.0, 0.0)     # 200 nm: no tunneling
+    for V in (0.1, 0.2):
+        j = tsu_esaki_current(z, ec, 0.0, -V, 0.2, 300.0, n_energy=20000)
+        te = -thermionic_emission_current(1.0, -V, 0.2)
+        assert j == pytest.approx(te, rel=2e-3)
+    # Fowler-Nordheim: the exponent of a triangular barrier
+    hbar, m0 = 1.054571817e-34, 9.1093837015e-31
+    phi, m = 1.0, 0.3
+
+    def J(F):
+        zz = np.linspace(-1.0, 1.5 * phi / F, 8001)
+        return tsu_esaki_current(zz, np.where(zz < 0, -10.0, phi - F * zz), 0.0,
+                                 -5.0, m, 20.0, n_energy=20000)
+    F1, F2 = 0.3, 0.5
+    slope = (math.log(J(F2) / F2 ** 2) - math.log(J(F1) / F1 ** 2)) / (
+        1 / (F2 * 1e9) - 1 / (F1 * 1e9))
+    b = 4 * math.sqrt(2 * m * m0) * (phi * _Q) ** 1.5 / (3 * _Q * hbar)
+    assert slope == pytest.approx(-b, rel=0.03)
+
+
+def test_thermionic_contact_follows_crowell_sze():
+    tr = Transport(1000.0, 30.0, 1.0, reference="test values")
+    L = [StackLayer(algan(0.0), 500.0, donors=1e-4)]
+    kT = KB * 300.0
+    out = {}
+    for V in (0.2, 0.3, -0.3):
+        r = solve_drift_diffusion(L, tr, top=Contact("schottky", barrier=1.0,
+                                                     voltage=V, thermionic=True),
+                                  dz=1.0, statistics="boltzmann")
+        out[V] = -r.current_density
+    js = richardson_constant(0.2) * 300.0 ** 2 * math.exp(-1.0 / kT)
+    assert out[-0.3] == pytest.approx(-js, rel=0.02)          # reverse: saturates
+    assert out[0.3] / out[0.2] == pytest.approx(math.exp(0.1 / kT), rel=5e-3)
+    # forward: J_TE / (1 + v_R / v_D), v_D = mu E_max (depletion approximation)
+    eps = 10.4 * _EPS0 * 1e-2
+    vbi = 1.0 - kT * math.log(_nc(0.2) / 1e17)
+    Em = math.sqrt(2 * _Q * 1e17 * (vbi - 0.2) / eps)
+    cs = thermionic_emission_current(1.0, 0.2, 0.2) / (
+        1 + richardson_velocity(0.2, 300.0) / (1000.0 * Em))
+    assert out[0.2] == pytest.approx(cs, rel=0.01)
+    with pytest.raises(ValueError):
+        Contact("ohmic", thermionic=True)
+
+
+def test_gate_leakage_signs_and_trends():
+    L = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 25.0)]
+    V, J, _ = gate_leakage(L, 1.0, [-4.0, -1.0, 0.0, 0.5])
+    assert J[0] < J[1] < 0 and J[2] == pytest.approx(0.0, abs=1e-12) and J[3] > 0
+    Lt = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 10.0)]
+    assert abs(gate_leakage(Lt, 1.0, [-1.0])[1][0]) > 1e3 * abs(J[1])
+    r = gui_api.handle("device", dict(_HEMT, layers=[
+        {"material": "GaN", "thickness": 300}, {"material": "AlGaN", "x": 0.25,
+                                                "thickness": 25}],
+        device={"mode": "leak", "barrier": 1.0, "v_start": -1, "v_stop": -1,
+                "v_step": 1}))
+    assert r["j_A_cm2"][0] == pytest.approx(J[1], rel=1e-9)
+
+
+# ------------------------------------------------------- 2D cross-section
+from kpenvelope import Gate, cv_cross_section, solve_cross_section  # noqa: E402
+
+
+def _xs_layers():
+    return [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 25.0)]
+
+
+def test_cross_section_with_a_full_gate_is_the_1d_solution():
+    L = _xs_layers()
+    z = np.linspace(0.0, 325.0, 651)
+    x = np.linspace(0.0, 100.0, 5)
+    r = solve_cross_section(L, Gate(0.0, 100.0, 1.0, -2.0), 100.0, 0.8, x=x, z=z)
+    q = solve_quasi_equilibrium(L, Contact("schottky", barrier=1.0, voltage=-2.0),
+                                Contact("zero-field"), dz=0.5)
+    assert r.converged
+    assert np.max(np.abs(r.ec - q.ec[None, :])) < 1e-9
+    assert r.sheet_x[2] == pytest.approx(q.sheet(175.0, 325.0), rel=1e-9)
+    assert r.gate_charge / 100e-7 == pytest.approx(q.gate_charge, rel=1e-9)
+    r2 = solve_cross_section(L, Gate(0.0, 100.0, 1.0, -2.0), 100.0, 0.8, x=x, z=z,
+                             use_scipy=False)
+    assert np.max(np.abs(r2.psi - r.psi)) < 1e-9
+
+
+def test_cross_section_wide_gate_and_access_regions():
+    L = _xs_layers()
+    r = solve_cross_section(L, Gate(1500.0, 3500.0, 1.0, 0.0), 5000.0, 0.8)
+    under = np.interp(2500.0, r.x, r.sheet_x)
+    beside = r.sheet_x[0]
+    g1 = solve_quasi_equilibrium(L, Contact("schottky", barrier=1.0),
+                                 Contact("zero-field"), dz=0.25).sheet(175, 325)
+    s1 = solve_quasi_equilibrium(L, Contact("schottky", barrier=0.8),
+                                 Contact("zero-field"), dz=0.25).sheet(175, 325)
+    assert under == pytest.approx(g1, rel=5e-3)
+    assert beside == pytest.approx(s1, rel=5e-3)
+
+
+def test_short_gates_hold_more_charge_per_length():
+    L = _xs_layers()
+    C = []
+    for lg in (50.0, 200.0, 1000.0):
+        g = Gate(400.0, 400.0 + lg, 1.0)
+        C.append(cv_cross_section(L, g, [-2.0], lg + 800.0, 0.8)[1][0])
+    _, C1, _, _ = cv_curve(L, [-2.0], top=Contact("schottky", barrier=1.0),
+                           bottom=Contact("zero-field"), dz=0.25)
+    assert C[0] > C[1] > C[2] > C1[0]
+    assert C[2] == pytest.approx(C1[0], rel=0.1)
+    with pytest.raises(ValueError):
+        Gate(10.0, 5.0, 1.0)
+
+
+def test_app_cross_section():
+    spec = dict(_HEMT, layers=[{"material": "GaN", "thickness": 300},
+                               {"material": "AlGaN", "x": 0.25, "thickness": 25}],
+                surface_barrier=0.8, device={"barrier": 1.0},
+                cross={"gate_length": 200, "access": 400, "voltage": -3})
+    r = gui_api.handle("cross", spec)
+    assert r["sheet_center"] == pytest.approx(r["sheet_1d"], rel=0.01)
+    assert len(r["log10n"]) == len(r["x"]) and len(r["log10n"][0]) == len(r["depth"])
