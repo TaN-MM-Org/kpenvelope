@@ -62,7 +62,8 @@ class FitResult:
 
 
 def fit_least_squares(model, x, y, theta0, y_sigma=None, x_sigma=None,
-                      names=None, rel_step=1e-6, max_iter=100, tol=1e-10):
+                      names=None, rel_step=1e-6, max_iter=100, tol=1e-10,
+                      difference="central", abs_step=1e-6):
     """Least-squares fit of model(theta, x_row) -> prediction to readings y.
 
     model : callable(theta (p,), x_row (d,)) -> float. Each prediction may
@@ -75,7 +76,12 @@ def fit_least_squares(model, x, y, theta0, y_sigma=None, x_sigma=None,
         number); 0 marks an exact setting. Needs y_sigma.
     rel_step : relative central-difference step (absolute 1e-6 where the
         value is zero).
+    difference : "central" (default) or "forward" (new in v0.18.0; half the
+        model calls per Jacobian, for expensive models).
+    abs_step : the step used where a parameter is zero (new in v0.18.0).
     """
+    if difference not in ("central", "forward"):
+        raise ValueError("difference must be 'central' or 'forward'")
     x = np.asarray(x, dtype=float)
     if x.ndim == 1:
         x = x[:, None]
@@ -141,9 +147,12 @@ def fit_least_squares(model, x, y, theta0, y_sigma=None, x_sigma=None,
     def jac(u, r0):
         J = np.empty((r0.size, u.size))
         for k in range(u.size):
-            h = rel_step * abs(u[k]) if u[k] != 0 else 1e-6
+            h = rel_step * abs(u[k]) if u[k] != 0 else abs_step
             up, dn = u.copy(), u.copy()
             up[k] += h
+            if difference == "forward":
+                J[:, k] = (resid(up) - r0) / h
+                continue
             dn[k] -= h
             J[:, k] = (resid(up) - resid(dn)) / (2 * h)
         return J

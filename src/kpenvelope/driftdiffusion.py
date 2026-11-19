@@ -137,11 +137,19 @@ class Contact:
         field at its bottom, as in `solve_electrons`).
     barrier : Schottky barrier, E_c - E_F(metal) at the contact (eV).
     voltage : applied voltage (V).
+    thermionic : for a Schottky contact in `solve_drift_diffusion`, take
+        the carriers across the metal by thermionic emission (flux
+        v_R (n - n_0), Richardson velocity v_R = sqrt(kT / 2 pi m); C. R.
+        Crowell and S. M. Sze, Solid-State Electron. 9, 1035 (1966))
+        instead of holding them at their equilibrium densities (new in
+        v0.18.0). The forward current then follows the thermionic-
+        emission law when the bulk is not limiting (checked in the tests).
     """
 
     kind: str = "ohmic"
     barrier: float = None
     voltage: float = 0.0
+    thermionic: bool = False
 
     def __post_init__(self):
         if self.kind not in ("ohmic", "schottky", "zero-field"):
@@ -154,6 +162,8 @@ class Contact:
             raise ValueError(f"a {self.kind} contact takes no barrier")
         if not math.isfinite(self.voltage):
             raise ValueError("Contact.voltage must be finite (V)")
+        if self.thermionic and self.kind != "schottky":
+            raise ValueError("thermionic emission needs a Schottky contact")
 
 
 @dataclasses.dataclass
@@ -449,6 +459,25 @@ class _Problem:
             rp[k] = psi[k] - pb
             rn[k] = fn[k] - fb
             rq[k] = fp[k] - fb
+        te = getattr(self, "te", (None, None))
+        for side, k in ((0, 0), (1, self.N - 1)):
+            if te[side] is None:
+                continue
+            ef = bc[side][1]
+            kT = self.kT
+            n0 = self.Nc[k] * self.occ(np.array([-te[side] / kT]))[0][0]
+            p0 = (self.Nv[k] * self.occ(np.array([(te[side] - self.Eg[k]) / kT]))[0][0]
+                  if self.holes else 0.0)
+            del ef
+            outn = self.vRn[k] * (n[k] - n0)      # flux into the metal
+            outp = self.vRp[k] * (p[k] - p0)
+            src = self.vol[k] * (self.G[k] - R[k])
+            if side == 1:
+                rn[k] = outn - Gn[-1] - src
+                rq[k] = outp - Gp[-1] - src
+            else:
+                rn[k] = Gn[0] + outn - src
+                rq[k] = Gp[0] + outp - src
         F[0::3], F[1::3], F[2::3] = rp, rn, rq
         return F
 
@@ -766,6 +795,16 @@ def solve_drift_diffusion(layers, transport, top: Contact, bottom: Contact = Non
     P = _Problem(layers, transport, float(temperature_K), dz, statistics,
                  interfaces, extra, generation, float(acceptor_degeneracy))
     P.floor = float(density_floor_cm3) * 1e-21
+    if bottom.thermionic or top.thermionic:
+        kTj = KB * float(temperature_K) * QE
+        idx_m = P.Nc / ((KB * float(temperature_K) * QE / (2 * np.pi * HBAR ** 2)) ** 1.5 * 2.0 * 1e-27)
+        me_node = idx_m ** (2.0 / 3.0) / M0             # mass back from N_c
+        mh_node = (P.Nv / ((KB * float(temperature_K) * QE / (2 * np.pi * HBAR ** 2)) ** 1.5
+                           * 2.0 * 1e-27)) ** (2.0 / 3.0) / M0
+        P.vRn = np.sqrt(kTj / (2 * np.pi * me_node * M0)) * 1e9          # nm/s
+        P.vRp = np.sqrt(kTj / (2 * np.pi * np.maximum(mh_node, 1e-30) * M0)) * 1e9
+        P.te = (bottom.barrier if bottom.thermionic else None,
+                top.barrier if top.thermionic else None)
     if guess is not None:
         x, vb0, vt0 = _check_guess(guess, P)
     else:

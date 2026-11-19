@@ -73,6 +73,14 @@ from .driftdiffusion import (Contact, DriftDiffusionResult, Transport,
                              solve_drift_diffusion, solve_quasi_equilibrium)
 from .phonons import (CM1_TO_MEV, GAN_BARKER1973, PolarPhonons,
                       frohlich_constant, single_interface_modes, slab_modes)
+from .datafit import MeasurementFit, correlation_warnings, fit_measurements
+from .design import (Design, design_error_bars, find_designs, sheet_density,
+                     threshold_voltage)
+from .twod import (CrossSection, Gate, cv_cross_section, device_grid,
+                   solve_cross_section)
+from .leakage import (gate_leakage, richardson_constant, richardson_velocity,
+                      thermionic_emission_current, tsu_esaki_current,
+                      wkb_transmission)
 from .linecharge import (PUBLISHED_CONSTRAINTS, Constraint,
                          LineChargePosterior, combine_line_charge,
                          line_charge_error_from_density, plan_holography,
@@ -123,4 +131,11 @@ __all__ = [
     "cv_curve_quantum",
     "PolarPhonons", "GAN_BARKER1973", "CM1_TO_MEV", "single_interface_modes",
     "slab_modes", "frohlich_constant",
+    "fit_measurements", "MeasurementFit", "correlation_warnings",
+    "find_designs", "Design", "design_error_bars", "sheet_density",
+    "threshold_voltage",
+    "gate_leakage", "richardson_constant", "richardson_velocity",
+    "thermionic_emission_current", "tsu_esaki_current", "wkb_transmission",
+    "solve_cross_section", "cv_cross_section", "Gate", "CrossSection",
+    "device_grid",
 ]
