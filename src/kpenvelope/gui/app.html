@@ -191,7 +191,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <p class="lead">What a measurement with a metal contact on top would show.</p>
     <p>The app puts a metal contact on top and steps its voltage. <b>Capacitance (C-V)</b> shows how the electron layer empties as the voltage goes negative, which tells you where a transistor switches off. <b>Current (I-V)</b> shows how much current flows from top to bottom.</p>
     <div class="grid2">
-      <div><label for="devMode">What to measure</label><select id="devMode"><option value="cv">Capacitance vs voltage (C-V)</option><option value="iv">Current vs voltage (I-V)</option></select></div>
+      <div><label for="devMode">What to measure</label><select id="devMode"><option value="cv">Capacitance vs voltage (C-V)</option><option value="leak">Gate leakage: current through the metal gate</option><option value="iv">Current from top to bottom (I-V)</option></select></div>
       <div id="bottomBox"><label for="devBottom">Bottom <span class="help" title="Thick base: the bottom layer is a thick buffer with no electric field at its far end (as in the Electrons tab). In a transistor the electrons are held by the side contacts (source and drain), which this models. Ohmic: a real contact at the bottom.">?</span></label><select id="devBottom"><option value="thick">Thick base, electrons held by side contacts (a transistor)</option><option value="ohmic">A contact at the bottom</option></select></div>
       <div><label for="devContact">Top contact</label><select id="devContact"><option value="metal">Metal gate (with an energy step, a "Schottky" contact)</option><option value="ohmic">Plain contact (no energy step, "ohmic")</option></select></div>
       <div id="barrierBox"><label for="devBarrier">Metal energy step (eV) <span class="help" title="How much energy an electron needs to pass from the metal into the layer (the Schottky barrier height). It depends on the metal and the surface; take it from your own data or a source you trust.">?</span></label><input id="devBarrier" type="number" step="0.05" value="1.0"></div>
@@ -200,6 +200,8 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="vStep">Step (V)</label><input id="vStep" type="number" step="0.05" value="0.25" min="0.001"></div>
     </div>
     <label id="qBox" style="color:var(--ink)"><input type="checkbox" id="devQuantum"> Treat the electrons with quantum mechanics (more accurate, about ten times slower) <span class="help" title="The quick C-V treats the electrons as a simple gas. Ticking this solves for their quantum states at every voltage, which is closer to a real device. The two usually differ by a few percent.">?</span></label>
+    <p class="note hidden" id="leakNote">Gate leakage counts electrons that pass over the energy step (thermionic emission) and through the barrier (tunneling), using the bands of the C-V model. It assumes an ideal barrier: real gates often leak more, through defects. Below the switch-off voltage the model's bands stop changing, so trust it above that voltage. No transport numbers are needed.</p>
+    <label id="teBox" class="hidden" style="color:var(--ink)"><input type="checkbox" id="devTE" checked> Let electrons cross the metal by thermionic emission (realistic; untick for the simpler fixed-density contact)</label>
     <p class="note" id="cvNote">C-V needs none of the numbers below. The electrons stay connected to the side contacts and only the gate voltage changes. Holes are left out, because a quick sweep cannot create them in these materials.</p>
     <div id="trBox">
     <h3>Transport numbers (yours)</h3>
@@ -237,6 +239,62 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <div id="outPlan"></div>
   </div>
 
+  <div class="panel" id="p-fit" role="tabpanel">
+    <p class="lead">Find the numbers your sample really has, from what you measured.</p>
+    <p>Paste a measured C-V curve, enter a Hall density, or both. Tick the numbers you are unsure of; the app changes them until the calculation matches your measurement, and tells you how well each one is pinned down.</p>
+    <div class="grid2">
+      <div style="grid-column:1/-1"><label for="fitData">Measured C-V: one voltage and one capacitance per line <span class="help" title="Copy two columns from a spreadsheet or a text file: the gate voltage in volts, then the capacitance. A header line is fine; it is skipped.">?</span></label>
+        <textarea id="fitData" rows="6" placeholder="-6.0, 12.5&#10;-5.5, 300.1&#10;-5.0, 338.0&#10;..."></textarea></div>
+      <div><label for="fitUnits">Capacitance unit</label><select id="fitUnits"><option value="nF/cm2">nF per cm²</option><option value="uF/cm2">µF per cm²</option><option value="F/m2">F per m²</option><option value="pF">pF (whole gate)</option><option value="nF">nF (whole gate)</option></select></div>
+      <div id="fitAreaBox" class="hidden"><label for="fitArea">Gate area (µm²)</label><input id="fitArea" type="text" inputmode="decimal" placeholder="for example 31416 for a 200 µm dot"></div>
+      <div><label for="fitSigma">Capacitance error, same unit (optional) <span class="help" title="How far off each measured point could be. Leave it empty and the app takes it from how well the curve fits, which needs more points than unknowns.">?</span></label><input id="fitSigma" type="text" inputmode="decimal" placeholder="leave empty to estimate"></div>
+      <div><label for="hallVal">Hall density (per cm², optional)</label><input id="hallVal" type="text" inputmode="decimal" placeholder="for example 1.1e13"></div>
+      <div><label for="hallSig">Hall density error (per cm²)</label><input id="hallSig" type="text" inputmode="decimal" placeholder="needed when fitting both"></div>
+    </div>
+    <h3>What to find <span class="help" title="Tick only what you are unsure of, and give a starting guess. Each extra unknown needs data that can tell it apart from the others; the app warns you when it cannot.">?</span></h3>
+    <div id="fitUnknowns"></div>
+    <label style="color:var(--ink)"><input type="checkbox" id="fitQuantum"> Treat the electrons with quantum mechanics (more accurate, slower)</label>
+    <p><button class="primary" id="runFit">Fit my data</button> <span class="note">This usually takes 10 seconds to a few minutes.</span></p>
+    <div id="outFit"></div>
+    <canvas id="cvFit" class="hidden" aria-label="Measured and fitted curves"></canvas>
+  </div>
+
+  <div class="panel" id="p-design" role="tabpanel">
+    <p class="lead">Say what you want; the app finds the layer that gives it.</p>
+    <p>Choose one layer, what may change (its fraction, its thickness, or both) and over what range, and what you want: an electron density, a switch-off voltage, or both. The app maps the whole range and lists the designs that come closest. It uses the energy steps from the Electrons and Voltage sweep tabs.</p>
+    <div class="grid2">
+      <div><label for="dsLayer">Layer to design</label><select id="dsLayer"></select></div>
+      <div><label for="dsQuick">Search</label><select id="dsQuick"><option value="1">Quick (about half a minute)</option><option value="0">Finer (about a minute or two)</option></select></div>
+      <div><label style="color:var(--ink)"><input type="checkbox" id="dsVx" checked> Fraction may change, from</label><div class="row"><input id="dsX0" type="text" inputmode="decimal" value="0.15" aria-label="lowest fraction"><input id="dsX1" type="text" inputmode="decimal" value="0.40" aria-label="highest fraction"></div></div>
+      <div><label style="color:var(--ink)"><input type="checkbox" id="dsVt" checked> Thickness may change (nm), from</label><div class="row"><input id="dsT0" type="text" inputmode="decimal" value="10" aria-label="smallest thickness"><input id="dsT1" type="text" inputmode="decimal" value="35" aria-label="largest thickness"></div></div>
+    </div>
+    <h3>What you want <span class="help" title="Leave a target empty to ignore it. The tolerance is how close is close enough; a design that is within it on every target is marked as meeting them.">?</span></h3>
+    <div class="grid2">
+      <div><label for="dsN">Electron density, bare sample (per cm²)</label><div class="row"><input id="dsN" type="text" inputmode="decimal" placeholder="for example 1e13"><input id="dsNt" type="text" inputmode="decimal" placeholder="± tolerance" aria-label="density tolerance"></div></div>
+      <div><label for="dsV">Switch-off voltage (V)</label><div class="row"><input id="dsV" type="text" inputmode="decimal" placeholder="for example -3"><input id="dsVtol" type="text" inputmode="decimal" placeholder="± tolerance" value="0.2" aria-label="voltage tolerance"></div></div>
+      <div><label for="dsSx">Growth tolerance of the fraction (±, optional)</label><input id="dsSx" type="text" inputmode="decimal" value="0.01"></div>
+      <div><label for="dsSt">Growth tolerance of the thickness (± nm, optional)</label><input id="dsSt" type="text" inputmode="decimal" value="1"></div>
+    </div>
+    <p><button class="primary" id="runDesign">Find designs</button></p>
+    <div id="outDesign"></div>
+    <canvas id="cvDesign" class="hidden" aria-label="Map of how close each design comes"></canvas>
+  </div>
+
+  <div class="panel" id="p-cross" role="tabpanel">
+    <p class="lead">A slice through a transistor: the gate, the space beside it, and the electrons underneath.</p>
+    <p>The other tabs look straight down through one point. Here the gate has a length, and the free surface lies on both sides of it, so you can see how the electron layer changes from under the gate to beside it, and how the field spreads at the gate edges. The electrons stay at the level of the side contacts (no drain voltage). It uses the energy steps from the Electrons and Voltage sweep tabs.</p>
+    <div class="grid2">
+      <div><label for="xsLg">Gate length (nm)</label><input id="xsLg" type="text" inputmode="decimal" value="200"></div>
+      <div><label for="xsAcc">Space on each side of the gate (nm)</label><input id="xsAcc" type="text" inputmode="decimal" value="400"></div>
+      <div><label for="xsV">Gate voltage (V)</label><input id="xsV" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="xsShow">Show</label><select id="xsShow"><option value="n">Where the electrons are</option><option value="ec">Energy an electron needs</option></select></div>
+    </div>
+    <p><button class="primary" id="runCross">Draw the cross-section</button></p>
+    <div id="outCross"></div>
+    <canvas id="cvCross" class="hidden" style="height:360px" aria-label="Cross-section map"></canvas>
+    <canvas id="cvCrossLine" class="hidden" aria-label="Electrons along the channel"></canvas>
+  </div>
+
   <div class="panel" id="p-code" role="tabpanel">
     <p class="lead">Keep, repeat or share what you did.</p>
     <p>The app can write the same calculation as a Python script (to repeat it, change it, or add it to a paper's supplement), and save the last curve as a spreadsheet file (CSV).</p>
@@ -271,7 +329,7 @@ const TOKEN = "__KPE_TOKEN__";
 let OPT = null, LAST = null;
 const $ = id => document.getElementById(id);
 const COLORS = {GaN:"var(--gan)",AlGaN:"var(--algan)",InGaN:"var(--ingan)",InAlN:"var(--inaln)",ScAlN:"var(--scaln)"};
-const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["code","Save and share"],["help","Help and words"]];
+const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["fit","Fit my data"],["design","Design finder"],["cross","2D cross-section"],["code","Save and share"],["help","Help and words"]];
 
 let state = {parameter_set:"pbesol-mahim2026", temperature:300, layers:[
   {material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none",doping_cm3:1e16},
@@ -357,7 +415,7 @@ function renderLayers(){
     e.textContent=`${L.material}${OPT.materials[L.material].x_name?" "+L.x:""}, ${L.thickness} nm${L.relaxation>0?", relaxed "+L.relaxation+"%":""}`; pic.appendChild(e); }
   $("lineBox").classList.toggle("hidden",!state.layers.some((L,i)=>i>0&&L.relaxation>0));
   $("scBox").classList.toggle("hidden",!state.layers.some(L=>L.material==="ScAlN"));
-  renderErrBoxes(); devView(); save();
+  renderErrBoxes(); devView(); renderFitUnknowns(); renderDesignLayers(); save();
 }
 function renderErrBoxes(){
   const box=$("errBoxes"); const old=box.querySelectorAll("input"); const keep={};
@@ -370,7 +428,7 @@ function renderErrBoxes(){
     box.appendChild(d); });
 }
 function save(){ try{ localStorage.setItem("kpe-sample",JSON.stringify(readSpec())); }catch(e){} markStale(); }
-const OUTS=["outCharges","outElectrons","outErrors","outDevice","outLines"];
+const OUTS=["outCharges","outElectrons","outErrors","outDevice","outLines","outFit","outDesign","outCross"];
 let READY=false;
 function markStale(){ if(!READY) return; OUTS.forEach(id=>{ const o=$(id); if(o&&o.innerHTML.trim()&&!o.querySelector(".stale")) o.insertAdjacentHTML("afterbegin",'<div class="stale" role="status">Your sample changed. Press the button again to update these results.</div>'); }); }
 document.addEventListener("click",e=>{ const h=e.target.closest(".help"); if(!h||!h.title&&!h.dataset.tip) return; e.preventDefault(); e.stopPropagation();
@@ -477,15 +535,16 @@ $("runErrors").onclick=()=>busy($("runErrors"),$("outErrors"),async()=>{
   out.innerHTML=h; });
 
 $("devContact").onchange=()=>$("barrierBox").classList.toggle("hidden",$("devContact").value!=="metal");
-function devView(){ const iv=$("devMode").value==="iv", pdoped=state.layers.some(L=>L.doping==="p");
-  $("bottomBox").classList.toggle("hidden",iv); $("cvNote").classList.toggle("hidden",iv); $("qBox").classList.toggle("hidden",iv);
-  $("trBox").classList.toggle("hidden",!iv&&!pdoped);
+function devView(){ const mode=$("devMode").value, iv=mode==="iv", leak=mode==="leak", pdoped=state.layers.some(L=>L.doping==="p");
+  $("leakNote").classList.toggle("hidden",!leak); $("teBox").classList.toggle("hidden",!iv);
+  $("bottomBox").classList.toggle("hidden",iv||leak); $("cvNote").classList.toggle("hidden",iv||leak); $("qBox").classList.toggle("hidden",iv||leak);
+  $("trBox").classList.toggle("hidden",!iv&&!(pdoped&&!leak));
   document.querySelectorAll(".ivOnly").forEach(e=>e.classList.toggle("hidden",!iv));
   $("trNote").textContent=iv?"There is no single accepted set, so the app asks you. The current depends on them directly.":"Your sample has p-type layers, so holes are included: give the hole mass and its source.";
   if(iv&&$("vStart").value==="-6"){ $("vStart").value="-2"; $("vStop").value="2"; $("vStep").value="0.1"; } }
 $("devMode").onchange=devView;
 $("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
-  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,quantum:$("devQuantum").checked,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
+  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,quantum:$("devQuantum").checked,thermionic:$("devTE").checked,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
     transport:{mobility_n:$("muN").value,mobility_p:$("muP").value,hole_mass:$("mH").value,lifetime:$("tau").value,source:$("trSrc").value}}); const out=$("outDevice");
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
   out.innerHTML=warnings(r);
@@ -498,6 +557,11 @@ $("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
     for(let k=1;k<order.length&&med>0;k++){ const i=order[k], j=order[k-1]; if(r.c_nF_cm2[i]>=0.5*med&&r.c_nF_cm2[j]<0.5*med){ th=[r.v[j],r.v[i]]; break; } }
     $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> ${th?`the electron layer empties (the transistor switches off) between ${fmt(Math.min(...th))} and ${fmt(Math.max(...th))} V. Use a smaller step to narrow it down.`:"the electron layer does not empty within this voltage range; try a more negative start voltage."}</div>`;
     plot($("cvDev"),[{x:r.v,y:r.c_nF_cm2,color:"#1f6feb",label:"Capacitance (nF/cm²)",dots:true},{x:r.v,y:r.sheet_cm2,color:"#e5534b",label:"Electrons near the top (per cm²)",right:true}],{xlabel:"Gate voltage (V)",ylabel:"nF per cm²",y2:true,y2label:"Electrons per cm²"});
+    $("roDev").dataset.v=JSON.stringify(LAST.rows); }
+  else if(r.mode==="leak"){ LAST={name:"gate_leakage",cols:["gate_voltage_V","gate_current_A_per_cm2"],rows:r.v.map((v,i)=>[v,r.j_A_cm2[i]])};
+    const neg=r.v.map((v,i)=>[v,r.j_A_cm2[i]]).filter(a=>a[0]<0); const w=neg.length?neg.reduce((a,b)=>a[0]<b[0]?a:b):null;
+    $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> ${w?`at ${fmt(w[0])} V about ${sci(Math.abs(w[1]))} A leaks through each cm² of gate.`:"the gate leakage is shown on a log scale."} Positive voltages pass forward current, negative ones leak backward; the plot shows the size on a log scale (each grid line is ten times more).</div>`;
+    plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"Gate current size (A/cm²)",dots:true}],{xlabel:"Gate voltage (V)",ylabel:"A per cm²",logy:true});
     $("roDev").dataset.v=JSON.stringify(LAST.rows); }
   else { LAST={name:"iv",cols:["voltage_V","current_A_per_cm2"],rows:r.v.map((v,i)=>[v,r.j_A_cm2[i]])};
     const jl=r.j_A_cm2[r.j_A_cm2.length-1]; $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> at ${fmt(r.v[r.v.length-1])} V about ${sci(Math.abs(jl))} A flows through each cm². The plot uses a log scale, so each grid line is ten times more current.</div>`;
@@ -518,6 +582,109 @@ $("runPlan").onclick=()=>busy($("runPlan"),$("outPlan"),async()=>{
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
   out.innerHTML=`<p>A layer with ${fmt(r.mismatch_percent)}% size mismatch, measured to that precision, gives the line charge to <b>±${fmt(r.holography_sigma)} charges per nm</b>.</p>`+(r.sum_rule?`<p class="note">${esc(r.sum_rule)}</p>`:""); });
 
+
+/* ---------------- fit my data ---------------- */
+$("fitUnits").onchange=()=>$("fitAreaBox").classList.toggle("hidden",!["pF","nF"].includes($("fitUnits").value));
+function renderFitUnknowns(){
+  const box=$("fitUnknowns"); if(!box) return; const keep={}; box.querySelectorAll("input").forEach(e=>keep[e.id]=e.type==="checkbox"?e.checked:e.value);
+  const rows=[["barrier","Metal energy step (eV), for C-V",$("devBarrier").value||"1.0"],["surface","Free-surface energy step (eV), for Hall",$("phiB").value||"1.0"],["parasitic","Parasitic capacitance (nF/cm²)","0"]];
+  state.layers.forEach((L,i)=>{ if(i===0) return; const mi=OPT.materials[L.material];
+    if(mi.x_name) rows.push([`x${i}`,`Layer ${i+1} ${L.material}: ${mi.x_name} fraction`,L.x]);
+    rows.push([`t${i}`,`Layer ${i+1} ${L.material}: thickness (nm)`,L.thickness]);
+    rows.push([`q${i}`,`Extra fixed charge below layer ${i+1} (in 10¹³ per cm²)`,"0"]); });
+  if(state.layers.some((L,i)=>i>0&&L.relaxation>0)) rows.push(["line","Defect-line charge (charges per nm)",$("lineVal").value||"-0.84"]);
+  box.innerHTML=rows.map(([k,t,v])=>`<div class="row" style="align-items:center;margin:4px 0"><label style="flex:2;color:var(--ink);margin:0"><input type="checkbox" id="fu_${k}" ${keep["fu_"+k]?"checked":""}> ${esc(t)}</label><input style="flex:1" id="fs_${k}" type="text" inputmode="decimal" value="${esc(keep["fs_"+k]??v)}" aria-label="starting value"></div>`).join("");
+}
+$("runFit").onclick=()=>busy($("runFit"),$("outFit"),async()=>{
+  const unknowns={}; document.querySelectorAll("#fitUnknowns input[type=checkbox]").forEach(c=>{ if(c.checked){ const k=c.id.slice(3); unknowns[k]=$("fs_"+k).value; } });
+  const r=await call("fit",{device:{barrier:$("devBarrier").value},fit:{data:$("fitData").value,units:$("fitUnits").value,area_um2:$("fitArea").value,sigma:$("fitSigma").value,hall:{value:$("hallVal").value,sigma:$("hallSig").value},unknowns,quantum:$("fitQuantum").checked}});
+  const out=$("outFit");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvFit").classList.add("hidden"); return; }
+  const good=r.dof>0&&!r.scaled?r.chi2/r.dof:null;
+  const tied=(r.warnings||[]).some(w=>w.includes("combination"))&&r.rows.some(x=>Math.abs(x.error)>0.2*Math.max(Math.abs(x.value),1e-12));
+  let h=(r.warnings||[]).map(w=>msg("warn",w)).join("");
+  h+=`<div class="summary"><b>In short:</b> ${tied?"your data cannot pin these numbers down separately, so the values below are only one of many that fit about equally well. ":""}${r.rows.map(x=>`${esc(x.label)} is <b>${fmt(x.value)} ± ${(+x.error).toPrecision(2)}</b>`).join("; ")}.${good!==null?` The match to your data is ${good<2?"good":good<5?"fair":"poor"} (chi² per point ${fmt(good)}; about 1 means as good as your error bars allow).`:""}</div>`;
+  h+=`<table><tr><th>Number</th><th>Started at</th><th>Found</th><th>±</th></tr>${r.rows.map(x=>`<tr><td>${esc(x.label[0].toUpperCase()+x.label.slice(1))}</td><td>${fmt(+x.start)}</td><td><b>${fmt(x.value)}</b></td><td>${(+x.error).toPrecision(2)}</td></tr>`).join("")}</table>`;
+  if(r.hall_meas) h+=`<p class="note">Hall density: measured ${sci(r.hall_meas)}, fitted ${sci(r.hall_fit)} per cm².</p>`;
+  h+=`<p><button id="useFit">Use these values in my sample</button></p>`;
+  out.innerHTML=h;
+  if(r.v){ $("cvFit").classList.remove("hidden"); plot($("cvFit"),[{x:r.v,y:r.c_meas_nF,color:"#e5534b",label:"Measured",dots:true},{x:r.v,y:r.c_fit_nF,color:"#1f6feb",label:"Fitted"}],{xlabel:"Gate voltage (V)",ylabel:"Capacitance (nF per cm²)"}); LAST={name:"fit",cols:["voltage_V","measured_nF_per_cm2","fitted_nF_per_cm2"],rows:r.v.map((v,i)=>[v,r.c_meas_nF[i],r.c_fit_nF[i]])}; } else $("cvFit").classList.add("hidden");
+  $("useFit").onclick=()=>{ r.rows.forEach(x=>{ const k=x.name, v=+x.value.toPrecision(6);
+      if(k==="barrier") $("devBarrier").value=v; else if(k==="surface") $("phiB").value=v; else if(k==="line"){ $("lineMode").value="custom"; $("lineMode").onchange(); $("lineVal").value=v; $("lineSig").value=+x.error.toPrecision(3); }
+      else if(k[0]==="x") state.layers[+k.slice(1)].x=v; else if(k[0]==="t") state.layers[+k.slice(1)].thickness=v; });
+    if(r.rows.some(x=>x.name[0]==="q")) $("outFit").insertAdjacentHTML("beforeend",msg("warn","Extra fixed charges are not part of the sample editor, so they are only listed here."));
+    renderLayers(); $("useFit").textContent="Done: your sample now uses these values"; };
+});
+
+/* ---------------- design finder ---------------- */
+function renderDesignLayers(){ const sel=$("dsLayer"); if(!sel) return; const old=sel.value;
+  sel.innerHTML=state.layers.map((L,i)=>i===0?"":`<option value="${i}">Layer ${i+1}: ${L.material}</option>`).join("");
+  if(old&&[...sel.options].some(o=>o.value===old)) sel.value=old; else if(sel.options.length) sel.value=sel.options[sel.options.length-1].value; }
+$("runDesign").onclick=()=>busy($("runDesign"),$("outDesign"),async()=>{
+  const targets={}; if($("dsN").value) targets.sheet_bare=[$("dsN").value,$("dsNt").value||String(0.05*parseFloat($("dsN").value))];
+  if($("dsV").value) targets.threshold=[$("dsV").value,$("dsVtol").value||"0.2"];
+  const r=await call("design",{device:{barrier:$("devBarrier").value},design:{layer:$("dsLayer").value,quick:$("dsQuick").value==="1",
+    vary_x:$("dsVx").checked?[$("dsX0").value,$("dsX1").value]:null, vary_t:$("dsVt").checked?[$("dsT0").value,$("dsT1").value]:null,
+    targets, sigmas:{x:$("dsSx").value,t:$("dsSt").value}}});
+  const out=$("outDesign");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvDesign").classList.add("hidden"); return; }
+  const d0=r.designs[0]; const desc=d=>Object.entries(d.values).map(([k,v])=>k==="x"?`fraction ${fmt(v)}`:`thickness ${fmt(v)} nm`).join(", ");
+  let h=`<div class="summary"><b>In short:</b> ${d0.meets?`the best design is ${/^[AEIOU]/.test(r.material)?"an":"a"} ${esc(r.material)} layer with ${desc(d0)}, which meets your targets.`:`no design in this range meets all your targets; the closest is ${desc(d0)}. Try a wider range or a looser tolerance.`}</div>`;
+  if(r.error_bars){ h+=`<p class="note">With your growth tolerances, the best design gives ${Object.entries(r.error_bars).map(([k,e])=>k==="threshold"?`a switch-off at ${fmt(e.value)} ± ${(+e.sigma).toPrecision(2)} V`:`${sci(e.value)} ± ${sci(e.sigma)} electrons per cm²`).join(" and ")}.</p>`; }
+  h+=`<table><tr><th>#</th><th>Design</th><th>Electrons per cm²</th><th>Switch-off (V)</th><th>Meets targets?</th><th></th></tr>`+
+    r.designs.map((d,j)=>`<tr><td>${j+1}</td><td>${desc(d)}</td><td>${d.sheet_bare!=null?sci(d.sheet_bare):"-"}</td><td>${d.threshold!=null?fmt(d.threshold):"-"}</td><td>${d.meets?"yes":"no"}</td><td><button class="small" data-use="${j}">Use</button></td></tr>`).join("")+`</table>`;
+  out.innerHTML=h;
+  out.querySelectorAll("[data-use]").forEach(b=>b.onclick=()=>{ const d=r.designs[+b.dataset.use]; const L=state.layers[r.layer];
+    if(d.values.x!==undefined) L.x=+d.values.x.toPrecision(4); if(d.values.t!==undefined) L.thickness=+d.values.t.toPrecision(4); renderLayers(); b.textContent="Used"; });
+  const ax=Object.keys(r.map.axes);
+  if(ax.length===2){ $("cvDesign").classList.remove("hidden"); drawMap($("cvDesign"),r.map,ax); } else $("cvDesign").classList.add("hidden");
+});
+function drawMap(cv,mp,ax){
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.body), ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted");
+  const A=mp.axes[ax[0]], B=mp.axes[ax[1]], L=70,R=20,T=34,Bm=44, cw=(W-L-R)/A.length, ch=(H-T-Bm)/B.length;
+  const sc=mp.score.map(v=>v==null?null:Math.log10(1+v)); const mx=Math.max(...sc.filter(v=>v!=null),1e-9);
+  A.forEach((a,i)=>B.forEach((b,j)=>{ const v=sc[i*B.length+j]; const x=L+i*cw, y=T+(B.length-1-j)*ch;
+    if(v==null){ g.fillStyle="#88888833"; } else { const t=v/mx; g.fillStyle=`rgba(31,111,235,${(1-t)*0.95+0.05})`; } g.fillRect(x+1,y+1,cw-2,ch-2); }));
+  g.fillStyle=muted; g.font="12px system-ui,sans-serif"; g.textAlign="center";
+  A.forEach((a,i)=>g.fillText(fmt(a),L+(i+0.5)*cw,H-Bm+16)); g.textAlign="right"; B.forEach((b,j)=>g.fillText(fmt(b),L-6,T+(B.length-0.5-j)*ch+4));
+  g.fillStyle=ink; g.textAlign="center"; g.fillText(ax[0]==="x"?"Fraction":"Thickness (nm)",L+(W-L-R)/2,H-8);
+  g.save(); g.translate(14,T+(H-T-Bm)/2); g.rotate(-Math.PI/2); g.fillText(ax[1]==="t"?"Thickness (nm)":"Fraction",0,0); g.restore();
+  g.textAlign="left"; g.fillText("Stronger blue = closer to what you want (grey: no electrons)",L,18);
+}
+
+/* ---------------- 2D cross-section ---------------- */
+let XS=null;
+$("runCross").onclick=()=>busy($("runCross"),$("outCross"),async()=>{
+  const r=await call("cross",{device:{barrier:$("devBarrier").value},cross:{gate_length:$("xsLg").value,access:$("xsAcc").value,voltage:$("xsV").value}});
+  const out=$("outCross");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvCross").classList.add("hidden"); $("cvCrossLine").classList.add("hidden"); return; }
+  XS=r; const acc=r.x_nodes.map((x,i)=>[x,r.sheet_x[i]]).filter(a=>a[0]<r.gate[0]||a[0]>r.gate[1]); const accN=acc.length?acc[0][1]:null;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> under the middle of the gate there are ${sci(r.sheet_center)} electrons per cm²${accN!=null?`, and ${sci(accN)} beside it`:""}. A wide gate in one dimension would give ${sci(r.sheet_1d)}; ${Math.abs(r.sheet_center/r.sheet_1d-1)<0.02?"this gate is long enough to behave the same.":"the difference comes from the gate edges."}</div>`;
+  LAST={name:"cross_section_sheet",cols:["x_nm","electrons_per_cm2"],rows:r.x_nodes.map((x,i)=>[x,r.sheet_x[i]])};
+  $("cvCross").classList.remove("hidden"); $("cvCrossLine").classList.remove("hidden"); drawCross();
+  plot($("cvCrossLine"),[{x:r.x_nodes,y:r.sheet_x,color:"#e5534b",label:"Electrons per cm² along the slice"}],{xlabel:"Position across the slice (nm); the gate is shaded in the map above",ylabel:"Electrons per cm²",vlines:r.gate});
+});
+$("xsShow").onchange=()=>{ if(XS) drawCross(); };
+function drawCross(){
+  const r=XS, cv=$("cvCross"), show=$("xsShow").value;
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.body), ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted");
+  const L=64,R=112,T=34,B=44, nx=r.x.length, nz=r.depth.length, cw=(W-L-R)/nx, ch=(H-T-B)/nz;
+  const F=show==="n"?r.log10n:r.ec; let lo=Infinity,hi=-Infinity; F.forEach(row=>row.forEach(v=>{ if(v<lo) lo=v; if(v>hi) hi=v; }));
+  if(show==="n"){ lo=Math.max(lo,hi-8); }
+  const col=t=>{ t=Math.min(1,Math.max(0,t)); const a=[[13,8,135],[126,3,168],[204,71,120],[248,149,64],[240,249,33]]; const k=Math.min(3,Math.floor(t*4)), f=t*4-k; const c=a[k].map((v,i)=>Math.round(v+(a[k+1][i]-v)*f)); return `rgb(${c})`; };
+  for(let i=0;i<nx;i++) for(let j=0;j<nz;j++){ g.fillStyle=col((F[i][j]-lo)/(hi-lo||1)); g.fillRect(L+i*cw,T+j*ch,cw+0.6,ch+0.6); }
+  const X=x=>L+x/r.x[nx-1]*(W-L-R), Z=d=>T+d/r.depth[nz-1]*(H-T-B);
+  g.fillStyle="#9aa6b8"; g.fillRect(X(r.gate[0]),T-10,X(r.gate[1])-X(r.gate[0]),10); g.fillStyle=ink; g.font="12px system-ui,sans-serif"; g.textAlign="center"; g.fillText("gate",(X(r.gate[0])+X(r.gate[1]))/2,T-14);
+  g.setLineDash([4,4]); g.strokeStyle="#ffffffaa"; r.interfaces.forEach(d=>{ g.beginPath(); g.moveTo(L,Z(d)); g.lineTo(W-R,Z(d)); g.stroke(); }); g.setLineDash([]);
+  g.fillStyle=muted; g.textAlign="center"; niceTicks(0,r.x[nx-1]).forEach(t=>g.fillText(fmt(t),X(t),H-B+16)); g.textAlign="right"; niceTicks(0,r.depth[nz-1]).forEach(t=>g.fillText(fmt(t),L-6,Z(t)+4));
+  g.fillStyle=ink; g.textAlign="center"; g.fillText("Position across the slice (nm)",L+(W-L-R)/2,H-8);
+  g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText("Depth below the surface (nm)",0,0); g.restore();
+  for(let k=0;k<=40;k++){ g.fillStyle=col(k/40); g.fillRect(W-R+20,T+(1-k/40)*(H-T-B)-((H-T-B)/40),14,(H-T-B)/40+1); }
+  g.fillStyle=muted; g.textAlign="left"; g.fillText(show==="n"?sci(Math.pow(10,hi),1):`${fmt(hi)} eV`,W-R+38,T+8); g.fillText(show==="n"?sci(Math.pow(10,lo),1):`${fmt(lo)} eV`,W-R+38,H-B);
+  g.fillStyle=ink; g.fillText(show==="n"?"Electrons per cm³":"Energy an electron needs",L,18);
+}
 $("runCode").onclick=()=>busy($("runCode"),$("code"),async()=>{ const r=await call("code"); $("code").textContent=r.error?r.error:r.code; });
 $("copyCode").onclick=async()=>{ try{ await navigator.clipboard.writeText($("code").textContent); $("copyCode").textContent="Copied"; setTimeout(()=>$("copyCode").textContent="Copy",1200);}catch(e){} };
 function download(name, text, type){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }

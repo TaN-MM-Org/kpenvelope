@@ -363,12 +363,25 @@ def run_device(spec):
                 "c_nF_cm2": (C * 1e9).tolist(),
                 "sheet_cm2": [r.sheet(lo, tot) for r in res],
                 "warnings": warn}
+    if mode == "leak":
+        from ..leakage import gate_leakage
+        if top.kind != "schottky":
+            raise SpecError("Gate leakage needs a metal gate on top.")
+        if any(L.acceptors > 0 for L in layers):
+            raise SpecError("Gate leakage is worked out for n-type stacks; "
+                            "this one has p-type layers.")
+        V, J, res = gate_leakage(layers, top.barrier, V, temperature_K=T,
+                                 interfaces=ic, dz=0.2)
+        return {"mode": "leak", "v": list(map(float, V)), "j_A_cm2": J.tolist(),
+                "warnings": warn}
     if mode == "iv":
         tr = _transport(spec, len(layers))
+        if top.kind == "schottky" and dev.get("thermionic", True):
+            top = Contact("schottky", barrier=top.barrier, thermionic=True)
         V, J, res = iv_curve(layers, tr, V, top=top, **kw)
         return {"mode": "iv", "v": list(map(float, V)), "j_A_cm2": J.tolist(),
                 "warnings": warn}
-    raise SpecError("Choose capacitance (C-V) or current (I-V).")
+    raise SpecError("Choose capacitance (C-V), current (I-V) or gate leakage.")
 
 
 def run_uncertainty(spec):
@@ -521,10 +534,321 @@ def python_code(spec):
     return {"code": "\n".join(lines) + "\n"}
 
 
+
+def _parse_pairs(text):
+    """Two numbers per line (comma, tab, semicolon or space separated);
+    lines that do not start with two numbers (headers) are skipped."""
+    rows = []
+    for line in str(text or "").replace(";", " ").replace(",", " ").replace("\t", " ").splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            a, b = float(parts[0]), float(parts[1])
+        except ValueError:
+            continue
+        if math.isfinite(a) and math.isfinite(b):
+            rows.append((a, b))
+    return rows
+
+
+_C_UNITS = {"nF/cm2": 1e-9, "uF/cm2": 1e-6, "F/cm2": 1.0, "F/m2": 1e-4}
+
+
+def run_fit(spec):
+    """Fit the unknowns the user ticks to a measured C-V curve and/or Hall
+    density."""
+    from ..datafit import fit_measurements
+
+    fit = spec.get("fit") or {}
+    base = build_layers(spec)
+    n_layers = len(base)
+    unknowns = fit.get("unknowns") or {}
+    if not unknowns:
+        raise SpecError("Tick at least one unknown to fit.")
+    cv = None
+    pairs = _parse_pairs(fit.get("data"))
+    if pairs:
+        if len(pairs) < 2:
+            raise SpecError("Paste at least two C-V points (voltage and "
+                            "capacitance on each line).")
+        units = fit.get("units", "nF/cm2")
+        if units in ("pF", "nF", "F"):
+            area = _num(fit, "area_um2", lo=1e-6, what="the gate area (um2)") * 1e-8
+            scale = {"pF": 1e-12, "nF": 1e-9, "F": 1.0}[units] / area
+        elif units in _C_UNITS:
+            scale = _C_UNITS[units]
+        else:
+            raise SpecError("Unknown capacitance unit.")
+        V = np.array([a for a, _ in pairs])
+        C = np.array([b for _, b in pairs]) * scale
+        if np.any(np.diff(np.sort(V)) == 0):
+            raise SpecError("Two C-V points have the same voltage.")
+        sig = fit.get("sigma")
+        sig = None if sig in (None, "") else _num(
+            fit, "sigma", lo=1e-30, what="the capacitance error") * scale
+        cv = (V, C, sig)
+    sheet = None
+    hall = fit.get("hall") or {}
+    if hall.get("value") not in (None, ""):
+        hv = _num(hall, "value", lo=1.0, what="the Hall density (per cm2)")
+        hs = hall.get("sigma")
+        hs = None if hs in (None, "") else _num(hall, "sigma", lo=1e-6,
+                                                 what="the Hall density error")
+        sheet = (hv, hs, None)
+    if cv is None and sheet is None:
+        raise SpecError("Paste a C-V curve or enter a Hall density.")
+    if cv is not None and sheet is not None and (cv[2] is None or sheet[1] is None):
+        raise SpecError("To fit C-V and Hall data together, give the error of "
+                        "both (their units differ).")
+    lam, _ = _line_charge(spec) if _relaxed(base) else (None, 0.0)
+    start, fixed, lengths, bounds = {}, {}, [], {}
+    labels = {}
+    for k, v0 in unknowns.items():
+        val = _num({"v": v0}, "v", what=f"the starting value of {k}")
+        if k in ("barrier", "surface", "parasitic", "line"):
+            start[k] = val
+            if k in ("barrier", "surface"):
+                # an energy step cannot be negative or exceed the gap of
+                # the top layer (where the step sits)
+                eg = base[-1].material.eg
+                bounds[k] = (0.0, eg if math.isfinite(eg) else 10.0)
+        elif k[:1] in ("x", "t", "q") and k[1:].isdigit() and 0 <= int(k[1:]) < n_layers:
+            i = int(k[1:])
+            if k[0] == "x":
+                mat = spec["layers"][i].get("material")
+                if mat == "GaN":
+                    raise SpecError("GaN has no fraction to fit.")
+                bounds[k] = (0.0, MATERIALS[mat]["x_max"])
+            if k[0] == "t":
+                bounds[k] = (0.5, 1e6)
+                lengths.append(k)
+            if k[0] == "q" and i == 0:
+                raise SpecError("An extra charge sits at a boundary: pick a "
+                                "layer above the bottom one.")
+            start[k] = val
+        else:
+            raise SpecError(f"Cannot fit {k!r}.")
+    names = {"barrier": "the metal energy step (eV)",
+             "surface": "the free-surface energy step (eV)",
+             "parasitic": "the parasitic capacitance (nF/cm2)",
+             "line": "the defect-line charge (charges per nm)"}
+    for k in start:
+        if k[0] in "xtq" and k[1:].isdigit():
+            i = int(k[1:])
+            lab = f"layer {i + 1} ({spec['layers'][i].get('material')})"
+            labels[k] = {"x": f"the fraction of {lab}",
+                         "t": f"the thickness of {lab} (nm)",
+                         "q": f"an extra charge below {lab} (1e13 per cm2)"}[k[0]]
+        else:
+            labels[k] = names[k]
+    if cv is not None and "barrier" not in start:
+        fixed["barrier"] = _num((spec.get("device") or {}), "barrier",
+                                what="the metal energy step (in the Voltage sweep tab)")
+    if sheet is not None and "surface" not in start:
+        fixed["surface"] = _num(spec, "surface_barrier",
+                                what="the surface energy step (Electrons tab)")
+    if "line" in start and not _relaxed(base):
+        raise SpecError("No layer is relaxed, so there is no defect-line "
+                        "charge to fit.")
+
+    def build(v):
+        s2 = dict(spec)
+        s2["layers"] = [dict(L) for L in spec["layers"]]
+        extra = {}
+        for k, val in v.items():
+            if k[:1] in "xtq" and k[1:].isdigit():
+                i = int(k[1:])
+                if k[0] == "x":
+                    s2["layers"][i]["x"] = val
+                elif k[0] == "t":
+                    s2["layers"][i]["thickness"] = val
+                else:
+                    extra[i - 1] = val * 0.1        # 1e13 cm^-2 -> e/nm^2
+        layers = build_layers(s2)
+        line = v.get("line", lam) if _relaxed(layers) else None
+        return {"layers": layers, "line_charge": line, "extra_sheet": extra}
+
+    T = _num(spec, "temperature", 300.0, 1.0, 1500.0)
+    method = "quantum" if fit.get("quantum") else "quasi-equilibrium"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = fit_measurements(build, start, cv=cv, sheet=sheet, fixed=fixed,
+                               bounds=bounds, method=method, temperature_K=T,
+                               dz=0.5, lengths=lengths)
+    rows = [{"name": k, "label": labels[k], "value": res.values[k],
+             "error": res.errors[k], "start": start[k]} for k in res.names]
+    warn = []
+    for w in res.warnings:
+        for k, lab in labels.items():
+            w = w.replace(f"{k} and ", f"{lab} and ").replace(f"and {k} are", f"and {lab} are")
+            if w.startswith(k + " ended"):
+                w = lab[0].upper() + lab[1:] + w[len(k):]
+        warn.append(w)
+    out = {"rows": rows, "warnings": warn, "chi2": res.chi2, "dof": res.dof,
+           "scaled": res.scaled, "method": method}
+    if cv is not None:
+        out["v"] = res.cv_voltage.tolist()
+        out["c_meas_nF"] = (res.cv_measured * 1e9).tolist()
+        out["c_fit_nF"] = (res.cv_fitted * 1e9).tolist()
+    if sheet is not None:
+        out["hall_meas"] = res.sheet_measured
+        out["hall_fit"] = res.sheet_fitted
+    return out
+
+
+
+def run_design(spec):
+    """Search compositions and thicknesses of one layer for the targets."""
+    from ..design import design_error_bars, find_designs
+
+    des = spec.get("design") or {}
+    base_spec = dict(spec)
+    build_layers(base_spec)                      # checks the sample first
+    i = int(_num(des, "layer", what="the layer to design"))
+    if not (1 <= i < len(spec["layers"])):
+        raise SpecError("Pick a layer above the bottom one to design.")
+    mat = spec["layers"][i].get("material")
+    variables = {}
+    if des.get("vary_x"):
+        if not MATERIALS[mat]["x_name"]:
+            raise SpecError("GaN has no fraction to vary.")
+        lo = _num({"v": des["vary_x"][0]}, "v", 0.0, 0.0, MATERIALS[mat]["x_max"], "the lowest fraction")
+        hi = _num({"v": des["vary_x"][1]}, "v", 0.0, 0.0, MATERIALS[mat]["x_max"], "the highest fraction")
+        if not hi > lo:
+            raise SpecError("The highest fraction must be above the lowest.")
+        variables["x"] = (lo, hi)
+    if des.get("vary_t"):
+        lo = _num({"v": des["vary_t"][0]}, "v", 0.5, 0.5, 1e4, "the smallest thickness (nm)")
+        hi = _num({"v": des["vary_t"][1]}, "v", 0.5, 0.5, 1e4, "the largest thickness (nm)")
+        if not hi > lo:
+            raise SpecError("The largest thickness must be above the smallest.")
+        variables["t"] = (lo, hi)
+    if not variables:
+        raise SpecError("Tick what may change: the fraction, the thickness, or both.")
+    targets = {}
+    for k, what in (("sheet_bare", "the electron density"),
+                    ("sheet_gated", "the electron density under the gate"),
+                    ("threshold", "the switch-off voltage")):
+        t = (des.get("targets") or {}).get(k)
+        if t and t[0] not in (None, ""):
+            val = _num({"v": t[0]}, "v", what=what)
+            tol = _num({"v": t[1]}, "v", lo=1e-12, what=f"the tolerance of {what}")
+            targets[k] = (val, tol)
+    if not targets:
+        raise SpecError("Give at least one target.")
+    barrier = surface = None
+    if "sheet_gated" in targets or "threshold" in targets:
+        barrier = _num(spec.get("device") or {}, "barrier",
+                       what="the metal energy step (Voltage sweep tab)")
+    if "sheet_bare" in targets:
+        surface = _num(spec, "surface_barrier", what="the surface energy step (Electrons tab)")
+    T = _num(spec, "temperature", 300.0, 1.0, 1500.0)
+
+    def build(v):
+        s2 = dict(spec)
+        s2["layers"] = [dict(L) for L in spec["layers"]]
+        if "x" in v:
+            s2["layers"][i]["x"] = v["x"]
+        if "t" in v:
+            s2["layers"][i]["thickness"] = v["t"]
+        return build_layers(s2)
+
+    quick = bool(des.get("quick", True))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        designs, mp = find_designs(build, variables, targets, barrier=barrier,
+                                   surface=surface, n_grid=5 if quick else 7,
+                                   refine=2, top=5, temperature_K=T,
+                                   return_map=True)
+    if not designs:
+        raise SpecError("No design in this range gives electrons; widen the range.")
+
+    def row(d):
+        return {"values": {k: float(v) for k, v in d.values.items() if k in variables},
+                "sheet_bare": d.sheet_bare, "sheet_gated": d.sheet_gated,
+                "threshold": d.threshold, "miss": d.miss, "meets": d.meets_targets}
+
+    out = {"designs": [row(d) for d in designs], "layer": i, "material": mat,
+           "targets": {k: list(v) for k, v in targets.items()},
+           "map": {"axes": mp["axes"],
+                   "score": [None if d is None else d.score for d in mp["designs"]]}}
+    sig = des.get("sigmas") or {}
+    sigmas = {}
+    for k, what in (("x", "fraction"), ("t", "thickness"), ("barrier", "metal step"),
+                    ("surface", "surface step")):
+        if sig.get(k) not in (None, "", 0, "0"):
+            val = _num(sig, k, lo=0.0, what=f"the error of the {what}")
+            if val > 0 and (k in variables or (k == "barrier" and barrier is not None)
+                            or (k == "surface" and surface is not None)):
+                sigmas[k] = val
+    if sigmas:
+        best = dict(designs[0].values)
+        vals = {k: best[k] for k in variables}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            eb = design_error_bars(build, vals, sigmas, barrier=barrier,
+                                   surface=surface, quantities=tuple(targets),
+                                   temperature_K=T)
+        out["error_bars"] = {k: {"value": float(p.value), "sigma": float(p.sigma),
+                                 "budget": p.budget} for k, p in eb.items()}
+    return out
+
+
+
+def run_cross(spec):
+    """2D cross-section: gate, access regions and the electron layer."""
+    from ..twod import Gate, solve_cross_section
+
+    layers = build_layers(spec)
+    ic, warn = _charges(layers, spec)
+    cs = spec.get("cross") or {}
+    lg = _num(cs, "gate_length", lo=5.0, hi=20000.0, what="the gate length (nm)")
+    acc = _num(cs, "access", lo=20.0, hi=20000.0, what="the space beside the gate (nm)")
+    vg = _num(cs, "voltage", lo=-50.0, hi=10.0, what="the gate voltage (V)")
+    barrier = _num(spec.get("device") or {}, "barrier",
+                   what="the metal energy step (Voltage sweep tab)")
+    surface = _num(spec, "surface_barrier", what="the surface energy step (Electrons tab)")
+    if any(L.acceptors > 0 for L in layers):
+        raise SpecError("The cross-section is worked out for n-type stacks; "
+                        "this one has p-type layers.")
+    T = _num(spec, "temperature", 300.0, 1.0, 1500.0)
+    width = lg + 2 * acc
+    gate = Gate(acc, acc + lg, barrier, vg)
+    r = solve_cross_section(layers, gate, width, surface, temperature_K=T,
+                            interfaces=ic)
+    if not r.converged:
+        warn.append("The 2D calculation did not fully settle.")
+    tot = r.z[-1]
+    depth = min(tot, float(cs.get("depth") or 60.0))
+    m = r.z >= tot - depth - 1e-9
+    zz = tot - r.z[m]
+    xi = np.linspace(0, width, min(160, r.x.size * 2))
+    zi = np.linspace(0, depth, 90)
+    # resample onto a regular picture grid (linear in x, then in z)
+    def resample(field):
+        a = np.array([np.interp(xi, r.x, field[:, j]) for j in np.flatnonzero(m)]).T
+        zs = zz
+        order = np.argsort(zs)
+        return np.array([np.interp(zi, zs[order], a[k, order]) for k in range(a.shape[0])])
+    logn = resample(np.log10(np.maximum(r.n, 1.0)))
+    ec = resample(r.ec)
+    from ..driftdiffusion import Contact as _C, solve_quasi_equilibrium as _q
+    one_d = _q(layers, _C("schottky", barrier=barrier, voltage=vg), _C("zero-field"),
+               temperature_K=T, interfaces=ic, dz=0.25)
+    return {"x": xi.tolist(), "depth": zi.tolist(), "log10n": logn.tolist(),
+            "ec": ec.tolist(), "sheet_x": r.sheet_x.tolist(), "x_nodes": r.x.tolist(),
+            "gate": [gate.x0, gate.x1], "sheet_center": float(np.interp(acc + lg / 2, r.x, r.sheet_x)),
+            "sheet_1d": one_d.sheet(max(0.0, tot - 150.0), tot),
+            "interfaces": [float(tot - c.z) for c in ic if tot - c.z <= depth],
+            "warnings": warn}
+
+
 ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "electrons": run_electrons, "device": run_device,
            "uncertainty": run_uncertainty, "line_charge": run_line_charge,
-           "plan": run_plan, "code": python_code}
+           "plan": run_plan, "code": python_code, "fit": run_fit,
+           "design": run_design, "cross": run_cross}
 
 
 def _plain(e):
