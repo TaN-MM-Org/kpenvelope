@@ -73,7 +73,13 @@ dimensions: a transistor with source, gate and drain carries current,
 its mobility saturates at high field and falls as it warms, deep-level
 traps (iron, carbon or surface states) fill and empty over time, and the
 current heats the device through a heat equation that reaches down
-through the substrate to the heat sink.
+through the substrate to the heat sink. Since version 0.20.0 the same
+device solver includes the contact resistance, the small-signal
+response with f_T and f_max, heating that changes in time (pulses),
+avalanche breakdown from measured GaN impact ionization coefficients,
+tunneling through the gate barrier, the electron temperature of hot
+electrons, and shaped devices: passivation films, recessed gates,
+field plates and etched regions.
 And everything above can be used without writing code, in an app that
 opens in your web browser (`kpenvelope-app`) and says what each result
 means in plain words. It also answers:
@@ -96,6 +102,14 @@ means in plain words. It also answers:
   SiC, and how much current does it lose to the heat?
 - How far does the current drop after a high drain voltage when the
   buffer holds iron, and how long does it take to recover?
+- How fast can my transistor switch (f_T, f_max), and how much do the
+  contact and gate resistances cost?
+- At what drain voltage does it break down by avalanche, and how much
+  does a field plate lower the field next to the gate?
+- How much does the current drop during a 100 us pulse as the device
+  heats up?
+- How much current tunnels through the gate barrier, and how hot do
+  the electrons get near the drain?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -111,7 +125,9 @@ says why, instead of returning a number that looks fine but is not.
   ScAlN, C-V, a p-n diode, phonons, and the misfit-line charge; 24 to 27
   for fitting measured data, the design finder, gate leakage and the 2D
   cross-section; 28 to 30 for transistor curves with self-heating, drain
-  lag from traps, and a 3D transistor)
+  lag from traps, and a 3D transistor; 31 to 35 for contact resistance
+  and f_T/f_max, recessed gates, passivation and field plates,
+  avalanche breakdown, pulsed heating, gate tunneling and hot electrons)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -330,6 +346,13 @@ read the results on the right:
   point. A second button follows drain lag: iron traps in the base are
   filled at a high drain voltage, then the current is followed from a
   nanosecond to ten seconds after switching to the measuring voltages.
+  Since 0.20.0 the tab also takes a contact resistance, a passivation
+  film (silicon nitride by default) and a field plate joined to the
+  gate; it reports the gate leakage by tunneling and, with an energy
+  loss time, how hot the electrons get. Three more buttons give the
+  speed (f_T and f_max with the gain curves), the avalanche breakdown
+  voltage in the off state, and the current and temperature during a
+  pulse.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -1514,7 +1537,7 @@ Vd =  1.0 V: 0.740 A/mm without heating, 0.719 A/mm with (hottest 307 K, 0.72 W/
 Vd =  2.0 V: 0.969 A/mm without heating, 0.916 A/mm with (hottest 317 K, 1.83 W/mm)
 Vd =  5.0 V: 1.046 A/mm without heating, 0.933 A/mm with (hottest 353 K, 4.66 W/mm)
 Vd = 10.0 V: 1.068 A/mm without heating, 0.870 A/mm with (hottest 411 K, 8.70 W/mm)
-currents add up to 2.2e-11 A/mm; heat put in 8.696261 W/mm = power 8.696261 W/mm
+currents add up to -5.7e-11 A/mm; heat put in 8.696261 W/mm = power 8.696261 W/mm
 ```
 
 `Device` builds a 3.5 um long transistor: ohmic source and drain on
@@ -1570,7 +1593,7 @@ t = 1e-06 s: 0.9614 A/mm
 t = 1e-05 s: 0.9615 A/mm
 t = 1e-04 s: 0.9629 A/mm
 t = 1e-03 s: 0.9738 A/mm
-t = 1e-02 s: 0.9971 A/mm
+t = 1e-02 s: 0.9970 A/mm
 t = 1e-01 s: 0.9973 A/mm
 t = 1e+00 s: 0.9973 A/mm
 settled value 0.9973 A/mm
@@ -1632,6 +1655,295 @@ the whole width gives the 2D current to five digits (the tests check
 1e-9). A gate over only half of the width leaves the other half as an
 open channel, so at -3 V on the gate much more current flows. 3D solves
 take minutes rather than seconds on a laptop.
+
+### 31. Contact resistance and speed: f_T and f_max (new in 0.20.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import (Device, Electrode, Mobility, Surface, rf_figures,
+                               two_port, with_series)
+
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1704.0, "Alpert et al. 2020", saturation_velocity=1.0e7)
+el = [Electrode("source", "ohmic", 0, 300, implant_depth=40, implant_donors=1e20,
+                resistance=0.3),
+      Electrode("gate", "schottky", 800, 1000, barrier=1.0),
+      Electrode("drain", "ohmic", 2000, 2300, implant_depth=40, implant_donors=1e20,
+                resistance=0.3)]
+dev = Device(layers, 2300.0, el, mob, Surface("pinned", barrier=1.0),
+             dx_fine=10, dx_max=100, dz_fine=1.0, dz_max=50)
+st = dev.solve({"gate": -3.0, "drain": 10.0})
+inner = st.internal
+print(f"Id = {st.current['drain']:.4f} A/mm; at the contacts themselves the drain "
+      f"sees {inner['drain']:.3f} V and the source {inner['source']:.3f} V")
+f = np.logspace(8, 12.5, 37)
+ports, Y = dev.small_signal(st, f)
+Y2 = two_port(ports, with_series(ports, Y, {"source": 0.3, "drain": 0.3, "gate": 0.5}))
+r = rf_figures(f, Y2)
+gm = Y2[0, 1, 0].real
+cg = Y2[0, 0, 0].imag / (2 * np.pi * f[0])
+print(f"gm = {1e3 * gm:.1f} mS/mm, gate capacitance {1e12 * cg:.3f} pF/mm, "
+      f"gm / (2 pi C) = {gm / (2 * np.pi * cg) / 1e9:.2f} GHz")
+print(f"fT = {r['fT'] / 1e9:.2f} GHz ({r['fT_method']}), read at 100 MHz: "
+      f"{r['fT_extrapolated'] / 1e9:.2f} GHz")
+print(f"fmax = {r['fmax'] / 1e9:.2f} GHz ({r['fmax_method']}), read at 100 MHz: "
+      f"{r['fmax_extrapolated'] / 1e9:.2f} GHz")
+```
+
+```
+Id = 0.6207 A/mm; at the contacts themselves the drain sees 9.814 V and the source 0.186 V
+gm = 265.5 mS/mm, gate capacitance 0.890 pF/mm, gm / (2 pi C) = 47.48 GHz
+fT = 28.73 GHz (interpolated), read at 100 MHz: 47.48 GHz
+fmax = 66.09 GHz (interpolated), read at 100 MHz: 439.00 GHz
+```
+
+`resistance` puts a resistor between each terminal and its contact
+(here 0.3 ohm mm, a typical TLM value), and the solve finds the voltages
+at the contacts themselves (`state.internal`): 0.186 V is lost at each
+end. `small_signal` linearizes the device about that state and gives the
+admittance of every terminal at each frequency; `with_series` adds the
+contact resistors and a 0.5 ohm mm gate resistance exactly, `two_port`
+picks the common-source pair, and `rf_figures` gives the current gain
+h21 and Mason's unilateral gain U. Up to a few GHz the current gain
+falls as 1/f, and f |h21| there equals gm / (2 pi C), the textbook
+quasi-static figure (a test checks this to 1e-3). Above about 10 GHz
+the gains fall faster, because the electrons need about 10 ps to cross
+the 1 um between gate and drain at their top speed, so the real
+crossings (28.7 and 66.1 GHz) come below the 20 dB-per-decade
+extrapolation from 100 MHz. Both readings are returned; the second is
+the one most measurements quote, so compare like with like.
+
+### 32. Shapes: a recessed gate, a passivation film and a field plate
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan, threshold_voltage
+from kpenvelope.device import Device, Dielectric, Electrode, Mobility, Region, Surface
+
+layers = [StackLayer(algan(0.0), 200.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1800.0, "illustrative", saturation_velocity=1.0e7)
+
+
+def recessed(depth):
+    top = 220.0
+    el = [Electrode("source", "ohmic", 0, 100, implant_depth=40, implant_donors=1e20),
+          Electrode("gate", "schottky", 200, 700, barrier=1.0, z0=top - depth, z1=top),
+          Electrode("drain", "ohmic", 900, 1000, implant_depth=40, implant_donors=1e20)]
+    return Device(layers, 1000.0, el, mob, Surface("pinned", barrier=1.0),
+                  regions=[Region(200, 700, top - depth, top)],
+                  dx_fine=10, dx_max=50, dz_fine=1.0, dz_max=40, fine_depth=40)
+
+
+def off_voltage(dev):
+    """gate voltage where the current at 0.1 V drain is 1 % of that at 0 V"""
+    s = dev.solve({"drain": 0.1, "gate": 0.0})
+    i0 = prev = s.current["drain"]
+    vp = 0.0
+    for v in np.arange(-0.25, -10.0, -0.25):
+        s = dev.solve({"drain": 0.1, "gate": v}, guess=s)
+        i = s.current["drain"]
+        if i < 0.01 * i0:
+            return vp + np.log(0.01 * i0 / prev) / np.log(i / prev) * (v - vp)
+        prev, vp = i, v
+
+
+for depth in (5.0, 10.0):
+    thin = [layers[0], StackLayer(algan(0.25), 20.0 - depth, name="barrier")]
+    print(f"{depth:.0f} nm recess: off at {off_voltage(recessed(depth)):.3f} V; "
+          f"1D threshold of a {20 - depth:.0f} nm barrier {threshold_voltage(thin, 1.0):.3f} V")
+
+# a passivated transistor with and without a gate-connected field plate
+# (one metal in two pieces: the gate box and a strip on the nitride)
+stack = [StackLayer(algan(0.05), 300.0, name="back barrier"),
+         StackLayer(algan(0.0), 60.0, name="channel"),
+         StackLayer(algan(0.25), 20.0, name="barrier")]
+top = 380.0
+sin = Dielectric("SiN", 100.0, 7.0, "Robertson, Eur. Phys. J. Appl. Phys. 28, 265 (2004)")
+for plate in (False, True):
+    box = dict(z0=top, z1=top + 100)
+    el = [Electrode("source", "ohmic", 0, 300, implant_depth=40, implant_donors=1e20, **box),
+          Electrode("gate", "schottky", 800, 1000, barrier=1.0, **box),
+          Electrode("drain", "ohmic", 2200, 2500, implant_depth=40, implant_donors=1e20, **box)]
+    if plate:
+        el.append(Electrode("gate", "schottky", 800, 1500, barrier=1.0,
+                            z0=top + 100, z1=top + 100))
+    d = Device(stack, 2500.0, el, mob, Surface("states", fixed_charge=None), cap=[sin],
+               dx_fine=10, dx_max=100, dz_fine=1.0, dz_max=50)
+    s = d.solve({"gate": -6.0, "drain": 0.0})
+    _, _, S = d.sweep("drain", [5.0, 10.0, 20.0], bias={"gate": -6.0}, guess=s)
+    Ex, _ = d.field(S[-1])
+    x, z = d.axes
+    row = np.abs(Ex[:, np.argmin(abs(z - 358.0))]) / 1e6
+    at = lambda xx: row[np.argmin(abs(x - xx))]
+    print(f"{'with' if plate else 'no  '} plate, 20 V: channel field {at(1030):.3f} MV/cm "
+          f"by the gate, {at(1250):.3f} under the plate, {at(1510):.3f} at its end")
+```
+
+```
+5 nm recess: off at -3.697 V; 1D threshold of a 15 nm barrier -3.697 V
+10 nm recess: off at -2.293 V; 1D threshold of a 10 nm barrier -2.302 V
+no   plate, 20 V: channel field 0.258 MV/cm by the gate, 0.185 under the plate, 0.170 at its end
+with plate, 20 V: channel field 0.071 MV/cm by the gate, 0.064 under the plate, 0.234 at its end
+```
+
+A `Region` cuts a box out of the semiconductor (here the barrier under
+the gate) and an electrode with `z0`, `z1` is a metal box, so the gate
+can sit in a recess. With a long gate the current switches off where
+the 1D solver puts the threshold of the thinned barrier (within 0.01 V).
+`cap` lays dielectric films on top (`Dielectric`, with the source of its
+permittivity), through which the contacts and gate reach down as boxes.
+Several `Electrode` entries with one name are pieces of one metal: here
+the gate box and a strip on the nitride make an L-shaped gate. Pinched
+off at 20 V, the plate lowers the channel field next to the gate from
+0.26 to 0.07 MV/cm and moves the drop to its own end, the reason field
+plates raise the breakdown voltage.
+
+### 33. Avalanche breakdown of a GaN p-i-n diode
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, gan
+from kpenvelope.device import IMPACT_GAN, Device, Electrode, Mobility, Surface
+
+# a GaN p-i-n diode: 300 nm undoped between heavily doped layers
+g = gan(polarization="hse-dreyer2016")
+layers = [StackLayer(g, 50.0, acceptors=1e-2, name="p"), StackLayer(g, 300.0, name="i"),
+          StackLayer(g, 50.0, donors=1e-2, name="n")]
+grid = dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0.0, 400.0, 401))
+el = [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")]
+dev = Device(layers, 20.0, el, Mobility(300.0, "illustrative"), Surface("pinned", barrier=1.0),
+             hole_mass=1.0, hole_mobility=Mobility(20.0, "illustrative"),
+             statistics="boltzmann", grid=grid)
+vbr, V, I, S = dev.breakdown_voltage("top", np.arange(80.0, 121.0, 5.0),
+                                     ionization=IMPACT_GAN)
+for v, i in zip(V, I):
+    print(f"{v:5.1f} V reverse: ionization integral {i:.3f}")
+r = dev.ionization_integral(S[-1], IMPACT_GAN)
+print(f"breakdown at {vbr:.1f} V; peak field there {r['peak_field'] / 1e6:.2f} MV/cm")
+```
+
+```
+ 80.0 V reverse: ionization integral 0.141
+ 85.0 V reverse: ionization integral 0.204
+ 90.0 V reverse: ionization integral 0.288
+ 95.0 V reverse: ionization integral 0.421
+100.0 V reverse: ionization integral 0.664
+105.0 V reverse: ionization integral 0.934
+110.0 V reverse: ionization integral 1.494
+breakdown at 105.6 V; peak field there 3.54 MV/cm
+```
+
+`IMPACT_GAN` holds the measured GaN coefficients (D. Ji et al., Appl.
+Phys. Lett. 115, 073503 (2019)). `ionization_integral` follows the
+field line through the strongest field and integrates McIntyre's
+ionization integral along it; `breakdown_voltage` steps a voltage until
+it reaches 1. The 300 nm undoped layer breaks down at 105.6 V, at a peak
+field of 3.5 MV/cm. The tests also run the same diode with impact
+ionization inside the drift-diffusion solve (`Device(...,
+ionization=IMPACT_GAN)`), with light making carriers at one edge of
+the undoped layer, and check that the current gain matches McIntyre's
+1 / (1 - I) to 5 percent below breakdown.
+
+### 34. Heating during a pulse
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+from kpenvelope.thermal import GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalModel
+
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1704.0, "Alpert et al. 2020", saturation_velocity=1.0e7,
+               temperature_exponent=2.35)
+el = [Electrode("source", "ohmic", 0, 300, implant_depth=40, implant_donors=1e20),
+      Electrode("gate", "schottky", 800, 1000, barrier=1.0),
+      Electrode("drain", "ohmic", 2000, 2300, implant_depth=40, implant_donors=1e20)]
+dev = Device(layers, 2300.0, el, mob, Surface("pinned", barrier=1.0),
+             dx_fine=10, dx_max=100, dz_fine=1.0, dz_max=50)
+heat = ThermalModel(GAN_BULK, substrate=(ThermalLayer("SiC", 100e3, SIC_4H_ROOM),),
+                    lateral_extension=20e3)
+times = np.logspace(-9, -3, 7)
+t, I, Tmax, _ = dev.pulse({"gate": 0.0, "drain": 10.0}, times, heat)
+for ti, i, T in zip(t, I["drain"], Tmax):
+    print(f"t = {ti:.0e} s: {i:.4f} A/mm, hottest {T:.1f} K")
+cold = dev.solve({"gate": 0.0, "drain": 10.0})
+dc = dev.solve({"gate": 0.0, "drain": 10.0}, guess=cold, thermal=heat)
+print(f"steady self-heated state: {dc.current['drain']:.4f} A/mm, hottest "
+      f"{dc.temperature.max():.1f} K")
+```
+
+```
+t = 1e-09 s: 1.2115 A/mm, hottest 325.8 K
+t = 1e-08 s: 1.1910 A/mm, hottest 342.6 K
+t = 1e-07 s: 1.1612 A/mm, hottest 356.1 K
+t = 1e-06 s: 1.1315 A/mm, hottest 368.1 K
+t = 1e-05 s: 1.0832 A/mm, hottest 387.7 K
+t = 1e-04 s: 1.0173 A/mm, hottest 415.7 K
+t = 1e-03 s: 1.0027 A/mm, hottest 422.1 K
+steady self-heated state: 1.0024 A/mm, hottest 422.2 K
+```
+
+`pulse` switches the voltages on at t = 0 with the device at the heat
+sink temperature and steps the heat equation in time, with heat
+capacities from cited sources (GaN from Barin et al. via the Ioffe
+database; for SiC the 6H value, as noted in `SIC_4H_ROOM`). The current
+falls from 1.21 A/mm at 1 ns to 1.00 A/mm at 1 ms, where it has reached
+the steady self-heated state (1.0024 A/mm and 422 K). This is why pulsed I-V curves with sub-microsecond pulses come
+out higher than DC ones.
+
+### 35. Tunneling through the gate barrier, and hot electrons
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan, gate_leakage
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 10.0, name="barrier")]
+el = [Electrode("source", "ohmic", 0, 100, implant_depth=30, implant_donors=1e20),
+      Electrode("gate", "schottky", 400, 2400, barrier=1.0),
+      Electrode("drain", "ohmic", 2700, 2800, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 2800.0, el, Mobility(1800.0, "illustrative", saturation_velocity=1e7),
+             Surface("pinned", barrier=1.0), dx_fine=10, dx_max=100, dz_fine=0.5,
+             dz_max=40, fine_depth=40)
+st = dev.solve({"gate": -3.0})
+I, Jc = dev.gate_tunneling(st)
+_, J1, _ = gate_leakage(layers, 1.0, [-3.0], dz=0.5)
+print(f"gate current {I:.3e} A/mm; middle of the gate {Jc[len(Jc) // 2]:.4e} A/cm^2, "
+      f"1D solver {J1[0]:.4e} A/cm^2")
+on = dev.solve({"gate": 0.0, "drain": 10.0})
+# energy relaxation time: 0.47 ps, measured at 250 K in AlGaN/AlN/GaN
+# (E. Tiras et al., Superlattices Microstruct. 51, 733 (2012))
+Te = dev.electron_temperature(on, 0.47e-12)
+x, z = dev.axes
+k = np.argmin(abs(z - 299.0))            # 1 nm below the barrier, in the electron layer
+for xx in (300, 1400, 2380, 2500):
+    i = np.argmin(abs(x - xx))
+    print(f"x = {x[i]:6.0f} nm: electrons at {Te[i, k]:6.0f} K")
+```
+
+```
+gate current -3.942e-03 A/mm; middle of the gate -1.3586e+02 A/cm^2, 1D solver -1.3566e+02 A/cm^2
+x =    310 nm: electrons at    343 K
+x =   1420 nm: electrons at    377 K
+x =   2377 nm: electrons at    634 K
+x =   2490 nm: electrons at   1009 K
+```
+
+`gate_tunneling` takes the band diagram of the 2D solution column by
+column under the gate and integrates the Tsu-Esaki current with WKB
+transmission. In the middle of a 2 um gate it gives the 1D solver's
+value to 0.15 percent; near the edges the band bends and the current
+changes. `electron_temperature` solves the energy balance of the
+electrons with the fields and currents of a solution, with an energy
+relaxation time you supply (0.47 ps here, measured at 250 K by Tiras et
+al. 2012). The electrons are a little warm under the gate and much
+hotter in the high field between the gate and the drain. The temperature is an output only:
+it does not feed back into the mobility (see [Limits](#limits)).
 
 ## Tutorials
 
@@ -2019,6 +2331,31 @@ example) gives its inputs, units and conventions.
 - `ThermalMaterial`, `ThermalLayer`, `ThermalModel`,
   `boundary_resistance`, `solve_heat`, and the shipped `GAN_BULK` and
   `SIC_4H_ROOM`.
+
+**Speed, breakdown, pulses, tunneling, hot electrons and shapes (new in 0.20.0)**
+
+- `Electrode(..., resistance=)` -- a series resistor at a terminal
+  (contact or gate metal); the solve returns the contact voltages in
+  `DeviceState.internal`.
+- `Device.small_signal(state, frequencies)` -- the admittance matrix of
+  all terminals; `with_series`, `two_port` and `rf_figures` give the
+  common-source two-port, h21, Mason's U, f_T and f_max (crossing and
+  20 dB-per-decade readings).
+- `Device.pulse(bias, times, thermal)` and `solve_heat_transient` --
+  heat that changes in time, with heat capacities in `ThermalMaterial`
+  (`density`, `cp_a`, `cp_b`).
+- `Ionization` and `IMPACT_GAN` -- impact ionization, inside the
+  drift-diffusion solve (`Device(..., ionization=)`) or afterwards along
+  a field line (`ionization_integral`, `breakdown_voltage`); `where`
+  limits it to chosen layers.
+- `Device.gate_tunneling(state)` -- Tsu-Esaki current with WKB
+  transmission, column by column under a gate.
+- `Device.electron_temperature(state, tau_energy)` -- the electrons'
+  energy balance.
+- `Dielectric` films on top (`cap=`), `Region` boxes cut out of the
+  semiconductor (`regions=`), electrodes as metal boxes (`z0`, `z1`),
+  and electrodes in several pieces (one name, one metal); `Device.field`
+  gives the electric field.
 
 **Phonons (new in 0.18.0)**
 
@@ -2620,6 +2957,42 @@ the tests use:
   scale); the app's transistor and drain-lag actions run, their currents
   add up to zero, and the drain lag settles at the steady state.
 
+**Speed, breakdown, pulses, tunneling, hot electrons and shapes (new in 0.20.0)**
+
+- Small signal: at zero frequency the admittances of a biased
+  transistor equal the DC conductances from finite differences of the
+  solve (1e-5), and at 1 kHz the gate capacitances equal the charge
+  derivatives (1e-6); every column and row sums to zero (currents
+  conserved, a common shift does nothing; 1e-8). A bar with series
+  resistors carries exactly V / (R + R_bar) (1e-9), and `with_series`
+  gives the conductance 1 / (R + R_bar) of the same bar (1e-7). In the quasi-static limit f |h21| = gm / (2 pi C) (1e-6).
+- Heat in time: a surface heat flux into a thick slab against the
+  semi-infinite solution 2 q sqrt(t / pi) / e (5e-3), the stored energy
+  against the heat put in (1e-4); the heat capacities equal their
+  sources; a pulse ends at the steady self-heated state (current 1e-4,
+  temperature 0.05 K) and only heats up.
+- Impact ionization: the current gain of a GaN p-i-n diode lit at one
+  edge matches McIntyre's 1 / (1 - I) with I from the solved field (5
+  percent, below breakdown); the ionization integral along the traced
+  field line equals a direct 1D integration (1e-3); breakdown falls
+  between the two steps where the integral crosses 1.
+- Tunneling: under a 2 um gate the current density in the middle equals
+  the 1D `gate_leakage` (5e-3), also with the gate in a recess (then
+  against the thinned barrier).
+- Hot electrons: in a uniform field the electron temperature is
+  T + (2/3) tau mu E^2 / k (1e-4), and it is the lattice temperature at
+  the contacts.
+- Shapes: a metal sheet on a nitride film over n+ GaN has the parallel-
+  plate capacitance eps0 eps_r / d (1e-3); recessed gates switch off at
+  the 1D threshold of the thinned barrier (0.03 V), also when the recess
+  removes a GaN cap (the barrier is then the AlGaN's); a gate in two
+  pieces equals two electrodes at one voltage (1e-9); a gate-connected
+  field plate lowers the channel field at the gate edge by more than half
+  and raises it at its own end; contacts through a film conserve current
+  (1e-9) and there are no carriers inside the film. The passivated
+  surface of the app holds the bare surface's electron density (2
+  percent).
+
 **InGaN, InAlN, ScAlN, devices, phonons and the app (new in 0.18.0)**
 
 - The Vurgaftman-Meyer and Ambacher numbers equal the printed tables
@@ -3026,23 +3399,40 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   surface pinned at one barrier, and SciPy for speed (the NumPy fallback
   is slower). For current, use `Device`.
 - Devices in 2D and 3D (`Device`): drift-diffusion with classical
-  carriers (no quantum confinement of the channel, no hot-electron
-  energy balance or ballistic transport), a heterojunction as a band
-  step between two nodes (no thermionic emission or tunneling at
-  internal interfaces), no impact ionization or breakdown, no
-  small-signal AC, and tensor-product grids only (no unstructured
-  meshes). Contact resistance is not included: an ohmic contact is an
-  ideal contact on a heavily doped region. The heat equation is steady
-  state; the lattice temperature changes the mobility only (the carrier
-  statistics stay at the ambient temperature). The mobility's field is
-  rounded near zero (0.1 percent of its saturation term at most) to
-  keep it smooth. The quasi-Fermi driving force (an option) often fails
-  to converge at high drain voltage; the default field driving force
-  does not have that problem. Each Newton step is a sparse LU solve, so a 2D sweep
-  takes seconds to a minute and a 3D one minutes. With an undoped
-  buffer and no traps the current under a pinched-off gate flows
-  through the buffer, as it would in such a device. Check the grid by
-  refining it near the gate edges.
+  carriers (no quantum confinement of the channel, no ballistic
+  transport or velocity overshoot), and a heterojunction as a band step
+  between two nodes (no thermionic emission over it as a separate
+  process). Hot electrons: `electron_temperature` solves the electrons'
+  energy balance afterwards; the temperature does not feed back into
+  the mobility or the current (this is not a full hydrodynamic model),
+  and where electrons are very sparse it can give a few of them very
+  high temperatures that carry nothing. Tunneling is computed through
+  the gate barrier only (`gate_tunneling`, vertical paths, WKB, one
+  band; an approximation at the gate edges), not between layers inside
+  the device or band to band, and not through dielectrics. Impact
+  ionization uses one set of coefficients; the shipped one is measured
+  on GaN and the app applies it in GaN only. Breakdown is avalanche
+  breakdown along one field line through the highest field; leakage,
+  trap-assisted or thermal runaway breakdown are not predicted (a
+  device that is not off at the gate voltage chosen leaks first, and
+  the app says so). Small-signal response is linear (no large-signal
+  harmonics or load-pull); f_max needs a gate resistance you supply.
+  Shapes are boxes on a tensor-product grid (no slanted walls or
+  unstructured meshes); etched regions keep their layer's material in
+  the heat equation; a passivation film is a dielectric with no charge
+  of its own except what you set on the surface. No process simulation
+  (growth, etching, implantation, annealing). The lattice temperature
+  changes the mobility only (the carrier statistics stay at the ambient
+  temperature). The mobility's field is rounded near zero (0.1 percent
+  of its saturation term at most) to keep it smooth. The quasi-Fermi
+  driving force (an option) often fails to converge at high drain
+  voltage; the default field driving force does not have that problem.
+  Each Newton step is a sparse LU solve, so a 2D sweep takes seconds to
+  a minute and a 3D one minutes. Currents below about 1e-10 A/mm are at
+  the solver's numerical floor. With an undoped buffer and no traps the
+  current under a pinched-off gate flows through the buffer, as it
+  would in such a device. Check the grid by refining it near the gate
+  edges.
 - Phonons: only the interface (decaying) modes of the dielectric
   continuum model, not the confined or half-space modes, and no
   phonon-limited mobility. The single-oscillator dielectric function

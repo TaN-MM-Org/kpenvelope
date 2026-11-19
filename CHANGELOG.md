@@ -4,6 +4,75 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.20.0 (2026-11-19)
+
+The device solver of 0.19.0 gains what it was missing next to the
+commercial device simulators: contact resistance, small-signal speed
+(f_T and f_max), heat that changes in time, avalanche breakdown,
+tunneling through the gate barrier, hot electrons, and shaped devices
+(passivation films, recessed gates, field plates, etched regions). The
+app's Transistor tab gains all of them. README examples 1 to 30 print
+what they printed before, except two numbers at the solver's rounding
+level: the sum of the terminal currents in example 28 (now -5.7e-11
+A/mm, was 2.2e-11) and one current during the recovery in example 29
+(0.9970 A/mm at 10 ms, was 0.9971). Examples 31 to 35 are new.
+
+### Added
+
+- `Electrode(..., resistance=)`: a series resistor (ohm mm in 2D, ohm
+  in 3D) between the terminal and its contact; the solve iterates the
+  contact voltages (`DeviceState.internal`) and reports the power at
+  the terminals and inside the device (`power`, `device_power`).
+- `Device.small_signal(state, frequencies, traps=True)`: the
+  admittance matrix of every terminal, from (J + s M) dx = rhs with the
+  same Jacobian as the DC solve; traps can follow the signal.
+  `with_series` (exact Y_ext = (1 + Y R)^-1 Y), `two_port` (common
+  source) and `rf_figures` (h21, Mason's U, f_T and f_max both where
+  the gain crosses 1 and from the 20 dB-per-decade reading).
+- Heat in time: `ThermalMaterial(density=, cp_a=, cp_b=)`,
+  `solve_heat_transient`, and `Device.pulse(bias, times, thermal)`, a
+  pulse from cold with the carriers following at once. `GAN_BULK` and
+  `SIC_4H_ROOM` carry heat capacities from their sources (GaN: Barin et
+  al. via the Ioffe database; SiC: the 6H value, as noted).
+- Impact ionization: `Ionization` (Chynoweth form, with `where` to
+  limit it to layers) and `IMPACT_GAN` (D. Ji, B. Ercan, S. Chowdhury,
+  Appl. Phys. Lett. 115, 073503 (2019)), inside the drift-diffusion
+  solve (`Device(..., ionization=)`) with exact derivatives, and
+  afterwards as McIntyre's ionization integral along the traced field
+  line (`ionization_integral`, `breakdown_voltage`). `Device.field`.
+- `Device.gate_tunneling(state)`: Tsu-Esaki current with WKB
+  transmission, column by column under a gate (also a recessed one).
+- `Device.electron_temperature(state, tau_energy)`: the electrons'
+  energy balance with exponentially fitted energy fluxes.
+- Shapes: `Dielectric` films on top (`cap=`), `Region` boxes cut out of
+  the semiconductor (`regions=`), electrodes as metal boxes (`z0`,
+  `z1`: recessed gates, field plates, ohmic and Schottky contacts
+  through a film), and electrodes in several pieces (several entries
+  with one name are one metal, for example an L-shaped gate). A box
+  gate's barrier refers to the layer under it.
+- The app: contact resistance, a passivation film (silicon nitride,
+  permittivity 7 from Robertson 2004, by default; the surface under it
+  keeps the bare surface's charge), a gate-connected field plate, gate
+  leakage by tunneling, the electron temperature with an energy loss
+  time you give, and three new buttons: speed (f_T, f_max), breakdown
+  and pulsed heating.
+
+### Changed
+
+- Inside a dielectric the reported carrier densities are 0 and the band
+  edge and quasi-Fermi levels are NaN.
+- The electrothermal solve and `pulse` step the lattice temperature in
+  smaller jumps when one jump is too far for Newton's method.
+
+### Not included (see the README's Limits)
+
+- Thermionic emission over internal band steps as a separate process,
+  tunneling between layers inside the device or through dielectrics,
+  feedback of the electron temperature into the mobility (a full
+  hydrodynamic model) and velocity overshoot, breakdown other than
+  avalanche, unstructured meshes and slanted walls, and process
+  simulation.
+
 ## 0.19.0 (2026-11-19)
 
 Whole devices in two and three dimensions. A transistor with source,
