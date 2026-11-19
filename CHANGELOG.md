@@ -45,12 +45,31 @@ printed before.
 - `kpenvelope.linecharge`: `PUBLISHED_CONSTRAINTS`, `combine_line_charge`
   (Gaussian estimates and upper limits, closed form), `plan_holography`,
   `plan_sum_rule`, `line_charge_error_from_density`.
+- `kpenvelope.datafit`: `fit_measurements` fits barrier heights,
+  compositions, thicknesses, extra charges, the misfit-line charge and a
+  parasitic capacitance to a measured C-V curve and/or Hall density,
+  with error bars and warnings for correlated unknowns
+  (`MeasurementFit`, `correlation_warnings`). `fit_least_squares` gains
+  `difference="forward"` and `abs_step`.
+- `kpenvelope.design`: `find_designs` searches compositions and
+  thicknesses for a target electron density and switch-off voltage;
+  `design_error_bars`, `threshold_voltage`, `sheet_density`.
+- `kpenvelope.leakage`: thermionic emission and tunneling over and
+  through barriers (`tsu_esaki_current`, `wkb_transmission`,
+  `richardson_constant`, `richardson_velocity`,
+  `thermionic_emission_current`) and `gate_leakage` from the band
+  diagram; `Contact(..., thermionic=True)` in the drift-diffusion
+  solver.
+- `kpenvelope.twod`: `solve_cross_section`, `cv_cross_section`,
+  `Gate`, `device_grid`: a 2D transistor cross-section (gate, access
+  regions, fringing), exactly the 1D solver in its 1D limit.
 - `kpenvelope.gui`: the app (`kpenvelope-app`, `python -m
   kpenvelope.gui`), a local page with plain-language results, error
   bars, C-V and I-V sweeps, the line-charge tools, and a Python script
   of every calculation. Each result opens with a one-sentence summary,
   the "?" explanations open on tap, and results are marked out of date
-  when the sample changes.
+  when the sample changes. Tabs for fitting measured data, the design
+  finder, gate leakage and the 2D cross-section.
 
 ### Changed
 
@@ -72,7 +91,7 @@ printed before.
 
 ### Tests
 
-43 new tests (225 in all): the copied tables against the PDFs, the
+58 new tests (240 in all): the copied tables against the PDFs, the
 ScAlN fits against the percentages quoted in that paper, the H and ZB
 difference, drift-diffusion against Ohm's law, the built-in potential,
 the short-diode current, a generation-recombination profile and the

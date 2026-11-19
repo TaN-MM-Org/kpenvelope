@@ -62,6 +62,12 @@ contacts, and current-voltage and capacitance-voltage curves. The
 optical phonons of a layer follow from the dielectric continuum model.
 What is known about the misfit-line charge can be combined into one
 estimate, and a planned measurement can be judged before it is grown.
+Measured C-V curves and Hall densities can be fitted directly, with
+error bars and a warning where the data cannot separate two unknowns; a
+design finder searches compositions and thicknesses for a target
+electron density and switch-off voltage; gate leakage over and through
+the barrier follows from the band diagram; and a two-dimensional
+cross-section shows the gate edges and the electrons beside the gate.
 And everything above can be used without writing code, in an app that
 opens in your web browser (`kpenvelope-app`) and says what each result
 means in plain words. It also answers:
@@ -71,6 +77,13 @@ means in plain words. It also answers:
 - Where is the threshold of my transistor layer in a C-V sweep, and how
   much current does a p-n junction pass?
 - At what energies do the interface phonons of a GaN layer sit?
+- Which composition, barrier height and parasitic capacitance does my
+  measured C-V curve imply, and how sure is each?
+- Which barrier composition and thickness give 1.2e13 electrons per
+  cm^2 and a switch-off at -4 V, and how much do growth tolerances move
+  them?
+- How much does the gate leak, and how much more does a short gate hold
+  at its edges?
 - Combining every published constraint, how well is the misfit-line
   charge known, and which experiment would pin it down?
 
@@ -85,7 +98,9 @@ says why, instead of returning a number that looks fine but is not.
 - [The app](#the-app) (no code needed)
 - [Examples](#examples) (each with the output it prints; 15 to 18 for
   nitride stacks, electrons, error bars and fits; 19 to 23 for InAlN and
-  ScAlN, C-V, a p-n diode, phonons, and the misfit-line charge)
+  ScAlN, C-V, a p-n diode, phonons, and the misfit-line charge; 24 to 27
+  for fitting measured data, the design finder, gate leakage and the 2D
+  cross-section)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -278,8 +293,21 @@ read the results on the right:
   samples).
 - **Voltage sweep**: a C-V sweep (no transport numbers needed, with the
   electrons treated simply or by quantum mechanics) that says where the
-  electron layer empties, or an I-V sweep (with your transport numbers
-  and their source).
+  electron layer empties, the gate leakage (thermionic emission and
+  tunneling through the barrier), or an I-V sweep (with your transport
+  numbers and their source, and thermionic emission at a metal).
+- **Fit my data**: paste a measured C-V curve (in nF/cm^2, or pF with
+  the gate area) and/or a Hall density, tick the numbers you are unsure
+  of, and the app finds them with error bars, plots measured against
+  fitted, warns where two of them move together, and can write them
+  back into your sample.
+- **Design finder**: say what electron density and switch-off voltage
+  you want; the app maps the composition and thickness of a layer,
+  lists the closest designs with their error bars from your growth
+  tolerances, and draws a map of how close each one comes.
+- **2D cross-section**: a slice through a transistor with a gate of a
+  given length, showing where the electrons are (or the band) under and
+  beside the gate, and the electron density along the slice.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -1269,6 +1297,166 @@ without new data. `plan_holography` and `plan_sum_rule` say how well a
 planned measurement would do; `line_charge_error_from_density` does the
 same for a planned Hall density.
 
+### 24. Fit a measured C-V curve and Hall density
+
+```python
+import numpy as np
+from kpenvelope import (Contact, StackLayer, algan, cv_curve, fit_measurements,
+                        sheet_density)
+
+def build(v):          # the sample, for given values of the unknowns
+    return {"layers": [StackLayer(algan(0.0), 300.0),
+                       StackLayer(algan(v["x"]), 25.0)]}
+
+# synthetic "measurements" of a sample with x = 0.27 and a 1.1 eV gate metal:
+# C-V with 2 nF/cm^2 of noise, and a Hall density (free surface at 0.8 eV)
+true = build({"x": 0.27})["layers"]
+V = np.linspace(-7.5, -0.5, 15)
+_, C, _, _ = cv_curve(true, V, top=Contact("schottky", barrier=1.1),
+                      bottom=Contact("zero-field"), dz=0.5)
+C = C + np.random.default_rng(0).normal(0.0, 2e-9, V.size)
+ns = sheet_density(true, 0.8)[0]
+
+f = fit_measurements(build, {"x": 0.25, "barrier": 1.0}, cv=(V, C, 2e-9))
+print(f"C-V alone: x = {f.values['x']:.3f} +- {f.errors['x']:.3f}, "
+      f"correlation with the barrier {f.correlation[0, 1]:+.3f}")
+f = fit_measurements(build, {"x": 0.25, "barrier": 1.0}, fixed={"surface": 0.8},
+                     cv=(V, C, 2e-9), sheet=(ns, 0.02 * ns))
+for k in f.names:
+    print(f"with Hall: {k:8s} {f.values[k]:.4f} +- {f.errors[k]:.4f}")
+print(f"chi2 {f.chi2:.1f} for {f.dof} degrees of freedom")
+```
+
+```
+C-V alone: x = 0.283 +- 0.009, correlation with the barrier +1.000
+with Hall: x        0.2736 +- 0.0036
+with Hall: barrier  1.2141 +- 0.1123
+chi2 11.8 for 14 degrees of freedom
+```
+
+`fit_measurements` adjusts the unknowns you name until the computed C-V
+curve (and Hall density) match the measured ones, with first-order error
+bars. C-V alone cannot separate the composition from the metal barrier
+here: both move the switch-off voltage, so their correlation is +1.000
+and the fit warns. The Hall density, which depends on the composition
+but not on the gate metal, separates them (x = 0.2736 +- 0.0036 against
+the true 0.27). Layer thicknesses can be fitted too (`lengths=`), as can
+an extra fixed charge, the misfit-line charge and a parasitic
+capacitance.
+
+### 25. Find the layer that gives what you want
+
+```python
+from kpenvelope import StackLayer, algan, design_error_bars, find_designs
+
+def build(v):
+    return [StackLayer(algan(0.0), 300.0), StackLayer(algan(v["x"]), v["t"])]
+
+designs = find_designs(build, {"x": (0.15, 0.40), "t": (10.0, 35.0)},
+                       {"sheet_bare": (1.2e13, 0.05e13), "threshold": (-4.0, 0.2)},
+                       barrier=1.0, surface=0.8, n_grid=5, top=3)
+for d in designs:
+    print(f"x = {d.values['x']:.3f}, t = {d.values['t']:.1f} nm: "
+          f"n_s = {d.sheet_bare:.3e} cm^-2, V_off = {d.threshold:+.2f} V, "
+          f"meets targets: {d.meets_targets}")
+eb = design_error_bars(build, designs[0].values, {"x": 0.01, "t": 1.0},
+                       barrier=1.0, surface=0.8,
+                       quantities=("sheet_bare", "threshold"))
+print(f"with x +- 0.01 and t +- 1 nm: n_s +- {eb['sheet_bare'].sigma:.2e} cm^-2, "
+      f"V_off +- {eb['threshold'].sigma:.2f} V")
+```
+
+```
+x = 0.223, t = 18.3 nm: n_s = 1.211e+13 cm^-2, V_off = -4.05 V, meets targets: True
+x = 0.223, t = 17.3 nm: n_s = 1.198e+13 cm^-2, V_off = -3.80 V, meets targets: False
+x = 0.223, t = 19.7 nm: n_s = 1.202e+13 cm^-2, V_off = -4.30 V, meets targets: False
+with x +- 0.01 and t +- 1 nm: n_s +- 7.06e+11 cm^-2, V_off +- 0.34 V
+```
+
+`find_designs` maps the range on a grid, refines around the best points
+and returns the closest designs, marked when they meet every target
+within its tolerance. `design_error_bars` then shows what growth
+tolerances do: here plus or minus 0.01 in the Al fraction and 1 nm in
+thickness move the switch-off by about a third of a volt, more than the
+0.2 V asked for. The switch-off voltage is defined as the gate voltage
+where the electron density falls to 1 percent of its value at 0 V.
+
+### 26. Current over and through a barrier
+
+```python
+from kpenvelope import (Contact, StackLayer, Transport, algan, gate_leakage,
+                        richardson_constant, solve_drift_diffusion,
+                        thermionic_emission_current)
+
+print(f"A* of GaN (m = 0.20 m0): {richardson_constant(0.20):.2f} A cm^-2 K^-2")
+# a metal on n-GaN (1e17 cm^-3), forward 0.3 V, thermionic emission at the metal
+tr = Transport(1000.0, 30.0, 1.0, reference="illustrative values")
+r = solve_drift_diffusion([StackLayer(algan(0.0), 500.0, donors=1e-4)], tr,
+                          top=Contact("schottky", barrier=1.0, voltage=0.3,
+                                      thermionic=True), dz=1.0)
+print(f"forward 0.3 V: {-r.current_density:.3e} A/cm^2 "
+      f"(thermionic-emission law {thermionic_emission_current(1.0, 0.3, 0.2):.3e})")
+# gate leakage of a transistor layer: over and through the barrier
+for t in (25.0, 10.0):
+    layers = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), t)]
+    V, J, _ = gate_leakage(layers, 1.0, [-1.0, -3.0])
+    print(f"{t:.0f} nm barrier: {J[0]:.2e} A/cm^2 at -1 V, {J[1]:.2e} at -3 V")
+```
+
+```
+A* of GaN (m = 0.20 m0): 24.03 A cm^-2 K^-2
+forward 0.3 V: 3.609e-06 A/cm^2 (thermionic-emission law 3.764e-06)
+25 nm barrier: -7.22e-08 A/cm^2 at -1 V, -8.27e-03 at -3 V
+10 nm barrier: -1.71e-01 A/cm^2 at -1 V, -1.37e+02 at -3 V
+```
+
+With `thermionic=True` a metal contact passes electrons by thermionic
+emission instead of holding them at fixed densities; the forward current
+is then the thermionic-emission law reduced by the drift-diffusion
+correction of Crowell and Sze, 1/(1 + v_R/v_D), here 4 percent (checked
+in the tests). `gate_leakage` adds tunneling through the barrier with the
+formula of Tsu and Esaki and WKB transmission, on the bands of the
+quasi-equilibrium C-V model: a 10 nm barrier leaks millions of times more
+than a 25 nm one at -1 V. The barrier is ideal; real gates often leak
+more, through defects.
+
+### 27. A transistor cross-section in two dimensions
+
+```python
+import numpy as np
+from kpenvelope import Gate, StackLayer, algan, cv_cross_section, solve_cross_section
+
+layers = [StackLayer(algan(0.0), 300.0), StackLayer(algan(0.25), 25.0)]
+r = solve_cross_section(layers, Gate(400.0, 600.0, barrier=1.0, voltage=-3.0),
+                        width=1000.0, surface_barrier=0.8)
+print(f"grid {r.x.size} x {r.z.size}, converged: {r.converged}")
+for xx in (100.0, 400.0, 500.0):
+    print(f"x = {xx:.0f} nm: {np.interp(xx, r.x, r.sheet_x):.3e} electrons per cm^2")
+for lg in (50.0, 200.0, 1000.0):
+    V, C, Q, _ = cv_cross_section(layers, Gate(400.0, 400.0 + lg, 1.0), [-2.0],
+                                  lg + 800.0, 0.8)
+    print(f"gate {lg:.0f} nm: C = {C[0] * 1e9:.0f} nF per cm^2 of gate")
+```
+
+```
+grid 79 x 279, converged: True
+x = 100 nm: 1.444e+13 electrons per cm^2
+x = 400 nm: 1.066e+13 electrons per cm^2
+x = 500 nm: 7.412e+12 electrons per cm^2
+gate 50 nm: C = 769 nF per cm^2 of gate
+gate 200 nm: C = 454 nF per cm^2 of gate
+gate 1000 nm: C = 370 nF per cm^2 of gate
+```
+
+`solve_cross_section` solves the stack with a 200 nm gate at -3 V and
+the pinned free surface beside it, on a grid that is fine at the
+surface, the interfaces and the gate edges. Beside the gate the electron
+density is that of the bare surface; under the middle of the gate it is
+that of the gate (each equal to the 1D result to 0.5 percent in the
+tests); at the gate edge it is in between. A short gate holds more
+charge per length than a long one because the field spreads at its
+edges, and a 1 um gate comes within 6 percent of the 1D capacitance.
+
 ## Tutorials
 
 Three scripts in `examples/` go from data to a final result with error
@@ -1616,6 +1804,25 @@ example) gives its inputs, units and conventions.
   C-V sweep with quantum electrons (`solve_electrons` at every voltage); `bernoulli` -- the stable
   Bernoulli function of the fluxes.
 
+**Measured data, design, leakage and 2D (new in 0.18.0)**
+
+- `fit_measurements(build, start, cv, sheet, fixed, bounds, method,
+  lengths)` -- fit the unknowns of one sample to its measured C-V curve
+  and/or Hall density; returns a `MeasurementFit` (values, errors,
+  correlations, the fitted curve, warnings). `correlation_warnings`
+  gives the sentences.
+- `find_designs(build, variables, targets, ...)`, `design_error_bars`,
+  `threshold_voltage`, `sheet_density` -- the design finder and its
+  definitions; returns `Design`s.
+- `richardson_constant`, `richardson_velocity`,
+  `thermionic_emission_current`, `wkb_transmission`,
+  `tsu_esaki_current`, `gate_leakage` -- current over and through
+  barriers; `Contact(..., thermionic=True)` uses thermionic emission at
+  a metal in `solve_drift_diffusion`.
+- `solve_cross_section`, `cv_cross_section`, `Gate`, `device_grid` --
+  the 2D cross-section (`CrossSection`); `fit_least_squares` gains
+  `difference="forward"` for expensive models.
+
 **Phonons (new in 0.18.0)**
 
 - `PolarPhonons` -- the E1 and A1 TO and LO phonons and high-frequency
@@ -1918,7 +2125,7 @@ Since 0.18.0 it also refuses (or warns):
 
 ## How the results are checked
 
-225 automated tests run on every push and pull request, on Python 3.9,
+240 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -2207,6 +2414,28 @@ the tests use:
   suite: the page was also driven through every tab in a headless
   browser, in light and dark mode and at phone width, with no script
   errors.
+- Data fits: noise-free C-V data give back the composition and barrier
+  to 1e-4 and 1e-3, and a thickness between grid points to 1e-3 nm;
+  with noise, a joint C-V and Hall fit lands within four error bars of
+  the truth with a sensible chi^2; the app gives the same barrier from
+  data in nF/cm^2 and in pF over a gate area.
+- Design finder: the switch-off voltage brackets the 1 percent point,
+  a search recovers a known design (x = 0.30 to 0.01) that meets its
+  targets, and its error bar equals the secant over one sigma.
+- Leakage: A* = 120.17 A cm^-2 K^-2 for the free electron mass, the
+  Richardson velocity equals A* T^2 / (q N_c); the Tsu-Esaki current over
+  a thick barrier equals the thermionic-emission law to 0.2 percent, and
+  over a triangular barrier has the Fowler-Nordheim exponent to 3
+  percent (1.1 percent in practice); a metal with thermionic emission on
+  n-GaN saturates at A* T^2 exp(-phi/kT) in reverse to 2 percent, has
+  ideality 1 to 0.5 percent, and gives the Crowell-Sze forward current
+  to 1 percent.
+- 2D: with a gate over the whole width and a uniform grid the
+  cross-section equals the 1D solver to 1e-9 (bands, density, gate
+  charge), with SciPy or with the NumPy conjugate-gradient fallback; a
+  wide gate gives the 1D gate and bare-surface densities under and beside
+  it to 0.5 percent; the capacitance per gate length rises as the gate
+  shortens and a 1 um gate is within 10 percent of 1D.
 - The line-charge tools: the published constraints equal the archived
   numbers; the combination equals a truncated normal written out
   separately, and two Gaussians combine by inverse variance; the
@@ -2529,6 +2758,22 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   C-V there. The electrons are classical (use `solve_electrons` for
   subbands). Check the grid by halving `dz`: recombination in a
   forward-biased junction needs about 0.5 nm (example 21).
+- Data fits and the design finder use classical electrons unless you
+  choose quantum ones (slower), first-order error bars, and a grid on
+  which a thickness moves by whole steps (interpolated in the fit).
+  Correlated unknowns are flagged, not resolved: only another
+  measurement resolves them. The design search finds the best point of
+  the range to the resolution of its last grid; it does not include
+  critical thickness or relaxation, so check that a design can be grown.
+- Leakage: one band and one mass along the path, WKB transmission, no
+  image-force lowering, no defect-assisted current. Gate leakage uses
+  the bands of the quasi-equilibrium model, so below the switch-off
+  voltage (no electrons left) the bands and the leakage stop changing.
+  Thermionic emission is applied at metal contacts only, not at abrupt
+  offsets between layers.
+- 2D: no drain voltage or current along the channel, classical
+  electrons, holes only if asked, the free surface pinned at one
+  barrier, and SciPy for speed (the NumPy fallback is slower).
 - Phonons: only the interface (decaying) modes of the dielectric
   continuum model, not the confined or half-space modes, and no
   phonon-limited mobility. The single-oscillator dielectric function
@@ -2579,7 +2824,10 @@ Trellakis et al., J. Appl. Phys. 81, 7880 (1997). The material tables of
 drift-diffusion fluxes are those of Scharfetter and Gummel, IEEE Trans.
 Electron Devices 16, 64 (1969); the interface phonons follow the
 dielectric continuum model of Fuchs and Kliewer, Phys. Rev. 140, A2076
-(1965), and Mori and Ando, Phys. Rev. B 40, 6175 (1989).
+(1965), and Mori and Ando, Phys. Rev. B 40, 6175 (1989). Currents over
+and through barriers use the formula of Tsu and Esaki, Appl. Phys. Lett.
+22, 562 (1973), and the thermionic-emission boundary of Crowell and Sze,
+Solid-State Electron. 9, 1035 (1966).
 
 ## Citing, support and license
 
