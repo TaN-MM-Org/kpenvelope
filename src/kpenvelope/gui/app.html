@@ -295,6 +295,59 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <canvas id="cvCrossLine" class="hidden" aria-label="Electrons along the channel"></canvas>
   </div>
 
+  <div class="panel" id="p-fet" role="tabpanel">
+    <p class="lead">A whole transistor: source, gate and drain, with current flowing.</p>
+    <p>The app builds a transistor from your layers (contacts at both ends, a metal gate in between), works out the current at each voltage, and can include the device heating itself up and defects in the base that trap electrons. It uses the energy steps from the Electrons and Voltage sweep tabs.</p>
+    <div class="grid2">
+      <div><label for="fetLg">Gate length (nm)</label><input id="fetLg" type="text" inputmode="decimal" value="250"></div>
+      <div><label for="fetSG">Gap from source to gate (nm)</label><input id="fetSG" type="text" inputmode="decimal" value="1000"></div>
+      <div><label for="fetGD">Gap from gate to drain (nm)</label><input id="fetGD" type="text" inputmode="decimal" value="1250"></div>
+      <div><label for="fetC">Contact length (nm) <span class="help" title="Length of the source and drain contacts. Under each one the app puts a heavily doped region (10²⁰ per cm³) reaching 20 nm into the base, as alloyed contacts make. The resistance of a real contact is not included.">?</span></label><input id="fetC" type="text" inputmode="decimal" value="500"></div>
+    </div>
+    <h3>What to sweep</h3>
+    <div class="grid2">
+      <div><label for="fetSweep">Sweep</label><select id="fetSweep"><option value="drain">Drain voltage (output curve)</option><option value="gate">Gate voltage (transfer curve)</option></select></div>
+      <div><label for="fetFixed" id="fetFixedLab">Gate voltage held at (V)</label><input id="fetFixed" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="fetFrom">From (V)</label><input id="fetFrom" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="fetTo">To (V)</label><input id="fetTo" type="text" inputmode="decimal" value="10"></div>
+      <div><label for="fetStep">Step (V)</label><input id="fetStep" type="text" inputmode="decimal" value="1"></div>
+    </div>
+    <h3>How electrons move <span class="help" title="Mobility is how easily electrons move at low push; above a certain push they cannot go faster than the saturation speed. Both fall as the device warms up. The built-in values come from the sources named in the results; replace them with your own measurements if you have them.">?</span></h3>
+    <div class="grid2">
+      <div><label for="fetMu">Mobility at room temperature (cm²/Vs)</label><input id="fetMu" type="text" inputmode="decimal" value="1704"></div>
+      <div><label for="fetGamma">How fast it falls when hot (power of temperature)</label><input id="fetGamma" type="text" inputmode="decimal" value="2.35"></div>
+      <div><label for="fetVs">Top speed (cm/s) <span class="help" title="Leave it at auto to take it from the electron density, with the formula of Bajaj et al. (2015), which their pulsed measurements bore out: denser electron layers saturate at a lower speed.">?</span></label><input id="fetVs" type="text" inputmode="decimal" value="auto"></div>
+      <div><label for="fetMuSrc">Where these come from (optional)</label><input id="fetMuSrc" type="text" placeholder="built-in sources if empty"></div>
+    </div>
+    <label style="color:var(--ink)"><input type="checkbox" id="fetHeat"> Include self-heating (the current warms the device, which slows the electrons) <span class="help" title="The heat made by the current flows down through the base and the substrate to a heat sink at the room temperature you set. The sides are treated as the middle between identical fingers, so the finger pitch sets how far the heat can spread.">?</span></label>
+    <div class="grid2 hidden" id="fetHeatBox">
+      <div><label for="fetSub">Substrate</label><select id="fetSub"><option value="SiC">Silicon carbide (4H-SiC)</option><option value="custom">My own</option></select></div>
+      <div><label for="fetSubT">Substrate thickness (µm)</label><input id="fetSubT" type="text" inputmode="decimal" value="100"></div>
+      <div><label for="fetPitch">Finger pitch (µm)</label><input id="fetPitch" type="text" inputmode="decimal" value="50"></div>
+      <div><label for="fetTbr">Boundary resistance under the base (m² K/W, optional)</label><input id="fetTbr" type="text" inputmode="decimal" placeholder="for example 1e-8"></div>
+      <div class="fetCustom hidden"><label for="fetSubK">Its heat conductivity at 300 K (W/m/K)</label><input id="fetSubK" type="text" inputmode="decimal"></div>
+      <div class="fetCustom hidden"><label for="fetSubSrc">Where that comes from</label><input id="fetSubSrc" type="text"></div>
+    </div>
+    <p><button class="primary" id="runFet">Work out the currents</button> <span class="note">About 10 to 60 seconds.</span></p>
+    <div id="outFet"></div>
+    <canvas id="cvFet" class="hidden" aria-label="Transistor current"></canvas>
+    <div class="grid2"><div><label for="fetShow">Picture of the last point</label><select id="fetShow"><option value="n">Where the electrons are</option><option value="temp">Temperature</option><option value="ec">Energy an electron needs</option></select></div></div>
+    <canvas id="cvFetMap" class="hidden" style="height:320px" aria-label="Transistor cross-section"></canvas>
+    <h3>Trapped electrons and slow recovery (drain lag) <span class="help" title="Iron is often added to the base to stop leakage. It traps electrons when the drain voltage is high, and lets them go only slowly. Right after the voltage drops, the current is lower than it should be and then recovers. This is a common cause of 'current collapse'.">?</span></h3>
+    <p class="note">The app holds a high drain voltage until the traps settle, switches to the measuring voltages, and follows the current over time, from a nanosecond to ten seconds.</p>
+    <div class="grid2">
+      <div><label for="lagSD">Drain voltage held before (V)</label><input id="lagSD" type="text" inputmode="decimal" value="20"></div>
+      <div><label for="lagSG">Gate voltage held before (V)</label><input id="lagSG" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="lagD">Drain voltage measured at (V)</label><input id="lagD" type="text" inputmode="decimal" value="5"></div>
+      <div><label for="lagG">Gate voltage measured at (V)</label><input id="lagG" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="lagN">Iron in the base (per cm³)</label><input id="lagN" type="text" inputmode="decimal" value="1e17"></div>
+      <div><label for="lagClean">Iron-free part under the channel (nm)</label><input id="lagClean" type="text" inputmode="decimal" value="100"></div>
+    </div>
+    <p><button id="runLag">Follow the current in time</button> <span class="note">About a minute.</span></p>
+    <div id="outLag"></div>
+    <canvas id="cvLag" class="hidden" aria-label="Current over time"></canvas>
+  </div>
+
   <div class="panel" id="p-code" role="tabpanel">
     <p class="lead">Keep, repeat or share what you did.</p>
     <p>The app can write the same calculation as a Python script (to repeat it, change it, or add it to a paper's supplement), and save the last curve as a spreadsheet file (CSV).</p>
@@ -317,7 +370,10 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <dt>Holes</dt><dd>Missing electrons, which act like positive carriers.</dd>
       <dt>Error bar</dt><dd>The range the answer probably lies in (one standard deviation), given how well the inputs are known.</dd>
       <dt>Capacitance-voltage (C-V)</dt><dd>A standard measurement: as the gate voltage goes more negative, electrons leave, and the capacitance drops. The voltage where it drops is where the transistor switches off (the threshold).</dd>
-      <dt>What this app does not do</dt><dd>It does not follow electrons jumping or tunneling through thin barriers, heating, or fast changes in time. These limits are listed in the documentation.</dd>
+      <dt>Saturation speed</dt><dd>The fastest electrons can drift when pushed hard. It limits the current of a short transistor.</dd>
+      <dt>Self-heating</dt><dd>The current warms the transistor. Warm electrons move less easily, so the current drops.</dd>
+      <dt>Traps and drain lag</dt><dd>Defects that hold electrons for a while. After a high voltage they stay filled, and the current is low until they empty.</dd>
+      <dt>What this app does not do</dt><dd>It does not treat hot electrons, breakdown, tunneling inside the transistor, high-frequency (small-signal) response, or heat that changes in time. Contact resistance and unstructured shapes are not included either. These limits are listed in the documentation.</dd>
     </dl>
     <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
   </div>
@@ -329,7 +385,7 @@ const TOKEN = "__KPE_TOKEN__";
 let OPT = null, LAST = null;
 const $ = id => document.getElementById(id);
 const COLORS = {GaN:"var(--gan)",AlGaN:"var(--algan)",InGaN:"var(--ingan)",InAlN:"var(--inaln)",ScAlN:"var(--scaln)"};
-const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["fit","Fit my data"],["design","Design finder"],["cross","2D cross-section"],["code","Save and share"],["help","Help and words"]];
+const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["fit","Fit my data"],["design","Design finder"],["cross","2D cross-section"],["fet","Transistor"],["code","Save and share"],["help","Help and words"]];
 
 let state = {parameter_set:"pbesol-mahim2026", temperature:300, layers:[
   {material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none",doping_cm3:1e16},
@@ -685,6 +741,66 @@ function drawCross(){
   g.fillStyle=muted; g.textAlign="left"; g.fillText(show==="n"?sci(Math.pow(10,hi),1):`${fmt(hi)} eV`,W-R+38,T+8); g.fillText(show==="n"?sci(Math.pow(10,lo),1):`${fmt(lo)} eV`,W-R+38,H-B);
   g.fillStyle=ink; g.fillText(show==="n"?"Electrons per cm³":"Energy an electron needs",L,18);
 }
+/* ---------------- transistor ---------------- */
+let FET=null;
+$("fetSweep").onchange=()=>{ const d=$("fetSweep").value==="drain"; $("fetFixedLab").textContent=d?"Gate voltage held at (V)":"Drain voltage held at (V)";
+  $("fetFixed").value=d?"0":"5"; $("fetFrom").value="0"; $("fetTo").value=d?"10":"-6"; $("fetStep").value=d?"1":"0.5"; };
+$("fetHeat").onchange=()=>$("fetHeatBox").classList.toggle("hidden",!$("fetHeat").checked);
+$("fetSub").onchange=()=>document.querySelectorAll(".fetCustom").forEach(e=>e.classList.toggle("hidden",$("fetSub").value!=="custom"));
+function fetSpec(){ return {gate_length:$("fetLg").value,gap_sg:$("fetSG").value,gap_gd:$("fetGD").value,contact:$("fetC").value,
+  mobility:$("fetMu").value,mobility_temperature:$("fetGamma").value,vsat:$("fetVs").value,mobility_source:$("fetMuSrc").value,
+  sweep:$("fetSweep").value,fixed:$("fetFixed").value,from:$("fetFrom").value,to:$("fetTo").value,step:$("fetStep").value,
+  heating:$("fetHeat").checked,substrate:$("fetSub").value,substrate_um:$("fetSubT").value,pitch_um:$("fetPitch").value,boundary:$("fetTbr").value,
+  substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value}; }
+$("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
+  const r=await call("transistor",{device:{barrier:$("devBarrier").value},transistor:fetSpec()}); const out=$("outFet");
+  if(r.error){ out.innerHTML=msg("err",r.error); ["cvFet","cvFetMap"].forEach(c=>$(c).classList.add("hidden")); return; }
+  FET=r; const I=r.drain, V=r.voltages, k=I.length-1, d=r.sweep==="drain";
+  let sum=d?`at ${fmt(V[k])} V on the drain (gate at ${fmt(r.fixed)} V) the transistor carries <b>${fmt(I[k])} A per mm</b> of gate width.`
+          :`with ${fmt(r.fixed)} V on the drain, the current goes from <b>${fmt(I[0])}</b> to <b>${fmt(I[k])} A per mm</b> as the gate goes from ${fmt(V[0])} to ${fmt(V[k])} V.`;
+  if(r.heating){ const P=r.power[k], dT=r.tmax[k]-r.tmax[0]; sum+=` It dissipates ${fmt(P)} W per mm and its hottest point reaches ${fmt(r.tmax[k])} K${P>0.01?` (${fmt(dT/P)} K per W/mm)`:""}.`; }
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
+    `<p class="note">Electron layer of the bare channel: ${sci(r.ns)} per cm²; top speed used: ${sci(r.vsat)} cm/s.</p>`+
+    `<details><summary class="small">Sources of the built-in numbers</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`;
+  LAST={name:"transistor",cols:[(d?"drain":"gate")+"_V","drain_A_per_mm","gate_A_per_mm","hottest_K"],rows:V.map((v,i)=>[v,I[i],r.gate[i],r.tmax[i]])};
+  $("cvFet").classList.remove("hidden"); $("cvFetMap").classList.remove("hidden");
+  const ser=[{x:V,y:I,color:"#1f6feb",label:"Drain current (A/mm)",dots:true}];
+  if(r.heating) ser.push({x:V,y:r.tmax,color:"#e5534b",label:"Hottest point (K)",right:true});
+  plot($("cvFet"),ser,{xlabel:(d?"Drain":"Gate")+" voltage (V)",ylabel:"Drain current (A per mm of width)",y2:r.heating,y2label:"Temperature (K)"});
+  $("fetShow").value=r.heating?"temp":"n"; drawFet();
+});
+$("fetShow").onchange=()=>{ if(FET) drawFet(); };
+function drawFet(){
+  const r=FET.map, cv=$("cvFetMap"), show=$("fetShow").value;
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.body), ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted");
+  const L=64,R=112,T=48,B=44, nx=r.x.length, nz=r.depth.length, cw=(W-L-R)/nx, ch=(H-T-B)/nz;
+  const F=show==="n"?r.log10n:show==="temp"?r.temp:r.ec; let lo=Infinity,hi=-Infinity; F.forEach(row=>row.forEach(v=>{ if(v<lo) lo=v; if(v>hi) hi=v; }));
+  if(show==="n") lo=Math.max(lo,hi-8); if(hi-lo<1e-9){ hi=lo+1; }
+  const col=t=>{ t=Math.min(1,Math.max(0,t)); const a=[[13,8,135],[126,3,168],[204,71,120],[248,149,64],[240,249,33]]; const k=Math.min(3,Math.floor(t*4)), f=t*4-k; const c=a[k].map((v,i)=>Math.round(v+(a[k+1][i]-v)*f)); return `rgb(${c})`; };
+  for(let i=0;i<nx;i++) for(let j=0;j<nz;j++){ g.fillStyle=col((F[i][j]-lo)/(hi-lo)); g.fillRect(L+i*cw,T+j*ch,cw+0.6,ch+0.6); }
+  const X=x=>L+x/r.x[nx-1]*(W-L-R);
+  g.font="12px system-ui,sans-serif"; g.textAlign="center";
+  [[FET.gate_x,"gate","#9aa6b8"],[FET.contacts[0],"source","#c9a227"],[FET.contacts[1],"drain","#c9a227"]].forEach(([a,t,c])=>{ g.fillStyle=c; g.fillRect(X(a[0]),T-10,X(a[1])-X(a[0]),10); g.fillStyle=ink; g.fillText(t,(X(a[0])+X(a[1]))/2,T-14); });
+  g.fillStyle=muted; niceTicks(0,r.x[nx-1]).forEach(t=>g.fillText(fmt(t),X(t),H-B+16)); g.textAlign="right"; niceTicks(0,r.depth[nz-1]).forEach(t=>g.fillText(fmt(t),L-6,T+t/r.depth[nz-1]*(H-T-B)+4));
+  g.fillStyle=ink; g.textAlign="center"; g.fillText("Position along the transistor (nm)",L+(W-L-R)/2,H-8);
+  g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText("Depth below the surface (nm)",0,0); g.restore();
+  for(let k=0;k<=40;k++){ g.fillStyle=col(k/40); g.fillRect(W-R+20,T+(1-k/40)*(H-T-B)-((H-T-B)/40),14,(H-T-B)/40+1); }
+  g.fillStyle=muted; g.textAlign="left"; const lab=v=>show==="n"?sci(Math.pow(10,v),1):show==="temp"?`${fmt(v)} K`:`${fmt(v)} eV`;
+  g.fillText(lab(hi),W-R+38,T+8); g.fillText(lab(lo),W-R+38,H-B);
+  g.fillStyle=ink; g.textAlign="left"; g.fillText(show==="n"?"Electrons per cm³ (last point)":show==="temp"?"Temperature (last point)":"Energy an electron needs (last point)",L,14);
+}
+$("runLag").onclick=()=>busy($("runLag"),$("outLag"),async()=>{
+  const r=await call("lag",{device:{barrier:$("devBarrier").value},transistor:fetSpec(),lag:{stress_drain:$("lagSD").value,stress_gate:$("lagSG").value,drain:$("lagD").value,gate:$("lagG").value,density:$("lagN").value,clean:$("lagClean").value}});
+  const out=$("outLag");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvLag").classList.add("hidden"); return; }
+  const pct=100*r.dip;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> right after the switch the current is ${Math.abs(pct).toFixed(1)}% ${pct>=0?"below":"above"} its settled value of ${fmt(r.steady)} A per mm${r.recovery?`, and it recovers most of the way (63%) after about ${sci(r.recovery,1)} s`:""}. A single iron trap on its own lets go of an electron after ${sci(r.emission_time,1)} s on average at this temperature.</div>`+
+    `<details><summary class="small">Sources of the built-in numbers</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`;
+  LAST={name:"drain_lag",cols:["time_s","drain_A_per_mm"],rows:r.times.map((t,i)=>[t,r.drain[i]])};
+  $("cvLag").classList.remove("hidden");
+  plot($("cvLag"),[{x:r.times.map(t=>Math.log10(t)),y:r.drain,color:"#1f6feb",label:"Drain current after the switch (A/mm)",dots:true}],{xlabel:"Time after the switch: power of ten of seconds (-9 = 1 ns, 0 = 1 s)",ylabel:"Drain current (A per mm)",hline:r.steady});
+});
 $("runCode").onclick=()=>busy($("runCode"),$("code"),async()=>{ const r=await call("code"); $("code").textContent=r.error?r.error:r.code; });
 $("copyCode").onclick=async()=>{ try{ await navigator.clipboard.writeText($("code").textContent); $("copyCode").textContent="Copied"; setTimeout(()=>$("copyCode").textContent="Copy",1200);}catch(e){} };
 function download(name, text, type){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }

@@ -844,11 +844,228 @@ def run_cross(spec):
             "warnings": warn}
 
 
+# ------------------------------------------------- transistor (2D, current)
+#: built-in numbers of the transistor tab, each with its source (opened and
+#: read when this was written; see the package documentation)
+TRANSISTOR_SOURCES = {
+    "mobility": "1704 cm²/Vs measured at room temperature, falling as "
+                "(T/300 K)^-2.35 (their power-law fit up to 576 °C), for an "
+                "AlGaN/GaN electron layer: H. S. Alpert et al., Rev. Sci. "
+                "Instrum. 91 (2020), doi:10.1063/1.5139911 (arXiv:1912.00977)",
+    "vsat": "saturation speed from the electron density: v = 10^7 / (0.38 + "
+            "(n_s / 1.8 x 10^13)^0.45) cm/s, the fit of S. Bajaj et al. "
+            "(Appl. Phys. Lett. 107 (2015), doi:10.1063/1.4933181) to their "
+            "drifted Fermi-Dirac calculations, which matched their pulsed "
+            "measurements",
+    "gan_heat": "GaN: 230 W/(m K) at 300 K, falling as (T/300)^-1.43 (Mion "
+                "et al. 2006; exponent as quoted by Danilchenko et al. 2007)",
+    "sic_heat": "4H-SiC: 370 W/(m K) (Goldberg et al. 2001 via the Ioffe "
+                "database), held constant",
+    "fe": "iron in GaN: an acceptor 0.5 eV below the conduction band "
+          "(Wickramaratne et al., Phys. Rev. B 99, 205202 (2019); Uren et "
+          "al., IEEE Trans. Electron Devices 59, 3327 (2012)); capture cross "
+          "section 10^-15 cm² and 10^15 per cm³ shallow compensating donors "
+          "as in Uren et al.",
+}
+
+
+def _bajaj_vsat(ns_cm2):
+    return 1e7 / (0.38 + (ns_cm2 / 1.8e13) ** 0.45)
+
+
+def _transistor_device(spec, with_traps=False):
+    from ..device import Device, Electrode, Mobility, Surface, Trap, capture_coefficient
+    from ..driftdiffusion import Contact as _C, solve_quasi_equilibrium as _q
+
+    layers = build_layers(spec)
+    ic, warn = _charges(layers, spec)
+    if any(L.acceptors > 0 for L in layers):
+        raise SpecError("The transistor tab is worked out for n-type stacks; "
+                        "this one has p-type layers.")
+    if len(layers) < 2:
+        raise SpecError("A transistor needs a barrier layer on top of the base.")
+    t = spec.get("transistor") or {}
+    ls = _num(t, "contact", 500.0, 50.0, 20000.0, "the contact length (nm)")
+    gsg = _num(t, "gap_sg", 1000.0, 20.0, 50000.0, "the source-gate gap (nm)")
+    lg = _num(t, "gate_length", 250.0, 10.0, 20000.0, "the gate length (nm)")
+    ggd = _num(t, "gap_gd", 1250.0, 20.0, 50000.0, "the gate-drain gap (nm)")
+    T = _num(spec, "temperature", 300.0, 1.0, 1500.0)
+    gate_barrier = _num(spec.get("device") or {}, "barrier",
+                        what="the metal energy step (Voltage sweep tab)")
+    surface = _num(spec, "surface_barrier", what="the surface energy step (Electrons tab)")
+    top = sum(L.thickness for L in layers)
+    implant = top - layers[0].thickness + 20.0
+    width = 2 * ls + gsg + lg + ggd
+    x_g0 = ls + gsg
+    el = [Electrode("source", "ohmic", 0.0, ls, implant_depth=implant, implant_donors=1e20),
+          Electrode("gate", "schottky", x_g0, x_g0 + lg, barrier=gate_barrier),
+          Electrode("drain", "ohmic", width - ls, width, implant_depth=implant,
+                    implant_donors=1e20)]
+    mu = _num(t, "mobility", 1704.0, 1.0, 1e5, "the electron mobility (cm²/Vs)")
+    gamma = _num(t, "mobility_temperature", 2.35, 0.0, 5.0,
+                 "how fast the mobility falls with temperature")
+    src = str(t.get("mobility_source") or "").strip() or TRANSISTOR_SOURCES["mobility"]
+    one = _q(layers, _C("schottky", barrier=surface), _C("zero-field"),
+             temperature_K=T, interfaces=ic, dz=0.5)
+    ns = one.sheet(max(0.0, top - 150.0), top)
+    vs_in = t.get("vsat")
+    if vs_in in (None, "", "auto"):
+        if ns < 1e10:
+            raise SpecError("This stack has almost no electrons under a free "
+                            "surface, so it is not a transistor channel.")
+        vs = _bajaj_vsat(ns)
+        vs_src = TRANSISTOR_SOURCES["vsat"]
+    else:
+        vs = _num(t, "vsat", lo=1e5, hi=1e8, what="the saturation speed (cm/s)")
+        vs_src = src
+    mob = Mobility(mu, f"{src}; v_sat: {vs_src}", saturation_velocity=vs, beta=1.0,
+                   temperature_exponent=gamma)
+    traps = []
+    if with_traps:
+        lag = spec.get("lag") or {}
+        dens = _num(lag, "density", 1e17, 1e14, 1e19, "the iron density (per cm³)")
+        clean = _num(lag, "clean", 100.0, 0.0, layers[0].thickness - 10.0,
+                     "the trap-free channel thickness (nm)")
+        cn = capture_coefficient(1e-15, layers[0].material.me, T)
+        traps.append(Trap("acceptor", 0.5, "ec", dens, cn, 0.0, TRANSISTOR_SOURCES["fe"],
+                          where=layers[0].label,
+                          z_range=(0.0, layers[0].thickness - clean)))
+        donors = _num(lag, "donors", 1e15, 0.0, 1e18,
+                      "the compensating donor density (per cm³)")
+        import dataclasses as _dc
+        layers[0] = _dc.replace(layers[0], donors=layers[0].donors + donors * 1e-21)
+    dev = Device(layers, width, el, mob, Surface("pinned", barrier=surface),
+                 traps=traps, temperature_K=T, interfaces=ic, dx_fine=10.0,
+                 dx_max=150.0, dz_fine=1.0, dz_max=100.0, fine_depth=min(60.0, top))
+    return dev, dict(layers=layers, warn=warn, width=width, gate=[x_g0, x_g0 + lg],
+                     contacts=[[0.0, ls], [width - ls, width]], ns=ns, vsat=vs,
+                     mobility=mu, gamma=gamma, sources=[mob.reference])
+
+
+def _map(dev, st, depth=100.0):
+    x, z = dev.axes
+    top = z[-1]
+    depth = min(depth, top)
+    m = z >= top - depth - 1e-9
+    zz = top - z[m]
+    xi = np.linspace(0, x[-1], 180)
+    zi = np.linspace(0, depth, 90)
+
+    def resample(field):
+        a = np.array([np.interp(xi, x, field[:, j]) for j in np.flatnonzero(m)]).T
+        order = np.argsort(zz)
+        return np.array([np.interp(zi, zz[order], a[k, order]) for k in range(a.shape[0])])
+
+    return {"x": xi.tolist(), "depth": zi.tolist(),
+            "log10n": resample(np.log10(np.maximum(st.n, 1.0))).tolist(),
+            "temp": resample(st.temperature).tolist(),
+            "ec": resample(st.ec).tolist()}
+
+
+def run_transistor(spec):
+    """Drain-current curves of a 2D transistor (source, gate, drain), with
+    optional self-heating."""
+    from ..thermal import (GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalModel,
+                           boundary_resistance)
+
+    dev, info = _transistor_device(spec)
+    t = spec.get("transistor") or {}
+    sweep = t.get("sweep", "drain")
+    if sweep not in ("drain", "gate"):
+        raise SpecError("Choose to sweep the drain or the gate voltage.")
+    v0 = _num(t, "from", 0.0, -60.0, 200.0, "the start voltage")
+    v1 = _num(t, "to", 10.0, -60.0, 200.0, "the end voltage")
+    step = _num(t, "step", 1.0, 0.01, 50.0, "the voltage step")
+    n = int(math.floor(abs(v1 - v0) / step + 1e-9)) + 1
+    if n > 81:
+        raise SpecError("That is more than 80 points; use a larger step.")
+    vals = np.linspace(v0, v0 + math.copysign((n - 1) * step, v1 - v0), n)
+    other = _num(t, "fixed", 0.0 if sweep == "drain" else 5.0, -60.0, 200.0,
+                 "the fixed voltage")
+    fixed = {"gate": other} if sweep == "drain" else {"drain": other}
+    thermal = None
+    if t.get("heating"):
+        sub = t.get("substrate", "SiC")
+        thick = _num(t, "substrate_um", 100.0, 1.0, 2000.0, "the substrate thickness (µm)")
+        if sub == "SiC":
+            mat = SIC_4H_ROOM
+        else:
+            k = _num(t, "substrate_k", what="the substrate's thermal conductivity (W/m/K)",
+                     lo=0.1, hi=5000.0)
+            from ..thermal import ThermalMaterial
+            mat = ThermalMaterial("substrate", k, _num(t, "substrate_alpha", 0.0, 0.0, 3.0,
+                                                       "how fast it falls with temperature"),
+                                  str(t.get("substrate_source") or "yours"))
+        sublayers = [ThermalLayer("substrate", thick * 1e3, mat)]
+        rb = t.get("boundary")
+        if rb not in (None, "", 0, "0"):
+            rb = _num(t, "boundary", lo=1e-12, hi=1e-5,
+                      what="the boundary resistance (m² K/W)")
+            sublayers.append(boundary_resistance(rb, "yours"))
+        pitch = _num(t, "pitch_um", 50.0, 1.0, 1000.0, "the finger pitch (µm)")
+        ext = max(0.0, (pitch * 1e3 - info["width"]) / 2)
+        thermal = ThermalModel(GAN_BULK, substrate=tuple(sublayers),
+                               sink_temperature_K=_num(spec, "temperature", 300.0),
+                               lateral_extension=ext)
+    V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal)
+    last = S[-1]
+    out = {"voltages": V.tolist(), "sweep": sweep, "fixed": other,
+           "drain": I["drain"].tolist(), "gate": I["gate"].tolist(),
+           "source": I["source"].tolist(),
+           "tmax": [float(s.temperature.max()) for s in S],
+           "power": [s.power for s in S], "heating": bool(thermal),
+           "map": _map(dev, last), "gate_x": info["gate"], "contacts": info["contacts"],
+           "width": info["width"], "ns": info["ns"], "vsat": info["vsat"],
+           "mobility": info["mobility"], "sources": info["sources"],
+           "warnings": info["warn"]}
+    if thermal is not None:
+        out["sources"] += [TRANSISTOR_SOURCES["gan_heat"],
+                           TRANSISTOR_SOURCES["sic_heat"] if t.get("substrate", "SiC") == "SiC"
+                           else "substrate: yours"]
+    return out
+
+
+def run_lag(spec):
+    """Drain lag (current collapse) from iron traps in the buffer: hold a
+    stress voltage, switch, and follow the current in time."""
+    dev, info = _transistor_device(spec, with_traps=True)
+    lag = spec.get("lag") or {}
+    sg = _num(lag, "stress_gate", 0.0, -60.0, 10.0, "the stress gate voltage")
+    sd = _num(lag, "stress_drain", 20.0, 0.0, 200.0, "the stress drain voltage")
+    mg = _num(lag, "gate", 0.0, -60.0, 10.0, "the measured gate voltage")
+    md = _num(lag, "drain", 5.0, 0.0, 200.0, "the measured drain voltage")
+    stress = dev.solve({"gate": sg, "drain": sd})
+    final = dev.solve({"gate": mg, "drain": md}, guess=stress)
+    times = np.logspace(-9, 1, 21)
+    r = dev.transient(stress, {"gate": mg, "drain": md}, times)
+    Id = r.current["drain"]
+    dip = 1.0 - Id[0] / final.current["drain"]
+    rec = None
+    if abs(Id[-1] - Id[0]) > 0:
+        target = Id[0] + (1 - math.exp(-1)) * (Id[-1] - Id[0])
+        k = np.flatnonzero((Id - target) * np.sign(Id[-1] - Id[0]) >= 0)
+        if k.size:
+            k = int(k[0])
+            if k > 0:
+                a, b = math.log(times[k - 1]), math.log(times[k])
+                fa, fb = Id[k - 1] - target, Id[k] - target
+                rec = float(math.exp(a + (b - a) * fa / (fa - fb))) if fa != fb else float(times[k])
+            else:
+                rec = float(times[0])
+    en = 1.0 / dev.emission_times()[0][0]
+    return {"times": times.tolist(), "drain": Id.tolist(),
+            "steady": final.current["drain"], "stress_current": stress.current["drain"],
+            "dip": dip, "recovery": rec, "emission_time": 1.0 / en,
+            "occupancy": r.mean_occupancy[0].tolist(), "sources": [TRANSISTOR_SOURCES["fe"]]
+            + info["sources"], "warnings": info["warn"]}
+
+
 ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "electrons": run_electrons, "device": run_device,
            "uncertainty": run_uncertainty, "line_charge": run_line_charge,
            "plan": run_plan, "code": python_code, "fit": run_fit,
-           "design": run_design, "cross": run_cross}
+           "design": run_design, "cross": run_cross,
+           "transistor": run_transistor, "lag": run_lag}
 
 
 def _plain(e):
