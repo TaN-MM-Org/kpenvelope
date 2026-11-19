@@ -398,3 +398,202 @@ def test_traps_with_holes_equal_srh_lifetimes():
                                Contact("ohmic"), Contact("ohmic", voltage=V), dz=1.0,
                                statistics="boltzmann")
     assert r1.current_density > 2 * r0.current_density      # recombination matters
+
+
+# ------------------------------------------------------------ 0.20.0
+def test_small_signal_matches_dc_and_kirchhoff():
+    layers, dev = _hemt()
+    st = dev.solve({"drain": 3.0, "gate": -1.0})
+    ports, Y = dev.small_signal(st, [0.0, 1e3, 1e10])
+    assert ports == ["source", "gate", "drain", "surface"]
+    big = np.abs(Y).max()
+    assert np.abs(Y.sum(axis=1)).max() < 1e-8 * big       # currents conserved
+    assert np.abs(Y.sum(axis=2)).max() < 1e-8 * big       # a common shift does nothing
+    names = ["source", "gate", "drain"]
+    d = 1e-4
+    for k, nm in enumerate(names):
+        bp, bm = dict(st.bias), dict(st.bias)
+        bp[nm] += d
+        bm[nm] -= d
+        sp_ = dev.solve(bp, guess=st, tol=1e-11)
+        sm = dev.solve(bm, guess=st, tol=1e-11)
+        for c, nc in enumerate(names):
+            g = (sp_.current[nc] - sm.current[nc]) / (2 * d)
+            assert Y[0, ports.index(nc), k].real == pytest.approx(g, rel=1e-5, abs=1e-9)
+        cg = (sp_.charge["gate"] - sm.charge["gate"]) / (2 * d)
+        w = 2 * math.pi * 1e3
+        assert Y[1, 1, k].imag / w == pytest.approx(cg, rel=1e-6)
+
+
+def test_series_resistance_bar_and_two_port():
+    from kpenvelope.device import with_series
+    g = algan(0.0)
+    layers = [StackLayer(g, 500.0, donors=1e-3)]
+    z = np.linspace(0, 500.0, 101)
+    x = np.array([0.0, 10.0, 20.0])
+    mob = Mobility(1000.0, "test")
+
+    def bar(r_top, r_bot):
+        el = [Electrode("top", "ohmic", 0, 20, resistance=r_top),
+              Electrode("bot", "ohmic", 0, 20, face="bottom", resistance=r_bot)]
+        return Device(layers, 20.0, el, mob, Surface("pinned", barrier=1.0),
+                      grid=dict(x=x, z=z), statistics="boltzmann")
+
+    I0 = bar(0.0, 0.0).solve({"bot": 0.5}).current["bot"]
+    Rbar = 0.5 / I0                                   # ohm mm, exactly linear here
+    dev = bar(0.3 * Rbar, 0.2 * Rbar)
+    st = dev.solve({"bot": 0.5})
+    assert st.current["bot"] == pytest.approx(0.5 / (1.5 * Rbar), rel=1e-9)
+    assert st.internal["bot"] - st.internal["top"] == pytest.approx(0.5 / 1.5, rel=1e-9)
+    # the two-port through the resistors equals the DC conductance with them
+    ports, Y = bar(0.0, 0.0).small_signal(bar(0.0, 0.0).solve({"bot": 0.5}), [0.0])
+    Ye = with_series(ports, Y, {"top": 0.3 * Rbar, "bot": 0.2 * Rbar})
+    assert Ye[0, ports.index("bot"), ports.index("bot")].real == pytest.approx(
+        1 / (1.5 * Rbar), rel=1e-7)
+
+
+def test_rf_figures_quasi_static_limit():
+    from kpenvelope.device import rf_figures, two_port
+    layers, dev = _hemt()
+    st = dev.solve({"drain": 5.0, "gate": -1.0})
+    f = np.array([1e6, 1e8, 1e9, 1e10, 1e11, 1e12])
+    ports, Y = dev.small_signal(st, f)
+    Y2 = two_port(ports, Y)
+    r = rf_figures(f, Y2)
+    gm = Y2[0, 1, 0].real
+    cgg = Y2[0, 0, 0].imag / (2 * math.pi * 1e6)
+    assert r["fT_extrapolated"] == pytest.approx(gm / (2 * math.pi * cgg), rel=1e-6)
+    assert 0 < r["fT"] <= 1.05 * r["fT_extrapolated"]
+
+
+def test_heat_in_time_semi_infinite_and_energy():
+    from kpenvelope.thermal import _HeatGrid, solve_heat_transient
+    m = ThermalMaterial("c", 150.0, 0.0, "test", density=6.15, cp_a=0.49)
+    L = 400e3
+    z = np.unique(np.r_[np.linspace(0, L - 20e3, 200), np.linspace(L - 20e3, L, 801)])
+    x = np.array([0.0, 1000.0])
+    q = 1e9
+    H = np.zeros((2, z.size))
+    H[:, -1] = q * np.array([500, 500]) * 1e-9
+    times = np.logspace(-9, -4, 400)
+    t, T = solve_heat_transient([x], z, [m] * (z.size - 1), H, 300.0, times)
+    alpha = 150.0 / (6.15e6 * 0.49)
+    for tt in (1e-7, 1e-5):
+        k = int(np.argmin(np.abs(times - tt)))
+        exact = 2 * q / 150.0 * math.sqrt(alpha * times[k] / math.pi)
+        assert T[k][0, -1] - 300 == pytest.approx(exact, rel=5e-3)
+    g = _HeatGrid([x], z, [m] * (z.size - 1))
+    E = np.sum(g.capacity(T[-1]) * (T[-1].ravel() - 300))
+    assert E == pytest.approx(q * 1e-6 * times[-1], rel=1e-4)
+
+
+def test_heat_capacities_from_sources():
+    # GaN: c_p = (38.1 + 8.96e-3 T) / M J/(g K); 0.49 J/(g K) is listed too
+    assert GAN_BULK.cp_a + GAN_BULK.cp_b * 300.0 == pytest.approx(0.49, abs=0.005)
+    assert GAN_BULK.volumetric_heat(300.0) == pytest.approx(
+        6.15e6 * (38.1 + 8.96e-3 * 300) / (69.723 + 14.007), rel=1e-12)
+    assert SIC_4H_ROOM.volumetric_heat(400.0) == pytest.approx(3.211e6 * 0.69, rel=1e-12)
+    with pytest.raises(ValueError):
+        ThermalMaterial("x", 1.0, 0.0, "r", density=1.0)
+
+
+def test_pulse_reaches_the_steady_self_heated_state():
+    layers, dev = _hemt(mobility=Mobility(1800.0, "test", saturation_velocity=1e7,
+                                          temperature_exponent=2.35))
+    th = ThermalModel(GAN_BULK, substrate=(ThermalLayer("SiC", 50e3, SIC_4H_ROOM),),
+                      lateral_extension=5e3)
+    hot = dev.solve({"drain": 8.0}, thermal=th)
+    t, I, Tm, _ = dev.pulse({"drain": 8.0}, np.logspace(-9, -2, 15), th)
+    assert np.all(np.diff(I["drain"]) <= 1e-6)          # it only heats up
+    assert I["drain"][-1] == pytest.approx(hot.current["drain"], rel=1e-4)
+    assert Tm[-1] == pytest.approx(hot.temperature.max(), abs=0.05)
+    assert Tm[0] < Tm[-1]
+
+
+def test_avalanche_gain_matches_mcintyre():
+    from kpenvelope.device import IMPACT_GAN
+    g = gan(polarization="hse-dreyer2016")
+    layers = [StackLayer(g, 50.0, acceptors=1e-2, name="p"), StackLayer(g, 300.0, name="i"),
+              StackLayer(g, 50.0, donors=1e-2, name="n")]
+    gen = (lambda xx, zz: 1e24 if 52 <= zz <= 54 else 0.0)
+    kw = dict(holes=True, statistics="boltzmann", generation=gen, nz=401)
+    d0 = _vertical(layers, 0.0, **kw)
+    d1 = _vertical(layers, 0.0, ionization=IMPACT_GAN, **kw)
+    g0 = g1 = None
+    for V in (80.0, 95.0):
+        s0 = d0.solve({"top": V}, guess=g0)
+        s1 = d1.solve({"top": V}, guess=g1)
+        g0, g1 = s0, s1
+        M = s1.current["top"] / s0.current["top"]
+        z = s1.axes[-1]
+        E = -np.gradient(s1.psi[1], z) * 1e7
+        an, ap = IMPACT_GAN.alpha(E)
+        m = z >= 53
+        zs, a, b = z[m] * 1e-7, an[m], ap[m]
+        inner = np.concatenate([[0], np.cumsum(0.5 * ((a - b)[1:] + (a - b)[:-1]) * np.diff(zs))])
+        f = a * np.exp(-inner)
+        I = np.sum(0.5 * (f[1:] + f[:-1]) * np.diff(zs))
+        Mc = 1 / (1 - I)
+        assert M - 1 == pytest.approx(Mc - 1, rel=0.05)      # McIntyre, electron injection
+        assert M > 1.0
+    assert M > 1.5
+
+
+def test_ionization_integral_and_breakdown():
+    from kpenvelope.device import IMPACT_GAN
+    g = gan(polarization="hse-dreyer2016")
+    layers = [StackLayer(g, 50.0, acceptors=1e-2, name="p"), StackLayer(g, 300.0, name="i"),
+              StackLayer(g, 50.0, donors=1e-2, name="n")]
+    dev = _vertical(layers, 0.0, statistics="boltzmann", nz=401)
+    st = dev.solve({"top": 95.0})
+    r = dev.ionization_integral(st, IMPACT_GAN)
+    z = st.axes[-1]
+    E = np.abs(np.gradient(st.psi[1], z)) * 1e7
+    an, ap = IMPACT_GAN.alpha(E)
+    zc = z * 1e-7
+    d = an - ap
+    cum = np.concatenate([[0], np.cumsum(0.5 * (d[1:] + d[:-1]) * np.diff(zc))])
+    f = an * np.exp(-cum)
+    In = np.sum(0.5 * (f[1:] + f[:-1]) * np.diff(zc))
+    assert r["I_n"] == pytest.approx(In, rel=1e-3)
+    vbr, V, I, _ = dev.breakdown_voltage("top", [95.0, 100.0, 105.0, 110.0, 115.0],
+                                         guess=st, ionization=IMPACT_GAN)
+    assert I[-1] >= 1.0 > I[-2]
+    assert V[-2] < vbr < V[-1]
+    # breakdown near 3.3 to 3.7 MV/cm over the 300 nm undoped layer
+    assert 95.0 < vbr < 115.0
+
+
+def test_electron_temperature_uniform_field():
+    from kpenvelope.electrons import KB as kB
+    g = algan(0.0)
+    layers = [StackLayer(g, 3000.0, donors=1e-3)]
+    mob = Mobility(1000.0, "test", saturation_velocity=1.5e7)
+    dev = _vertical(layers, 0.0, holes=False, mobility=mob, nz=1201, statistics="boltzmann")
+    tau = 0.47e-12
+    for V in (1.5, 15.0):
+        st = dev.solve({"bot": V})
+        Tn = dev.electron_temperature(st, tau)
+        E = V / 3000e-7
+        exact = 300.0 + 2.0 / 3.0 * tau * mob.value(E) * E * E / kB
+        assert Tn[1, 400] == pytest.approx(exact, rel=1e-4)    # 2 um downstream of the entry
+        assert Tn[1, 0] == pytest.approx(300.0) and Tn[1, -1] == pytest.approx(300.0)
+
+
+def test_gate_tunneling_matches_1d_under_a_wide_gate():
+    from kpenvelope import gate_leakage
+    layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+              StackLayer(algan(0.25), 10.0, name="barrier")]
+    el = [Electrode("source", "ohmic", 0, 100, implant_depth=30, implant_donors=1e20),
+          Electrode("gate", "schottky", 400, 2400, barrier=1.0),
+          Electrode("drain", "ohmic", 2700, 2800, implant_depth=30, implant_donors=1e20)]
+    dev = Device(layers, 2800.0, el, Mobility(1800.0, "test"), Surface("pinned", barrier=1.0),
+                 dx_fine=10, dx_max=100, dz_fine=0.5, dz_max=40, fine_depth=40)
+    st = dev.solve({"gate": -3.0})
+    I, Jc = dev.gate_tunneling(st)
+    nz = st.axes[-1].size
+    xs = st.axes[0][dev.enodes["gate"] // nz]
+    k = int(np.argmin(np.abs(xs - 1400.0)))
+    _, J1, _ = gate_leakage(layers, 1.0, [-3.0], dz=0.5)
+    assert Jc[k] == pytest.approx(J1[0], rel=5e-3)
+    assert I < 0                     # electrons enter from the metal at reverse bias
