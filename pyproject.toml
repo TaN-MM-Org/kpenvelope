@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kpenvelope"
-version = "0.18.0"
-description = "Polarization charge, misfit-dislocation charge, 2D electron and hole gases and device curves of GaN, AlGaN, InGaN, InAlN and ScAlN stacks, with error bars and a browser app: six-band k.p holes, Schroedinger-Poisson electrons, drift-diffusion, interface phonons, fits to measured data"
+version = "0.19.0"
+description = "Polarization charge, misfit-dislocation charge, 2D electron and hole gases and device curves of GaN, AlGaN, InGaN, InAlN and ScAlN stacks, with error bars and a browser app: six-band k.p holes, Schroedinger-Poisson electrons, drift-diffusion in 1D, 2D and 3D with traps and self-heating, interface phonons, fits to measured data"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Tanvir M. Mahim", email = "tanvir.mahim@bracu.ac.bd" }]
 requires-python = ">=3.9"
-keywords = ["k.p", "envelope function", "wurtzite", "GaN", "AlGaN", "2DHG", "2DEG", "polarization", "misfit dislocation", "Schrodinger-Poisson", "uncertainty", "subband", "semiconductor", "InGaN", "InAlN", "ScAlN", "drift-diffusion", "C-V", "phonons", "GUI"]
+keywords = ["k.p", "envelope function", "wurtzite", "GaN", "AlGaN", "2DHG", "2DEG", "polarization", "misfit dislocation", "Schrodinger-Poisson", "uncertainty", "subband", "semiconductor", "InGaN", "InAlN", "ScAlN", "drift-diffusion", "C-V", "phonons", "GUI", "HEMT", "device simulation", "traps", "self-heating"]
 dependencies = ["numpy>=1.22"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -22,6 +22,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest", "scipy>=1.8"]
+device = ["scipy>=1.8"]
 
 [project.scripts]
 kpenvelope-app = "kpenvelope.gui:main"

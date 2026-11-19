@@ -68,6 +68,12 @@ design finder searches compositions and thicknesses for a target
 electron density and switch-off voltage; gate leakage over and through
 the barrier follows from the band diagram; and a two-dimensional
 cross-section shows the gate edges and the electrons beside the gate.
+Since version 0.19.0 it simulates whole devices in two and three
+dimensions: a transistor with source, gate and drain carries current,
+its mobility saturates at high field and falls as it warms, deep-level
+traps (iron, carbon or surface states) fill and empty over time, and the
+current heats the device through a heat equation that reaches down
+through the substrate to the heat sink.
 And everything above can be used without writing code, in an app that
 opens in your web browser (`kpenvelope-app`) and says what each result
 means in plain words. It also answers:
@@ -86,6 +92,10 @@ means in plain words. It also answers:
   at its edges?
 - Combining every published constraint, how well is the misfit-line
   charge known, and which experiment would pin it down?
+- What drain current does my transistor carry, how hot does it get on
+  SiC, and how much current does it lose to the heat?
+- How far does the current drop after a high drain voltage when the
+  buffer holds iron, and how long does it take to recover?
 
 No material number is built in without a written source. When an input
 cannot give a trustworthy answer, the package stops with an error that
@@ -100,7 +110,8 @@ says why, instead of returning a number that looks fine but is not.
   nitride stacks, electrons, error bars and fits; 19 to 23 for InAlN and
   ScAlN, C-V, a p-n diode, phonons, and the misfit-line charge; 24 to 27
   for fitting measured data, the design finder, gate leakage and the 2D
-  cross-section)
+  cross-section; 28 to 30 for transistor curves with self-heating, drain
+  lag from traps, and a 3D transistor)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -274,7 +285,8 @@ kpenvelope-app
 
 (or `python -m kpenvelope.gui`) opens the app in your web browser. It
 runs on your own computer, on 127.0.0.1 only, and needs nothing beyond
-kpenvelope and NumPy. You build the layer stack on the left (from an
+kpenvelope and NumPy (the Transistor tab also needs SciPy:
+`pip install "kpenvelope[device]"`). You build the layer stack on the left (from an
 example or from scratch), choose whose published numbers to use, and
 read the results on the right:
 
@@ -308,6 +320,16 @@ read the results on the right:
 - **2D cross-section**: a slice through a transistor with a gate of a
   given length, showing where the electrons are (or the band) under and
   beside the gate, and the electron density along the slice.
+- **Transistor** (new in 0.19.0): a whole transistor built from your
+  layers, with source, gate and drain. It gives the output curve (drain
+  current against drain voltage) or the transfer curve (against gate
+  voltage), with a mobility and top speed from cited sources (or
+  yours), optionally with self-heating down through a SiC or other
+  substrate (the hottest point and the thermal resistance are reported),
+  and a picture of the electrons, the temperature or the band at the last
+  point. A second button follows drain lag: iron traps in the base are
+  filled at a high drain voltage, then the current is followed from a
+  nanosecond to ten seconds after switching to the measuring voltages.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -1457,6 +1479,160 @@ tests); at the gate edge it is in between. A short gate holds more
 charge per length than a long one because the field spreads at its
 edges, and a 1 um gate comes within 6 percent of the 1D capacitance.
 
+### 28. A transistor's current, with and without self-heating (new in 0.19.0)
+
+```python
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+from kpenvelope.thermal import GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalModel
+
+layers = [StackLayer(algan(0.0), 1000.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+# room-temperature mobility and its power law in T: Alpert et al. (2020); a saturation
+# speed of 1e7 cm/s (a round illustrative number)
+mob = Mobility(1704.0, "Alpert et al., Rev. Sci. Instrum. 91 (2020)",
+               saturation_velocity=1.0e7, temperature_exponent=2.35)
+el = [Electrode("source", "ohmic", 0, 500, implant_depth=40, implant_donors=1e20),
+      Electrode("gate", "schottky", 1500, 1750, barrier=1.0),
+      Electrode("drain", "ohmic", 3000, 3500, implant_depth=40, implant_donors=1e20)]
+dev = Device(layers, 3500.0, el, mob, Surface("pinned", barrier=1.0),
+             dx_fine=10, dx_max=100, dz_fine=1.0, dz_max=100)
+heat = ThermalModel(GAN_BULK, substrate=(ThermalLayer("SiC", 100e3, SIC_4H_ROOM),),
+                    lateral_extension=20e3)
+V, cold, _ = dev.sweep("drain", [1, 2, 5, 10], bias={"gate": 0.0})
+V, hot, S = dev.sweep("drain", [1, 2, 5, 10], bias={"gate": 0.0}, thermal=heat)
+for v, a, b, s in zip(V, cold["drain"], hot["drain"], S):
+    print(f"Vd = {v:4.1f} V: {a:.3f} A/mm without heating, {b:.3f} A/mm with "
+          f"(hottest {s.temperature.max():.0f} K, {s.power:.2f} W/mm)")
+s = S[-1]
+print(f"currents add up to {sum(s.current.values()):.1e} A/mm; heat put in "
+      f"{s.heat.sum():.6f} W/mm = power {s.power:.6f} W/mm")
+```
+
+```
+Vd =  1.0 V: 0.740 A/mm without heating, 0.719 A/mm with (hottest 307 K, 0.72 W/mm)
+Vd =  2.0 V: 0.969 A/mm without heating, 0.916 A/mm with (hottest 317 K, 1.83 W/mm)
+Vd =  5.0 V: 1.046 A/mm without heating, 0.933 A/mm with (hottest 353 K, 4.66 W/mm)
+Vd = 10.0 V: 1.068 A/mm without heating, 0.870 A/mm with (hottest 411 K, 8.70 W/mm)
+currents add up to 2.2e-11 A/mm; heat put in 8.696261 W/mm = power 8.696261 W/mm
+```
+
+`Device` builds a 3.5 um long transistor: ohmic source and drain on
+heavily doped regions, a 250 nm Schottky gate, and the pinned surface in
+between. The current rises and then flattens as the electrons reach
+their top speed. With `thermal=` the heat made by the current flows
+down through 100 um of SiC to a heat sink at 300 K; the hottest point
+reaches 411 K at 8.7 W/mm (about 13 K per W/mm), and the warmer, slower
+electrons carry 18.5 percent less current. The last line is a check that
+holds in every solve: the terminal currents add up to zero, and the
+heat put into the lattice equals the electrical power. The 4H-SiC
+conductivity is held constant (its source gives no temperature
+dependence), which underestimates the heating somewhat.
+
+### 29. Drain lag from iron in the buffer
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import (Device, Electrode, Mobility, Surface, Trap,
+                               capture_coefficient)
+
+# iron in the lower buffer: an acceptor 0.5 eV below the conduction band,
+# capture cross section 1e-15 cm^2, with 1e15 cm^-3 shallow donors
+# (Uren et al., IEEE Trans. Electron Devices 59, 3327 (2012))
+buf = algan(0.0)
+layers = [StackLayer(buf, 1000.0, name="buffer", donors=1e-6),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+cn = capture_coefficient(1e-15, buf.me)
+fe = Trap("acceptor", 0.5, "ec", 1e17, cn, 0.0, "Uren et al. 2012",
+          where="buffer", z_range=(0.0, 900.0))
+el = [Electrode("source", "ohmic", 0, 500, implant_depth=40, implant_donors=1e20),
+      Electrode("gate", "schottky", 1500, 1750, barrier=1.0),
+      Electrode("drain", "ohmic", 3000, 3500, implant_depth=40, implant_donors=1e20)]
+dev = Device(layers, 3500.0, el, Mobility(1704.0, "Alpert et al. 2020",
+             saturation_velocity=1.0e7), Surface("pinned", barrier=1.0),
+             traps=[fe], dx_fine=10, dx_max=100, dz_fine=1.0, dz_max=100)
+print(f"c_n = {cn:.2e} cm^3/s; a trapped electron waits {dev.emission_times()[0][0]:.2e} s")
+stress = dev.solve({"drain": 15.0})
+settled = dev.solve({"drain": 3.0}, guess=stress)
+r = dev.transient(stress, {"drain": 3.0}, np.logspace(-9, 0, 10))
+for t, i in zip(r.times, r.current["drain"]):
+    print(f"t = {t:.0e} s: {i:.4f} A/mm")
+print(f"settled value {settled.current['drain']:.4f} A/mm")
+```
+
+```
+c_n = 2.41e-08 cm^3/s; a trapped electron waits 4.65e-03 s
+t = 1e-09 s: 0.9560 A/mm
+t = 1e-08 s: 0.9613 A/mm
+t = 1e-07 s: 0.9613 A/mm
+t = 1e-06 s: 0.9614 A/mm
+t = 1e-05 s: 0.9615 A/mm
+t = 1e-04 s: 0.9629 A/mm
+t = 1e-03 s: 0.9738 A/mm
+t = 1e-02 s: 0.9971 A/mm
+t = 1e-01 s: 0.9973 A/mm
+t = 1e+00 s: 0.9973 A/mm
+settled value 0.9973 A/mm
+```
+
+The buffer holds iron, an acceptor 0.5 eV below the conduction band.
+At 15 V on the drain, electrons pushed into the buffer fill some of
+these traps. Right after the switch to 3 V the trapped charge is still
+there and the current is 4 percent low; it recovers between 0.1 and 10
+milliseconds, as the traps let their electrons go (a trapped electron
+waits 4.65 ms on average at 300 K), and settles exactly at the steady
+state of the new bias. This is the drain lag behind "current collapse".
+
+### 30. A transistor in three dimensions
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+
+layers = [StackLayer(algan(0.0), 200.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1800.0, "illustrative", saturation_velocity=1.0e7)
+grid = dict(dx_fine=10, dx_max=50, dz_fine=2.0, dz_max=40, fine_depth=40)
+
+
+def electrodes(gate_y=None):
+    g = dict(y0=gate_y[0], y1=gate_y[1]) if gate_y else {}
+    return [Electrode("source", "ohmic", 0, 100, implant_depth=40, implant_donors=1e20),
+            Electrode("gate", "schottky", 300, 400, barrier=1.0, **g),
+            Electrode("drain", "ohmic", 600, 700, implant_depth=40, implant_donors=1e20)]
+
+
+flat = Device(layers, 700.0, electrodes(), mob, Surface("pinned", barrier=1.0), **grid)
+s2 = flat.solve({"drain": 2.0, "gate": -3.0})
+x, z = flat.axes
+y = np.linspace(0.0, 400.0, 9)
+# 3D, gate across the whole width: the same as 2D
+full = Device(layers, 700.0, electrodes(), mob, Surface("pinned", barrier=1.0),
+              depth=400.0, grid=dict(x=x, y=y, z=z))
+s3 = full.solve({"drain": 2.0, "gate": -3.0})
+print(f"2D: {s2.current['drain']:.5f} A/mm; 3D, full gate: "
+      f"{s3.current['drain'] / 4e-4:.5f} A/mm")
+# 3D, gate over half the width: the other half is an open channel
+half = Device(layers, 700.0, electrodes((0.0, 200.0)), mob,
+              Surface("pinned", barrier=1.0), depth=400.0, grid=dict(x=x, y=y, z=z))
+s4 = half.solve({"drain": 2.0, "gate": -3.0})
+print(f"3D, gate over half the width: {s4.current['drain'] / 4e-4:.5f} A/mm "
+      f"(grid {s4.n.shape})")
+```
+
+```
+2D: 0.84196 A/mm; 3D, full gate: 0.84196 A/mm
+3D, gate over half the width: 1.23343 A/mm (grid (39, 9, 33))
+```
+
+With `depth` the same device becomes three-dimensional. A gate across
+the whole width gives the 2D current to five digits (the tests check
+1e-9). A gate over only half of the width leaves the other half as an
+open channel, so at -3 V on the gate much more current flows. 3D solves
+take minutes rather than seconds on a laptop.
+
 ## Tutorials
 
 Three scripts in `examples/` go from data to a final result with error
@@ -1823,6 +1999,27 @@ example) gives its inputs, units and conventions.
   the 2D cross-section (`CrossSection`); `fit_least_squares` gains
   `difference="forward"` for expensive models.
 
+**Devices in 2D and 3D, traps and heat (new in 0.19.0; need SciPy)**
+
+- `Device(layers, width, electrodes, mobility, surface, traps, depth,
+  ...)` -- drift-diffusion of the whole device on a tensor-product grid,
+  2D (x, z) or, with `depth`, 3D (x, y, z); `solve(bias, guess,
+  thermal)`, `sweep(electrode, values, bias)`, `equilibrium()`,
+  `transient(start, bias, times, rise_time, initial_occupancy)`,
+  `emission_times()`. Results are `DeviceState`s (potential, bands,
+  quasi-Fermi levels, carriers, temperature, trap occupancy, terminal
+  currents and charges, heat, `sheet()`, `power`) and
+  `TransientResult`s.
+- `Electrode` (ohmic with an implant, or Schottky with optional
+  thermionic emission, on the top or bottom face), `Surface` (pinned,
+  or with states), `Mobility` (low field, saturation speed, shape,
+  temperature power law, reference), `Trap` (acceptor or donor level,
+  density, capture coefficients, reference, where), and
+  `capture_coefficient`.
+- `ThermalMaterial`, `ThermalLayer`, `ThermalModel`,
+  `boundary_resistance`, `solve_heat`, and the shipped `GAN_BULK` and
+  `SIC_4H_ROOM`.
+
 **Phonons (new in 0.18.0)**
 
 - `PolarPhonons` -- the E1 and A1 TO and LO phonons and high-frequency
@@ -1970,6 +2167,33 @@ NSM database. The listed numbers pass the Lyddane-Sachs-Teller check to
 0.3 percent. No transport number (mobility, lifetime, recombination
 constant, hole mass) is shipped: there is no single accepted set, so
 `Transport` asks for yours with a reference.
+
+Devices, traps and heat (new in 0.19.0). The library ships two thermal
+records and nothing else: `GAN_BULK`, 230 W/(m K) at 300 K (the highest
+room-temperature value for low-dislocation bulk GaN in C. Mion et al.,
+Appl. Phys. Lett. 89, 092123 (2006), doi:10.1063/1.2335972) falling as
+(T/300 K)^-1.43 (the 300-450 K dependence of the same measurements, as
+quoted by B. A. Danilchenko et al., Solid State Commun. (2007),
+doi:10.1016/j.ssc.2007.08.007); and `SIC_4H_ROOM`, 370 W/(m K)
+(Goldberg et al. 2001, as listed by the Ioffe database), held constant
+because that source gives no temperature dependence for 4H-SiC. Thin,
+defective GaN conducts less heat than bulk; give your own number if you
+have it. `Mobility` and `Trap` always take your numbers with a
+reference. The app's Transistor tab fills them, and says so, from: a
+mobility of 1704 cm^2/Vs measured at room temperature falling as
+(T/300 K)^-2.35 (H. S. Alpert et al., Rev. Sci. Instrum. 91 (2020),
+doi:10.1063/1.5139911, arXiv:1912.00977); a saturation speed of
+10^7 / (0.38 + (n_s / 1.8e13)^0.45) cm/s from the electron density (the
+fit of S. Bajaj et al., Appl. Phys. Lett. 107 (2015),
+doi:10.1063/1.4933181, to their drifted Fermi-Dirac calculations, which
+matched their pulsed measurements); and iron as an acceptor 0.5 eV below
+the conduction band (D. Wickramaratne et al., Phys. Rev. B 99, 205202
+(2019); M. J. Uren et al., IEEE Trans. Electron Devices 59, 3327
+(2012)), with a capture cross section of 1e-15 cm^2 and 1e15 cm^-3
+shallow compensating donors as in Uren et al. Carbon's acceptor level,
+0.90 eV above the valence band (J. L. Lyons et al., Appl. Phys. Lett.
+97, 152108 (2010)), needs holes, so it is not in the app; use `Trap`
+with `hole_mass` in the library.
 
 The misfit-line charge is not shipped as a default. The misfit analysis
 measured -0.84 +- 0.53 e/nm, or 0.32 +- 0.20 of the bare-end charge
@@ -2125,7 +2349,7 @@ Since 0.18.0 it also refuses (or warns):
 
 ## How the results are checked
 
-240 automated tests run on every push and pull request, on Python 3.9,
+264 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -2369,6 +2593,32 @@ the tests use:
   1e-15 + 1e-12 k eV; spins are in-plane, unit length, perpendicular
   to k and opposite to 1e-12; the two energies at k = 0 are equal
   exactly; 4.5e-4 eV nm at 0.1 nm^-1 gives 9e-5 eV to 1e-19.
+
+**Devices in 2D and 3D, traps and heat (new in 0.19.0)**
+
+- The 2D solver against the 1D drift-diffusion solver on a GaN p-n
+  diode at 0, 2.5 and 2.9 V: potential to 1e-9 V, current to 1e-8.
+- A uniformly doped bar carries exactly q n mu(E) E, for the field and
+  the quasi-Fermi driving force and for two saturation shapes (1e-6).
+- A 3D device uniform along y gives the 2D current and potential (1e-9).
+- Terminal currents add up to zero, and the heat put into the lattice
+  equals the electrical power sum V I (1e-8); the drain current of a
+  transistor vanishes near the 1D threshold of the layers under its gate.
+- Trap occupancy equals the Fermi function in equilibrium (1e-12);
+  emission follows the exact backward-Euler recursion with the step
+  sizes taken (1e-6); drain lag recovers to the steady state of the new
+  bias (1e-6); many surface donors at 1.0 eV give the electron density of
+  a surface pinned at 1.0 eV (3 percent); traps that exchange with both
+  bands recombine exactly like the 1D solver's lifetimes in a p-n diode
+  (1e-6).
+- The heat solver matches the exact Kirchhoff solution of a slab with
+  k(T) of power law (1e-6 K) and the Fourier-series solution of a strip
+  heater (3e-4); a boundary-resistance layer raises the temperature by
+  q R (1e-9); the self-heated state is a fixed point of the heat equation.
+- The analytic Jacobian matches central differences of the residual on
+  a biased transistor, for both driving forces (1e-5 of each row's
+  scale); the app's transistor and drain-lag actions run, their currents
+  add up to zero, and the drain lag settles at the steady state.
 
 **InGaN, InAlN, ScAlN, devices, phonons and the app (new in 0.18.0)**
 
@@ -2771,9 +3021,28 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   voltage (no electrons left) the bands and the leakage stop changing.
   Thermionic emission is applied at metal contacts only, not at abrupt
   offsets between layers.
-- 2D: no drain voltage or current along the channel, classical
-  electrons, holes only if asked, the free surface pinned at one
-  barrier, and SciPy for speed (the NumPy fallback is slower).
+- 2D cross-section (`solve_cross_section`): no drain voltage or current
+  along the channel, classical electrons, holes only if asked, the free
+  surface pinned at one barrier, and SciPy for speed (the NumPy fallback
+  is slower). For current, use `Device`.
+- Devices in 2D and 3D (`Device`): drift-diffusion with classical
+  carriers (no quantum confinement of the channel, no hot-electron
+  energy balance or ballistic transport), a heterojunction as a band
+  step between two nodes (no thermionic emission or tunneling at
+  internal interfaces), no impact ionization or breakdown, no
+  small-signal AC, and tensor-product grids only (no unstructured
+  meshes). Contact resistance is not included: an ohmic contact is an
+  ideal contact on a heavily doped region. The heat equation is steady
+  state; the lattice temperature changes the mobility only (the carrier
+  statistics stay at the ambient temperature). The mobility's field is
+  rounded near zero (0.1 percent of its saturation term at most) to
+  keep it smooth. The quasi-Fermi driving force (an option) often fails
+  to converge at high drain voltage; the default field driving force
+  does not have that problem. Each Newton step is a sparse LU solve, so a 2D sweep
+  takes seconds to a minute and a 3D one minutes. With an undoped
+  buffer and no traps the current under a pinched-off gate flows
+  through the buffer, as it would in such a device. Check the grid by
+  refining it near the gate edges.
 - Phonons: only the interface (decaying) modes of the dielectric
   continuum model, not the confined or half-space modes, and no
   phonon-limited mobility. The single-oscillator dielectric function

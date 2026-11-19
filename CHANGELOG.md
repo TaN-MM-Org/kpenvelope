@@ -4,6 +4,76 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.19.0 (2026-11-19)
+
+Whole devices in two and three dimensions. A transistor with source,
+gate and drain carries current, its mobility saturates at high field and
+falls with temperature, traps in the layers fill and empty over time,
+and the current heats the device through a heat equation that reaches
+down to the heat sink. The app gains a Transistor tab for all of it.
+SciPy is needed for the new solvers (`pip install "kpenvelope[device]"`);
+everything else still needs NumPy only. README examples 1 to 27 print
+what they printed before.
+
+### Added
+
+- `Device` (module `device`): drift-diffusion on a tensor-product grid
+  in 2D (x, z) or 3D (x, y, z), fully coupled Newton with exact
+  derivatives of the Scharfetter-Gummel fluxes, sparse LU, adaptive bias
+  ramps with a secant predictor. `Electrode` (ohmic with the doped region
+  an alloyed contact makes, or Schottky, optionally with thermionic
+  emission), `Surface` (pinned, or with its own fixed charge and traps),
+  `Mobility` (Caughey-Thomas field dependence on the electric field along
+  each edge, or on the quasi-Fermi gradient, with a power law in
+  temperature; every number with its reference). `solve`, `sweep`,
+  terminal currents in A/mm (2D) or A (3D) that sum to zero, and the heat
+  at every node.
+- `Trap`: acceptor- or donor-like deep levels in layers or at the free
+  surface, with Shockley-Read-Hall capture and emission (steady state
+  eliminated exactly), `Device.transient` (backward Euler with adaptive
+  steps, displacement currents, optional starting occupancy), and
+  `capture_coefficient` (sigma times the mean thermal speed).
+  `Device.emission_times` gives the mean wait before emission.
+- Self-heating (module `thermal`): `solve_heat` for k(T) = k_300 (T/300)^-a
+  on layered tensor grids, `ThermalModel` (substrate layers, boundary
+  resistance as `boundary_resistance`, lateral extension for the finger
+  pitch, heat sink), coupled to `Device.solve(thermal=...)`. Shipped
+  numbers: GaN 230 W/(m K) with a = 1.43 (Mion et al., Appl. Phys. Lett.
+  89, 092123 (2006), doi:10.1063/1.2335972; the exponent as quoted by
+  Danilchenko et al., doi:10.1016/j.ssc.2007.08.007) and 4H-SiC 370 W/(m K)
+  held constant (Goldberg et al. 2001 via the Ioffe database, which gives
+  no temperature dependence for 4H-SiC).
+- App, Transistor tab: output and transfer curves of a transistor built
+  from the sample, with self-heating on a SiC or user substrate and a
+  picture of the electrons, temperature or band; and a drain-lag run with
+  iron traps (Ec - 0.5 eV, Wickramaratne et al., Phys. Rev. B 99, 205202
+  (2019) and Uren et al., IEEE Trans. Electron Devices 59, 3327 (2012);
+  cross section 1e-15 cm^2 and 1e15 cm^-3 compensating donors from Uren
+  et al.). Built-in mobility: 1704 cm^2/Vs and (T/300)^-2.35 (Alpert et
+  al., Rev. Sci. Instrum. 91 (2020), doi:10.1063/1.5139911); saturation
+  speed from the electron density by the fit of Bajaj et al. (Appl.
+  Phys. Lett. 107 (2015), doi:10.1063/1.4933181) to their calculations,
+  which matched their pulsed measurements.
+- README examples 28 to 30: transistor curves with and without
+  self-heating, drain lag, and a 3D transistor.
+
+### Checks (tests)
+
+24 new tests (264 in all): the 2D solver against the 1D drift-diffusion
+solver on a p-n diode (current to 1e-8, potential to 1e-9 V); a uniformly
+doped bar against q n mu(E) E for both driving forces and two shapes;
+3D uniform along y against 2D (1e-9); currents that sum to zero and heat
+that equals the electrical power; the transistor's switch-off against
+the 1D threshold; trap occupancy against the Fermi function in
+equilibrium (1e-12); trap emission against the exact backward-Euler
+recursion; drain lag recovering to the steady state of the new bias;
+surface donor states against a pinned surface; the heat solver against
+the exact Kirchhoff solution of a slab with k(T) and the Fourier-series
+solution of a strip heater; the boundary-resistance layer against q R;
+traps with holes against the 1D solver's recombination lifetimes
+(1e-6); the analytic Jacobian against central differences for both driving
+forces; the app's transistor and drain-lag actions.
+
 ## 0.18.0 (2026-11-18)
 
 The nitride part grows into a device tool. InGaN, InAlN and ScAlN are
