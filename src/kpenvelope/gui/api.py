@@ -866,6 +866,23 @@ TRANSISTOR_SOURCES = {
           "al., IEEE Trans. Electron Devices 59, 3327 (2012)); capture cross "
           "section 10^-15 cm² and 10^15 per cm³ shallow compensating donors "
           "as in Uren et al.",
+    "sin": "silicon nitride: relative permittivity 7 (J. Robertson, Eur. Phys. J. "
+           "Appl. Phys. 28, 265 (2004), Table 2)",
+    "passivated": "passivated surface: the interface under the passivation keeps the "
+                  "charge the bare surface carried (from the 1D solver with your "
+                  "surface energy step); any extra charge your film adds is not "
+                  "included",
+    "no_heat_cap": "heat flow through the passivation is neglected (it is thin and "
+                   "conducts heat poorly)",
+    "impact": "GaN impact ionization: alpha_n = 2.11e9 exp(-3.689e7/E), alpha_p = "
+              "4.39e6 exp(-1.8e7/E) per cm, E in V/cm: D. Ji, B. Ercan and S. "
+              "Chowdhury, Appl. Phys. Lett. 115, 073503 (2019), "
+              "doi:10.1063/1.5099245, applied in the GaN layers only (no numbers "
+              "are built in for AlGaN, which is taken as not ionizing); breakdown "
+              "when the ionization integral along the field line through the "
+              "highest field in GaN reaches 1",
+    "mason": "f_max from Mason's unilateral gain U (S. J. Mason, IRE Trans. Circuit "
+             "Theory 1, 20 (1954)); f_T where the current gain |h21| falls to 1",
 }
 
 
@@ -901,6 +918,39 @@ def _transistor_device(spec, with_traps=False):
           Electrode("gate", "schottky", x_g0, x_g0 + lg, barrier=gate_barrier),
           Electrode("drain", "ohmic", width - ls, width, implant_depth=implant,
                     implant_donors=1e20)]
+    rc = _num(t, "contact_res", 0.0, 0.0, 100.0, "the contact resistance (Ω·mm)")
+    pas = _num(t, "passivation", 0.0, 0.0, 2000.0, "the passivation thickness (nm)")
+    plate = _num(t, "plate", 0.0, 0.0, 50000.0, "the field-plate length (nm)")
+    if plate > 0 and pas <= 0:
+        raise SpecError("A field plate sits on the passivation: give the passivation "
+                        "a thickness.")
+    if plate > 0 and x_g0 + lg + plate > width - ls - 20.0:
+        raise SpecError("The field plate reaches the drain; make it shorter.")
+    cap, extra_src = (), []
+    if pas > 0:
+        from ..device import Dielectric
+        eps_in = t.get("passivation_eps")
+        if eps_in in (None, ""):
+            eps_p, eps_src = 7.0, TRANSISTOR_SOURCES["sin"]
+        else:
+            eps_p = _num(t, "passivation_eps", lo=1.0, hi=100.0,
+                         what="the passivation's permittivity")
+            eps_src = str(t.get("passivation_source") or "").strip() or "yours"
+        cap = (Dielectric("passivation", pas, eps_p, eps_src),)
+        box = dict(z0=top, z1=top + pas)
+        el = [Electrode("source", "ohmic", 0.0, ls, implant_depth=implant,
+                        implant_donors=1e20, resistance=rc, **box),
+              Electrode("gate", "schottky", x_g0, x_g0 + lg, barrier=gate_barrier, **box),
+              Electrode("drain", "ohmic", width - ls, width, implant_depth=implant,
+                        implant_donors=1e20, resistance=rc, **box)]
+        if plate > 0:
+            # one metal with the gate: an L-shaped gate
+            el.insert(2, Electrode("gate", "schottky", x_g0, x_g0 + lg + plate,
+                                   barrier=gate_barrier, z0=top + pas, z1=top + pas))
+        extra_src = [f"passivation: {eps_src}", TRANSISTOR_SOURCES["passivated"]]
+    elif rc > 0:
+        import dataclasses as _dc
+        el = [_dc.replace(e, resistance=rc) if e.kind == "ohmic" else e for e in el]
     mu = _num(t, "mobility", 1704.0, 1.0, 1e5, "the electron mobility (cm²/Vs)")
     gamma = _num(t, "mobility_temperature", 2.35, 0.0, 5.0,
                  "how fast the mobility falls with temperature")
@@ -934,19 +984,26 @@ def _transistor_device(spec, with_traps=False):
                       "the compensating donor density (per cm³)")
         import dataclasses as _dc
         layers[0] = _dc.replace(layers[0], donors=layers[0].donors + donors * 1e-21)
-    dev = Device(layers, width, el, mob, Surface("pinned", barrier=surface),
+    if pas > 0:
+        from ..nitride import QE as _QE
+        surf = Surface("states", fixed_charge=float(one.gate_charge / _QE))
+    else:
+        surf = Surface("pinned", barrier=surface)
+    dev = Device(layers, width, el, mob, surf, cap=cap,
                  traps=traps, temperature_K=T, interfaces=ic, dx_fine=10.0,
                  dx_max=150.0, dz_fine=1.0, dz_max=100.0, fine_depth=min(60.0, top))
     return dev, dict(layers=layers, warn=warn, width=width, gate=[x_g0, x_g0 + lg],
                      contacts=[[0.0, ls], [width - ls, width]], ns=ns, vsat=vs,
-                     mobility=mu, gamma=gamma, sources=[mob.reference])
+                     mobility=mu, gamma=gamma, sources=[mob.reference] + extra_src,
+                     passivation=pas, plate=[x_g0 + lg, x_g0 + lg + plate] if plate else None,
+                     contact_res=rc)
 
 
-def _map(dev, st, depth=100.0):
+def _map(dev, st, depth=100.0, te=None):
     x, z = dev.axes
-    top = z[-1]
+    top = dev.top                         # the semiconductor's top (below any passivation)
     depth = min(depth, top)
-    m = z >= top - depth - 1e-9
+    m = (z >= top - depth - 1e-9) & (z <= top + 1e-9)
     zz = top - z[m]
     xi = np.linspace(0, x[-1], 180)
     zi = np.linspace(0, depth, 90)
@@ -956,18 +1013,58 @@ def _map(dev, st, depth=100.0):
         order = np.argsort(zz)
         return np.array([np.interp(zi, zz[order], a[k, order]) for k in range(a.shape[0])])
 
-    return {"x": xi.tolist(), "depth": zi.tolist(),
-            "log10n": resample(np.log10(np.maximum(st.n, 1.0))).tolist(),
-            "temp": resample(st.temperature).tolist(),
-            "ec": resample(st.ec).tolist()}
+    out = {"x": xi.tolist(), "depth": zi.tolist(),
+           "log10n": resample(np.log10(np.maximum(st.n, 1.0))).tolist(),
+           "temp": resample(st.temperature).tolist(),
+           "ec": resample(st.ec).tolist()}
+    if te is not None:
+        out["te"] = resample(te).tolist()
+    return out
+
+
+def _fet_thermal(spec, info):
+    """The heat-flow model of the transistor tab (None without heating)."""
+    from ..thermal import (GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalMaterial,
+                           ThermalModel, boundary_resistance)
+    t = spec.get("transistor") or {}
+    sub = t.get("substrate", "SiC")
+    thick = _num(t, "substrate_um", 100.0, 1.0, 2000.0, "the substrate thickness (µm)")
+    if sub == "SiC":
+        mat = SIC_4H_ROOM
+    else:
+        k = _num(t, "substrate_k", what="the substrate's thermal conductivity (W/m/K)",
+                 lo=0.1, hi=5000.0)
+        mat = ThermalMaterial("substrate", k, _num(t, "substrate_alpha", 0.0, 0.0, 3.0,
+                                                   "how fast it falls with temperature"),
+                              str(t.get("substrate_source") or "yours"))
+    sublayers = [ThermalLayer("substrate", thick * 1e3, mat)]
+    rb = t.get("boundary")
+    if rb not in (None, "", 0, "0"):
+        rb = _num(t, "boundary", lo=1e-12, hi=1e-5,
+                  what="the boundary resistance (m² K/W)")
+        sublayers.append(boundary_resistance(rb, "yours"))
+    pitch = _num(t, "pitch_um", 50.0, 1.0, 1000.0, "the finger pitch (µm)")
+    ext = max(0.0, (pitch * 1e3 - info["width"]) / 2)
+    mats = GAN_BULK
+    if info.get("passivation"):
+        mats = {L.label: GAN_BULK for L in info["layers"]}
+        mats["passivation"] = ThermalMaterial(
+            "passivation (heat flow neglected)", 1e-3, 0.0,
+            TRANSISTOR_SOURCES["no_heat_cap"], density=1e-3, cp_a=1e-3)
+    model = ThermalModel(mats, substrate=tuple(sublayers),
+                         sink_temperature_K=_num(spec, "temperature", 300.0),
+                         lateral_extension=ext)
+    src = [TRANSISTOR_SOURCES["gan_heat"],
+           TRANSISTOR_SOURCES["sic_heat"] if sub == "SiC" else "substrate: yours"]
+    if info.get("passivation"):
+        src.append(TRANSISTOR_SOURCES["no_heat_cap"])
+    return model, src
 
 
 def run_transistor(spec):
     """Drain-current curves of a 2D transistor (source, gate, drain), with
-    optional self-heating."""
-    from ..thermal import (GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalModel,
-                           boundary_resistance)
-
+    optional self-heating; gate leakage by tunneling and (with an energy
+    relaxation time) the electron temperature at the last point."""
     dev, info = _transistor_device(spec)
     t = spec.get("transistor") or {}
     sweep = t.get("sweep", "drain")
@@ -983,46 +1080,151 @@ def run_transistor(spec):
     other = _num(t, "fixed", 0.0 if sweep == "drain" else 5.0, -60.0, 200.0,
                  "the fixed voltage")
     fixed = {"gate": other} if sweep == "drain" else {"drain": other}
-    thermal = None
+    tau = t.get("tau_e")
+    tau = None if tau in (None, "") else _num(t, "tau_e", lo=1e-4, hi=1e3,
+                                              what="the energy relaxation time (ps)")
+    thermal, heat_src = (None, [])
     if t.get("heating"):
-        sub = t.get("substrate", "SiC")
-        thick = _num(t, "substrate_um", 100.0, 1.0, 2000.0, "the substrate thickness (µm)")
-        if sub == "SiC":
-            mat = SIC_4H_ROOM
-        else:
-            k = _num(t, "substrate_k", what="the substrate's thermal conductivity (W/m/K)",
-                     lo=0.1, hi=5000.0)
-            from ..thermal import ThermalMaterial
-            mat = ThermalMaterial("substrate", k, _num(t, "substrate_alpha", 0.0, 0.0, 3.0,
-                                                       "how fast it falls with temperature"),
-                                  str(t.get("substrate_source") or "yours"))
-        sublayers = [ThermalLayer("substrate", thick * 1e3, mat)]
-        rb = t.get("boundary")
-        if rb not in (None, "", 0, "0"):
-            rb = _num(t, "boundary", lo=1e-12, hi=1e-5,
-                      what="the boundary resistance (m² K/W)")
-            sublayers.append(boundary_resistance(rb, "yours"))
-        pitch = _num(t, "pitch_um", 50.0, 1.0, 1000.0, "the finger pitch (µm)")
-        ext = max(0.0, (pitch * 1e3 - info["width"]) / 2)
-        thermal = ThermalModel(GAN_BULK, substrate=tuple(sublayers),
-                               sink_temperature_K=_num(spec, "temperature", 300.0),
-                               lateral_extension=ext)
+        thermal, heat_src = _fet_thermal(spec, info)
     V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal)
     last = S[-1]
+    te = None
+    hot = None
+    if tau is not None:
+        te = dev.electron_temperature(last, tau * 1e-12)
+        # the hottest place where electrons actually are (at least 1e-3 of
+        # the densest point; in nearly empty regions the energy balance
+        # gives a few stray electrons huge temperatures that carry nothing)
+        where = last.n >= 1e-3 * float(np.max(last.n))
+        # in the electron layer: the top layers and 20 nm of the base below
+        zc = dev.top - (dev.top - info["layers"][0].thickness + 20.0)
+        layer = np.broadcast_to((dev.axes[-1] >= zc).reshape(1, -1), te.shape)
+        where = where & layer
+        k = np.unravel_index(int(np.argmax(np.where(where, te, -np.inf))), te.shape)
+        hot = {"peak": float(te[k]), "x": float(dev.axes[0][k[0]]),
+               "depth": float(dev.top - dev.axes[-1][k[1]]), "tau_ps": tau}
+    leak = None
+    try:
+        Ig, Jc = dev.gate_tunneling(last)
+        leak = {"current": Ig, "peak_density": float(np.max(np.abs(Jc)))}
+    except ValueError:
+        leak = None
     out = {"voltages": V.tolist(), "sweep": sweep, "fixed": other,
            "drain": I["drain"].tolist(), "gate": I["gate"].tolist(),
            "source": I["source"].tolist(),
            "tmax": [float(s.temperature.max()) for s in S],
            "power": [s.power for s in S], "heating": bool(thermal),
-           "map": _map(dev, last), "gate_x": info["gate"], "contacts": info["contacts"],
+           "map": _map(dev, last, te=None if te is None else np.where(
+               last.n >= 1e-3 * float(np.max(last.n)), te, last.temperature)),
+           "gate_x": info["gate"], "contacts": info["contacts"],
+           "plate_x": info["plate"], "passivation": info["passivation"],
+           "contact_res": info["contact_res"],
            "width": info["width"], "ns": info["ns"], "vsat": info["vsat"],
-           "mobility": info["mobility"], "sources": info["sources"],
-           "warnings": info["warn"]}
-    if thermal is not None:
-        out["sources"] += [TRANSISTOR_SOURCES["gan_heat"],
-                           TRANSISTOR_SOURCES["sic_heat"] if t.get("substrate", "SiC") == "SiC"
-                           else "substrate: yours"]
+           "mobility": info["mobility"], "sources": info["sources"] + heat_src,
+           "leak": leak, "hot": hot, "warnings": info["warn"]}
+    if tau is not None:
+        out["sources"].append(f"energy relaxation time {tau:g} ps: yours")
     return out
+
+
+def run_rf(spec):
+    """Small-signal speed at one bias: current gain, Mason's gain, f_T and
+    f_max (with the contact and gate resistances in series)."""
+    from ..device import rf_figures, two_port, with_series
+    dev, info = _transistor_device(spec)
+    rf = spec.get("rf") or {}
+    vg = _num(rf, "gate", -3.0, -60.0, 10.0, "the gate voltage")
+    vd = _num(rf, "drain", 10.0, 0.0, 200.0, "the drain voltage")
+    rg = _num(rf, "gate_res", 0.0, 0.0, 1e4, "the gate resistance (Ω·mm)")
+    st = dev.solve({"gate": vg, "drain": vd})
+    f = np.logspace(8.0, 12.5, 37)
+    ports, Y = dev.small_signal(st, f)
+    R = {e.name: e.resistance for e in dev.electrodes}
+    R["gate"] = R.get("gate", 0.0) + rg
+    Y2 = two_port(ports, with_series(ports, Y, R))
+    fig = rf_figures(f, Y2)
+    gm = float(Y2[0, 1, 0].real)
+    cgs = float(Y2[0, 0, 0].imag / (2 * math.pi * f[0]))
+
+    def clean(v):
+        return None if v is None or not math.isfinite(v) else float(v)
+    return {"f": f.tolist(), "h21": np.abs(fig["h21"]).tolist(),
+            "U": [clean(u) if u > 0 else None for u in np.real(fig["U"])],
+            "fT": clean(fig["fT"]), "fT_method": fig["fT_method"],
+            "fmax": clean(fig["fmax"]) if rg > 0 else None, "fmax_method": fig["fmax_method"],
+            "fT_extrapolated": clean(fig["fT_extrapolated"]),
+            "fmax_extrapolated": clean(fig["fmax_extrapolated"]) if rg > 0 else None,
+            "gm": gm, "cg": cgs, "current": st.current["drain"], "gate_res": rg,
+            "sources": info["sources"] + [TRANSISTOR_SOURCES["mason"]],
+            "warnings": info["warn"]}
+
+
+def run_breakdown(spec):
+    """Avalanche breakdown in the off state: raise the drain voltage until
+    the ionization integral along the worst field line reaches 1."""
+    import dataclasses as _dc
+    from ..device import IMPACT_GAN
+    dev, info = _transistor_device(spec)
+    gan_layers = tuple(sorted({L.label for L in info["layers"] if L.label == "GaN"}))
+    if not gan_layers:
+        raise SpecError("Breakdown uses impact ionization numbers measured on GaN; "
+                        "this stack has no GaN layer.")
+    # the GaN numbers are applied only in GaN (none are built in for AlGaN)
+    ion = _dc.replace(IMPACT_GAN, where=gan_layers)
+    b = spec.get("breakdown") or {}
+    vg = _num(b, "gate", -10.0, -60.0, 10.0, "the gate voltage")
+    vmax = _num(b, "to", 300.0, 1.0, 3000.0, "the highest drain voltage")
+    step = _num(b, "step", 10.0, 0.1, 500.0, "the voltage step")
+    n = int(math.floor(vmax / step + 1e-9))
+    if n > 120:
+        raise SpecError("That is more than 120 steps; use a larger step.")
+    vals = step * np.arange(1, n + 1)
+    try:
+        vbr, V, I, S = dev.breakdown_voltage("drain", vals, bias={"gate": vg},
+                                             ionization=ion)
+    except ValueError:
+        raise SpecError("The field is already high enough to break down at the first "
+                        "step; use a smaller step.")
+    except RuntimeError:
+        raise SpecError("The calculation stopped converging before breakdown; try a "
+                        "smaller step, a longer gate-drain gap or a lower top voltage.")
+    last = S[-1]
+    r = dev.ionization_integral(last, ion)
+    start = r["start"]
+    warn = list(info["warn"])
+    if abs(last.current["drain"]) > 1e-3:
+        warn.append(f"The transistor is not off: {last.current['drain']:.3g} A per mm "
+                    "still flows at the last step (under the gate or through the base). "
+                    "Use a more negative gate voltage; in a real device this leakage, "
+                    "not avalanche, may set the breakdown.")
+    return {"voltages": V.tolist(), "integral": I.tolist(), "vbr": vbr,
+            "peak_field": r["peak_field"], "where_x": float(start[0]),
+            "where_depth": float(dev.top - start[-1]),
+            "off_current": last.current["drain"],
+            "sources": info["sources"] + [TRANSISTOR_SOURCES["impact"]],
+            "warnings": warn}
+
+
+def run_pulse(spec):
+    """A pulse from cold: switch on at t = 0 and follow the current and the
+    hottest temperature while the device warms up."""
+    dev, info = _transistor_device(spec)
+    p = spec.get("pulse") or {}
+    vg = _num(p, "gate", 0.0, -60.0, 10.0, "the gate voltage")
+    vd = _num(p, "drain", 10.0, 0.0, 200.0, "the drain voltage")
+    length = _num(p, "length", 100.0, 0.01, 1e6, "the pulse length (µs)")
+    if (spec.get("transistor") or {}).get("substrate", "SiC") != "SiC":
+        raise SpecError("Heating in time needs the substrate's density and specific "
+                        "heat; the app has them for silicon carbide only.")
+    from ..thermal import GAN_BULK, SIC_4H_ROOM
+    model, heat_src = _fet_thermal(spec, info)
+    heat_src = heat_src + [GAN_BULK.reference, SIC_4H_ROOM.reference]
+    times = np.logspace(-9.0, math.log10(length * 1e-6), 19)
+    t_, I, Tmax, _ = dev.pulse({"gate": vg, "drain": vd}, times, model)
+    hot = dev.solve({"gate": vg, "drain": vd}, thermal=model)
+    return {"times": t_.tolist(), "drain": I["drain"].tolist(), "tmax": Tmax.tolist(),
+            "steady": hot.current["drain"], "steady_t": float(hot.temperature.max()),
+            "sources": info["sources"] + heat_src, "warnings": info["warn"]}
 
 
 def run_lag(spec):
@@ -1065,7 +1267,8 @@ ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "uncertainty": run_uncertainty, "line_charge": run_line_charge,
            "plan": run_plan, "code": python_code, "fit": run_fit,
            "design": run_design, "cross": run_cross,
-           "transistor": run_transistor, "lag": run_lag}
+           "transistor": run_transistor, "lag": run_lag, "rf": run_rf,
+           "breakdown": run_breakdown, "pulse": run_pulse}
 
 
 def _plain(e):

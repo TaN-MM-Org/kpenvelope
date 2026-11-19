@@ -302,7 +302,11 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="fetLg">Gate length (nm)</label><input id="fetLg" type="text" inputmode="decimal" value="250"></div>
       <div><label for="fetSG">Gap from source to gate (nm)</label><input id="fetSG" type="text" inputmode="decimal" value="1000"></div>
       <div><label for="fetGD">Gap from gate to drain (nm)</label><input id="fetGD" type="text" inputmode="decimal" value="1250"></div>
-      <div><label for="fetC">Contact length (nm) <span class="help" title="Length of the source and drain contacts. Under each one the app puts a heavily doped region (10²⁰ per cm³) reaching 20 nm into the base, as alloyed contacts make. The resistance of a real contact is not included.">?</span></label><input id="fetC" type="text" inputmode="decimal" value="500"></div>
+      <div><label for="fetC">Contact length (nm) <span class="help" title="Length of the source and drain contacts. Under each one the app puts a heavily doped region (10²⁰ per cm³) reaching 20 nm into the base, as alloyed contacts make.">?</span></label><input id="fetC" type="text" inputmode="decimal" value="500"></div>
+      <div><label for="fetRc">Contact resistance (Ω·mm) <span class="help" title="The resistance of each real source and drain contact, in ohm times millimeters of width, as a TLM measurement gives it. 0 leaves it out. Typical GaN contacts are a few tenths of an Ω·mm.">?</span></label><input id="fetRc" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="fetPas">Passivation on top (nm) <span class="help" title="A silicon nitride (or other) film over the surface between the contacts. 0 means a bare surface. With a film, the surface under it keeps the charge the bare surface had, and the contacts and gate reach down through it.">?</span></label><input id="fetPas" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="fetPasEps">Its permittivity (optional) <span class="help" title="Leave it empty for silicon nitride, 7 (Robertson, 2004). Put in your film's measured value if you have it.">?</span></label><input id="fetPasEps" type="text" inputmode="decimal" placeholder="7 (silicon nitride)"></div>
+      <div><label for="fetPlate">Field plate length (nm) <span class="help" title="A metal strip joined to the gate, lying on the passivation and reaching this far toward the drain. It spreads out the strong electric field at the drain side of the gate. Needs a passivation thickness.">?</span></label><input id="fetPlate" type="text" inputmode="decimal" value="0"></div>
     </div>
     <h3>What to sweep</h3>
     <div class="grid2">
@@ -318,6 +322,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="fetGamma">How fast it falls when hot (power of temperature)</label><input id="fetGamma" type="text" inputmode="decimal" value="2.35"></div>
       <div><label for="fetVs">Top speed (cm/s) <span class="help" title="Leave it at auto to take it from the electron density, with the formula of Bajaj et al. (2015), which their pulsed measurements bore out: denser electron layers saturate at a lower speed.">?</span></label><input id="fetVs" type="text" inputmode="decimal" value="auto"></div>
       <div><label for="fetMuSrc">Where these come from (optional)</label><input id="fetMuSrc" type="text" placeholder="built-in sources if empty"></div>
+      <div><label for="fetTau">Energy loss time for hot electrons (ps, optional) <span class="help" title="Fill this in to see how hot the electrons get (their temperature can be far above the crystal's). It is how fast hot electrons hand their energy to the crystal. E. Tiras et al. (2012) measured 0.47 ps at 250 K in AlGaN/AlN/GaN. Use a value for your own material if you have one.">?</span></label><input id="fetTau" type="text" inputmode="decimal" placeholder="for example 0.47"></div>
     </div>
     <label style="color:var(--ink)"><input type="checkbox" id="fetHeat"> Include self-heating (the current warms the device, which slows the electrons) <span class="help" title="The heat made by the current flows down through the base and the substrate to a heat sink at the room temperature you set. The sides are treated as the middle between identical fingers, so the finger pitch sets how far the heat can spread.">?</span></label>
     <div class="grid2 hidden" id="fetHeatBox">
@@ -331,8 +336,35 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <p><button class="primary" id="runFet">Work out the currents</button> <span class="note">About 10 to 60 seconds.</span></p>
     <div id="outFet"></div>
     <canvas id="cvFet" class="hidden" aria-label="Transistor current"></canvas>
-    <div class="grid2"><div><label for="fetShow">Picture of the last point</label><select id="fetShow"><option value="n">Where the electrons are</option><option value="temp">Temperature</option><option value="ec">Energy an electron needs</option></select></div></div>
+    <div class="grid2"><div><label for="fetShow">Picture of the last point</label><select id="fetShow"><option value="n">Where the electrons are</option><option value="temp">Temperature</option><option value="ec">Energy an electron needs</option><option value="te">Electron temperature where electrons are (needs the energy loss time)</option></select></div></div>
     <canvas id="cvFetMap" class="hidden" style="height:320px" aria-label="Transistor cross-section"></canvas>
+    <h3>Speed: how fast it can switch (f<sub>T</sub> and f<sub>max</sub>) <span class="help" title="The app nudges the gate and drain voltages up and down at frequencies from 100 MHz to 3 THz and works out how much current gain and power gain are left. fT is where the current gain falls to 1, fmax where the power gain does. fmax needs the gate's own resistance.">?</span></h3>
+    <div class="grid2">
+      <div><label for="rfG">Gate voltage (V)</label><input id="rfG" type="text" inputmode="decimal" value="-3"></div>
+      <div><label for="rfD">Drain voltage (V)</label><input id="rfD" type="text" inputmode="decimal" value="10"></div>
+      <div><label for="rfRg">Gate resistance × gate width (Ω·mm) <span class="help" title="The resistance of the gate metal in ohms, times the gate width in millimeters. Needed for fmax; 0 gives fT only.">?</span></label><input id="rfRg" type="text" inputmode="decimal" value="0.5"></div>
+    </div>
+    <p><button id="runRf">Work out the speed</button> <span class="note">About 10 to 30 seconds.</span></p>
+    <div id="outRf"></div>
+    <canvas id="cvRf" class="hidden" aria-label="Gain against frequency"></canvas>
+    <h3>Breakdown: the highest drain voltage <span class="help" title="With the transistor switched off, the app raises the drain voltage step by step. At each step it follows the electric field from its strongest point in the GaN and adds up how many new electron-hole pairs a carrier makes along the way (impact ionization). When that reaches 1, the current runs away: avalanche breakdown.">?</span></h3>
+    <div class="grid2">
+      <div><label for="bdG">Gate voltage, switched off (V)</label><input id="bdG" type="text" inputmode="decimal" value="-10"></div>
+      <div><label for="bdTo">Highest drain voltage to try (V)</label><input id="bdTo" type="text" inputmode="decimal" value="300"></div>
+      <div><label for="bdStep">Step (V)</label><input id="bdStep" type="text" inputmode="decimal" value="15"></div>
+    </div>
+    <p><button id="runBd">Find the breakdown voltage</button> <span class="note">A few minutes.</span></p>
+    <div id="outBd"></div>
+    <canvas id="cvBd" class="hidden" aria-label="Ionization against drain voltage"></canvas>
+    <h3>Heating during a pulse <span class="help" title="Measurements often use short pulses so the device does not heat up. The app switches the voltages on at time zero and follows the current and the hottest temperature as the device warms. It uses the heat settings above (silicon carbide substrate).">?</span></h3>
+    <div class="grid2">
+      <div><label for="puG">Gate voltage (V)</label><input id="puG" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="puD">Drain voltage (V)</label><input id="puD" type="text" inputmode="decimal" value="10"></div>
+      <div><label for="puLen">Pulse length (µs)</label><input id="puLen" type="text" inputmode="decimal" value="100"></div>
+    </div>
+    <p><button id="runPulse">Follow the heating</button> <span class="note">About a minute.</span></p>
+    <div id="outPulse"></div>
+    <canvas id="cvPulse" class="hidden" aria-label="Current and temperature over a pulse"></canvas>
     <h3>Trapped electrons and slow recovery (drain lag) <span class="help" title="Iron is often added to the base to stop leakage. It traps electrons when the drain voltage is high, and lets them go only slowly. Right after the voltage drops, the current is lower than it should be and then recovers. This is a common cause of 'current collapse'.">?</span></h3>
     <p class="note">The app holds a high drain voltage until the traps settle, switches to the measuring voltages, and follows the current over time, from a nanosecond to ten seconds.</p>
     <div class="grid2">
@@ -373,7 +405,11 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <dt>Saturation speed</dt><dd>The fastest electrons can drift when pushed hard. It limits the current of a short transistor.</dd>
       <dt>Self-heating</dt><dd>The current warms the transistor. Warm electrons move less easily, so the current drops.</dd>
       <dt>Traps and drain lag</dt><dd>Defects that hold electrons for a while. After a high voltage they stay filled, and the current is low until they empty.</dd>
-      <dt>What this app does not do</dt><dd>It does not treat hot electrons, breakdown, tunneling inside the transistor, high-frequency (small-signal) response, or heat that changes in time. Contact resistance and unstructured shapes are not included either. These limits are listed in the documentation.</dd>
+      <dt>f<sub>T</sub> and f<sub>max</sub></dt><dd>How fast a transistor can work. Above f<sub>T</sub> it no longer amplifies current, above f<sub>max</sub> it no longer amplifies power.</dd>
+      <dt>Breakdown</dt><dd>At a high enough voltage, fast carriers knock new electrons loose, which knock out more, and the current runs away.</dd>
+      <dt>Hot electrons</dt><dd>In a strong field electrons gain energy faster than they can pass it to the crystal, so they get much hotter than the crystal itself.</dd>
+      <dt>Passivation and field plate</dt><dd>A thin insulating film over the surface, and a metal strip on it joined to the gate that spreads out the strong field next to the gate.</dd>
+      <dt>What this app does not do</dt><dd>It does not simulate how a device is made (etching, growth, annealing), shapes other than boxes, or electrons hopping over a band step as a separate process. Hot electrons change only their temperature here, not their speed. These limits are listed in the documentation.</dd>
     </dl>
     <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
   </div>
@@ -751,7 +787,8 @@ function fetSpec(){ return {gate_length:$("fetLg").value,gap_sg:$("fetSG").value
   mobility:$("fetMu").value,mobility_temperature:$("fetGamma").value,vsat:$("fetVs").value,mobility_source:$("fetMuSrc").value,
   sweep:$("fetSweep").value,fixed:$("fetFixed").value,from:$("fetFrom").value,to:$("fetTo").value,step:$("fetStep").value,
   heating:$("fetHeat").checked,substrate:$("fetSub").value,substrate_um:$("fetSubT").value,pitch_um:$("fetPitch").value,boundary:$("fetTbr").value,
-  substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value}; }
+  substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value,
+  contact_res:$("fetRc").value,passivation:$("fetPas").value,passivation_eps:$("fetPasEps").value,plate:$("fetPlate").value,tau_e:$("fetTau").value}; }
 $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   const r=await call("transistor",{device:{barrier:$("devBarrier").value},transistor:fetSpec()}); const out=$("outFet");
   if(r.error){ out.innerHTML=msg("err",r.error); ["cvFet","cvFetMap"].forEach(c=>$(c).classList.add("hidden")); return; }
@@ -759,6 +796,8 @@ $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   let sum=d?`at ${fmt(V[k])} V on the drain (gate at ${fmt(r.fixed)} V) the transistor carries <b>${fmt(I[k])} A per mm</b> of gate width.`
           :`with ${fmt(r.fixed)} V on the drain, the current goes from <b>${fmt(I[0])}</b> to <b>${fmt(I[k])} A per mm</b> as the gate goes from ${fmt(V[0])} to ${fmt(V[k])} V.`;
   if(r.heating){ const P=r.power[k], dT=r.tmax[k]-r.tmax[0]; sum+=` It dissipates ${fmt(P)} W per mm and its hottest point reaches ${fmt(r.tmax[k])} K${P>0.01?` (${fmt(dT/P)} K per W/mm)`:""}.`; }
+  if(r.leak) sum+=` Electrons tunneling through the barrier under the gate carry ${sci(Math.abs(r.leak.current),2)} A per mm ${r.leak.current<0?"into":"out of"} the device through the gate.`;
+  if(r.hot) sum+=` The hottest electrons in the electron layer reach ${fmt(r.hot.peak)} K, ${fmt(r.hot.x)} nm along and ${fmt(r.hot.depth)} nm below the surface.`;
   out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
     `<p class="note">Electron layer of the bare channel: ${sci(r.ns)} per cm²; top speed used: ${sci(r.vsat)} cm/s.</p>`+
     `<details><summary class="small">Sources of the built-in numbers</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`;
@@ -767,7 +806,7 @@ $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   const ser=[{x:V,y:I,color:"#1f6feb",label:"Drain current (A/mm)",dots:true}];
   if(r.heating) ser.push({x:V,y:r.tmax,color:"#e5534b",label:"Hottest point (K)",right:true});
   plot($("cvFet"),ser,{xlabel:(d?"Drain":"Gate")+" voltage (V)",ylabel:"Drain current (A per mm of width)",y2:r.heating,y2label:"Temperature (K)"});
-  $("fetShow").value=r.heating?"temp":"n"; drawFet();
+  $("fetShow").value=r.hot?"te":r.heating?"temp":"n"; drawFet();
 });
 $("fetShow").onchange=()=>{ if(FET) drawFet(); };
 function drawFet(){
@@ -775,21 +814,60 @@ function drawFet(){
   const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
   const css=getComputedStyle(document.body), ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted");
   const L=64,R=112,T=48,B=44, nx=r.x.length, nz=r.depth.length, cw=(W-L-R)/nx, ch=(H-T-B)/nz;
-  const F=show==="n"?r.log10n:show==="temp"?r.temp:r.ec; let lo=Infinity,hi=-Infinity; F.forEach(row=>row.forEach(v=>{ if(v<lo) lo=v; if(v>hi) hi=v; }));
+  if(show==="te"&&!r.te){ g.fillStyle=muted; g.font="13px system-ui,sans-serif"; g.fillText("Fill in the energy loss time for hot electrons and run again.",20,40); return; }
+  const F=show==="n"?r.log10n:show==="temp"?r.temp:show==="te"?r.te:r.ec; let lo=Infinity,hi=-Infinity; F.forEach(row=>row.forEach(v=>{ if(v<lo) lo=v; if(v>hi) hi=v; }));
   if(show==="n") lo=Math.max(lo,hi-8); if(hi-lo<1e-9){ hi=lo+1; }
   const col=t=>{ t=Math.min(1,Math.max(0,t)); const a=[[13,8,135],[126,3,168],[204,71,120],[248,149,64],[240,249,33]]; const k=Math.min(3,Math.floor(t*4)), f=t*4-k; const c=a[k].map((v,i)=>Math.round(v+(a[k+1][i]-v)*f)); return `rgb(${c})`; };
   for(let i=0;i<nx;i++) for(let j=0;j<nz;j++){ g.fillStyle=col((F[i][j]-lo)/(hi-lo)); g.fillRect(L+i*cw,T+j*ch,cw+0.6,ch+0.6); }
   const X=x=>L+x/r.x[nx-1]*(W-L-R);
   g.font="12px system-ui,sans-serif"; g.textAlign="center";
+  if(FET.plate_x){ g.fillStyle="#9aa6b8"; g.fillRect(X(FET.plate_x[0]),T-16,X(FET.plate_x[1])-X(FET.plate_x[0]),5); }
   [[FET.gate_x,"gate","#9aa6b8"],[FET.contacts[0],"source","#c9a227"],[FET.contacts[1],"drain","#c9a227"]].forEach(([a,t,c])=>{ g.fillStyle=c; g.fillRect(X(a[0]),T-10,X(a[1])-X(a[0]),10); g.fillStyle=ink; g.fillText(t,(X(a[0])+X(a[1]))/2,T-14); });
   g.fillStyle=muted; niceTicks(0,r.x[nx-1]).forEach(t=>g.fillText(fmt(t),X(t),H-B+16)); g.textAlign="right"; niceTicks(0,r.depth[nz-1]).forEach(t=>g.fillText(fmt(t),L-6,T+t/r.depth[nz-1]*(H-T-B)+4));
   g.fillStyle=ink; g.textAlign="center"; g.fillText("Position along the transistor (nm)",L+(W-L-R)/2,H-8);
   g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText("Depth below the surface (nm)",0,0); g.restore();
   for(let k=0;k<=40;k++){ g.fillStyle=col(k/40); g.fillRect(W-R+20,T+(1-k/40)*(H-T-B)-((H-T-B)/40),14,(H-T-B)/40+1); }
-  g.fillStyle=muted; g.textAlign="left"; const lab=v=>show==="n"?sci(Math.pow(10,v),1):show==="temp"?`${fmt(v)} K`:`${fmt(v)} eV`;
+  g.fillStyle=muted; g.textAlign="left"; const lab=v=>show==="n"?sci(Math.pow(10,v),1):(show==="temp"||show==="te")?`${fmt(v)} K`:`${fmt(v)} eV`;
   g.fillText(lab(hi),W-R+38,T+8); g.fillText(lab(lo),W-R+38,H-B);
-  g.fillStyle=ink; g.textAlign="left"; g.fillText(show==="n"?"Electrons per cm³ (last point)":show==="temp"?"Temperature (last point)":"Energy an electron needs (last point)",L,14);
+  g.fillStyle=ink; g.textAlign="left"; g.fillText(show==="n"?"Electrons per cm³ (last point)":show==="temp"?"Temperature (last point)":show==="te"?"Electron temperature (last point)":"Energy an electron needs (last point)",L,14);
 }
+const fetBase=()=>({device:{barrier:$("devBarrier").value},transistor:fetSpec()});
+const srcList=r=>`<details><summary class="small">Sources of the built-in numbers</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`;
+$("runRf").onclick=()=>busy($("runRf"),$("outRf"),async()=>{
+  const r=await call("rf",Object.assign(fetBase(),{rf:{gate:$("rfG").value,drain:$("rfD").value,gate_res:$("rfRg").value}})); const out=$("outRf");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvRf").classList.add("hidden"); return; }
+  const G=v=>v==null?"not reached":`${fmt(v/1e9)} GHz`;
+  let sum=`at this bias the drain carries ${fmt(r.current)} A per mm. The current gain falls to 1 at <b>f<sub>T</sub> = ${G(r.fT)}</b>`;
+  sum+=r.fmax!=null?` and the power gain at <b>f<sub>max</sub> = ${G(r.fmax)}</b>.`:`. Give the gate resistance to get f<sub>max</sub>.`;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
+    `<p class="note">Read the way measurements are (gain × frequency at 100 MHz, as if it fell 20 dB per decade): f<sub>T</sub> ≈ ${G(r.fT_extrapolated)}${r.fmax_extrapolated!=null?`, f<sub>max</sub> ≈ ${G(r.fmax_extrapolated)}`:""}. Transconductance ${fmt(1000*r.gm)} mS/mm, gate capacitance ${fmt(1e12*r.cg)} pF/mm. When the two readings differ, the gain does not fall at exactly 20 dB per decade (for example because electrons take time to cross the device).</p>`+srcList(r);
+  LAST={name:"speed",cols:["frequency_Hz","current_gain","power_gain_U"],rows:r.f.map((f,i)=>[f,r.h21[i],r.U[i]==null?"":r.U[i]])};
+  $("cvRf").classList.remove("hidden");
+  const lf=r.f.map(f=>Math.log10(f)); const ser=[{x:lf,y:r.h21.map(h=>20*Math.log10(h)),color:"#1f6feb",label:"Current gain (dB)",dots:true}];
+  if(r.fmax!=null) ser.push({x:lf.filter((_,i)=>r.U[i]!=null),y:r.U.filter(u=>u!=null).map(u=>10*Math.log10(u)),color:"#e5534b",label:"Power gain U (dB)",dots:true});
+  plot($("cvRf"),ser,{xlabel:"Frequency: power of ten of Hz (9 = 1 GHz, 12 = 1 THz)",ylabel:"Gain (dB)",hline:0});
+});
+$("runBd").onclick=()=>busy($("runBd"),$("outBd"),async()=>{
+  const r=await call("breakdown",Object.assign(fetBase(),{breakdown:{gate:$("bdG").value,to:$("bdTo").value,step:$("bdStep").value}})); const out=$("outBd");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvBd").classList.add("hidden"); return; }
+  const V=r.voltages, last=V[V.length-1];
+  const sum=r.vbr!=null?`avalanche breakdown at about <b>${fmt(r.vbr)} V</b> on the drain. It starts ${fmt(r.where_x)} nm along and ${fmt(r.where_depth)} nm below the surface, where the field is ${fmt(r.peak_field/1e6)} MV/cm.`
+    :`no avalanche breakdown up to ${fmt(last)} V (the count reaches ${fmt(r.integral[r.integral.length-1])} of the 1 needed). The strongest field in the GaN is ${fmt(r.peak_field/1e6)} MV/cm, ${fmt(r.where_x)} nm along and ${fmt(r.where_depth)} nm below the surface.`;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+srcList(r);
+  LAST={name:"breakdown",cols:["drain_V","ionization_integral"],rows:V.map((v,i)=>[v,r.integral[i]])};
+  $("cvBd").classList.remove("hidden");
+  plot($("cvBd"),[{x:V,y:r.integral,color:"#e5534b",label:"Pairs made per carrier (breakdown at 1)",dots:true}],{xlabel:"Drain voltage (V)",ylabel:"Ionization count",hline:1});
+});
+$("runPulse").onclick=()=>busy($("runPulse"),$("outPulse"),async()=>{
+  const r=await call("pulse",Object.assign(fetBase(),{pulse:{gate:$("puG").value,drain:$("puD").value,length:$("puLen").value}})); const out=$("outPulse");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvPulse").classList.add("hidden"); return; }
+  const n=r.drain.length-1;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> 1 ns after switching on the drain carries ${fmt(r.drain[0])} A per mm; by the end of the pulse it has dropped to ${fmt(r.drain[n])} A per mm and the hottest point is at ${fmt(r.tmax[n])} K. Left on for good it would settle at ${fmt(r.steady)} A per mm and ${fmt(r.steady_t)} K.</div>`+srcList(r);
+  LAST={name:"pulse",cols:["time_s","drain_A_per_mm","hottest_K"],rows:r.times.map((t,i)=>[t,r.drain[i],r.tmax[i]])};
+  $("cvPulse").classList.remove("hidden");
+  const lt=r.times.map(t=>Math.log10(t));
+  plot($("cvPulse"),[{x:lt,y:r.drain,color:"#1f6feb",label:"Drain current (A/mm)",dots:true},{x:lt,y:r.tmax,color:"#e5534b",label:"Hottest point (K)",right:true}],{xlabel:"Time after switching on: power of ten of seconds (-9 = 1 ns, -6 = 1 µs)",ylabel:"Drain current (A per mm)",y2:true,y2label:"Temperature (K)"});
+});
 $("runLag").onclick=()=>busy($("runLag"),$("outLag"),async()=>{
   const r=await call("lag",{device:{barrier:$("devBarrier").value},transistor:fetSpec(),lag:{stress_drain:$("lagSD").value,stress_gate:$("lagSG").value,drain:$("lagD").value,gate:$("lagG").value,density:$("lagN").value,clean:$("lagClean").value}});
   const out=$("outLag");
