@@ -54,17 +54,26 @@ import math
 import numpy as np
 
 __all__ = ["ThermalMaterial", "ThermalLayer", "ThermalModel", "GAN_BULK",
-           "SIC_4H_ROOM", "boundary_resistance", "solve_heat"]
+           "SIC_4H_ROOM", "boundary_resistance", "solve_heat",
+           "solve_heat_transient"]
 
 
 @dataclasses.dataclass(frozen=True)
 class ThermalMaterial:
-    """k(T) = k300 (T / 300 K)^(-exponent), in W/(m K), with its source."""
+    """k(T) = k300 (T / 300 K)^(-exponent), in W/(m K), with its source.
+
+    For heat that changes in time (new in 0.20.0) also: density (g/cm^3)
+    and the specific heat c_p = cp_a + cp_b T (J/(g K)); None where not
+    known (then only steady heat flow is possible).
+    """
 
     name: str
     k300: float
     exponent: float
     reference: str
+    density: float = None
+    cp_a: float = None
+    cp_b: float = 0.0
 
     def __post_init__(self):
         if not (math.isfinite(self.k300) and self.k300 > 0):
@@ -73,10 +82,29 @@ class ThermalMaterial:
             raise ValueError("ThermalMaterial.exponent must be finite")
         if not (isinstance(self.reference, str) and self.reference.strip()):
             raise ValueError("ThermalMaterial needs a reference for its numbers")
+        if (self.density is None) != (self.cp_a is None):
+            raise ValueError("give both density and cp_a, or neither")
+        if self.density is not None and not (self.density > 0 and self.cp_a > 0
+                                             and math.isfinite(self.cp_b)):
+            raise ValueError("density and cp_a must be > 0")
 
     def k(self, T):
         return self.k300 * (np.asarray(T, float) / 300.0) ** (-self.exponent)
 
+    @property
+    def has_capacity(self):
+        return self.density is not None
+
+    def volumetric_heat(self, T):
+        """rho c_p in J/(m^3 K)."""
+        if not self.has_capacity:
+            raise ValueError(f"{self.name} has no density and specific heat; "
+                             "heat that changes in time needs them")
+        return self.density * 1e6 * (self.cp_a + self.cp_b * np.asarray(T, float))
+
+
+#: molar mass of GaN, g/mol (standard atomic weights: Ga 69.723, N 14.007)
+GAN_MOLAR_MASS = 69.723 + 14.007
 
 GAN_BULK = ThermalMaterial(
     "GaN (bulk, low dislocation density)", 230.0, 1.43,
@@ -84,12 +112,19 @@ GAN_BULK = ThermalMaterial(
     "Appl. Phys. Lett. 89, 092123 (2006), doi:10.1063/1.2335972; T^-1.43 over "
     "300-450 K from the "
     "same work as quoted by B. A. Danilchenko et al., Solid State Commun. "
-    "(2007), doi:10.1016/j.ssc.2007.08.007")
+    "(2007), doi:10.1016/j.ssc.2007.08.007; density 6.15 g/cm^3 and "
+    "c_p = 38.1 + 8.96e-3 T J/(mol K) (Barin et al. 1977, 298-1773 K), both "
+    "as listed by the Ioffe Institute database",
+    density=6.15, cp_a=38.1 / GAN_MOLAR_MASS, cp_b=8.96e-3 / GAN_MOLAR_MASS)
 
 SIC_4H_ROOM = ThermalMaterial(
     "4H-SiC (room-temperature value, held constant)", 370.0, 0.0,
     "3.7 W/(cm K): Goldberg et al. (2001), as listed by the Ioffe Institute "
-    "database; no temperature dependence given there for 4H-SiC")
+    "database; no temperature dependence given there for 4H-SiC. Density "
+    "3.211 g/cm^3 (Gomes de Mesquita 1967, via Ioffe); specific heat "
+    "0.69 J/(g K), the value Ioffe lists for 6H-SiC (Goldberg et al. 2001), "
+    "used here for 4H-SiC because none is listed for it",
+    density=3.211, cp_a=0.69, cp_b=0.0)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -168,6 +203,122 @@ def _cv(nodes):
     return v
 
 
+class _HeatGrid:
+    """Conductances and heat capacities of a layered tensor grid (SI)."""
+
+    def __init__(self, lateral, z, cell_materials):
+        lat = [np.asarray(a, float) * 1e-9 for a in lateral]
+        zz = np.asarray(z, float) * 1e-9
+        shape = tuple(a.size for a in lat) + (zz.size,)
+        self.shape = shape
+        self.N = int(np.prod(shape))
+        if len(cell_materials) != zz.size - 1:
+            raise ValueError("one material per z cell is needed")
+        I = np.arange(self.N).reshape(shape)
+        hz = np.diff(zz)
+        cvs = [_cv(a) for a in lat] + [_cv(zz)]
+        nd = len(shape)
+        self.edges = []
+        for ax in range(nd):
+            sl_i = [slice(None)] * nd
+            sl_j = [slice(None)] * nd
+            sl_i[ax] = slice(0, -1)
+            sl_j[ax] = slice(1, None)
+            ii = I[tuple(sl_i)].ravel()
+            jj = I[tuple(sl_j)].ravel()
+            area = np.ones(I[tuple(sl_i)].shape)
+            for b in range(nd):
+                if b == ax:
+                    continue
+                sh = [1] * nd
+                sh[b] = cvs[b].size
+                area = area * cvs[b].reshape(sh)
+            coords = np.indices(I[tuple(sl_i)].shape)
+            if ax == nd - 1:
+                hh = hz[coords[ax]].ravel()
+                self.edges.append((ii, jj, area.ravel() / hh, "z", coords[ax].ravel()))
+            else:
+                h = np.diff(lat[ax])
+                hh = h[coords[ax]].ravel()
+                self.edges.append((ii, jj, area.ravel() / hh, "l", coords[nd - 1].ravel()))
+        self.mats = list(cell_materials)
+        self.kz = len(self.mats)
+        self.k300 = np.array([m.k300 for m in self.mats])
+        self.alp = np.array([m.exponent for m in self.mats])
+        self.wb = np.zeros(zz.size)
+        self.wa = np.zeros(zz.size)
+        self.wb[1:] = 0.5 * hz
+        self.wa[:-1] = 0.5 * hz
+        # lateral control volume of every node (product of lateral widths)
+        latv = np.ones(shape[:-1])
+        for ax in range(nd - 1):
+            sh = [1] * (nd - 1)
+            sh[ax] = cvs[ax].size
+            latv = latv * cvs[ax].reshape(sh)
+        self.latv = np.broadcast_to(latv[..., None], shape).ravel()
+        self.zrow = np.broadcast_to(np.arange(zz.size).reshape((1,) * (nd - 1) + (-1,)),
+                                    shape).ravel()
+        sink = np.zeros(shape, bool)
+        sink[..., 0] = True
+        self.sink = sink.ravel()
+
+    def kcell(self, c, T):
+        return self.k300[c] * (T / 300.0) ** (-self.alp[c])
+
+    def matrix(self, T):
+        import scipy.sparse as sp
+        Tf = T.ravel()
+        rows, cols, vals = [], [], []
+        diag = np.zeros(self.N)
+        for ii, jj, g, kind, idx in self.edges:
+            Tm = 0.5 * (Tf[ii] + Tf[jj])
+            if kind == "z":
+                k = self.kcell(idx, Tm)
+            else:
+                below = np.clip(idx - 1, 0, self.kz - 1)
+                above = np.clip(idx, 0, self.kz - 1)
+                k = (self.wb[idx] * self.kcell(below, Tm) + self.wa[idx]
+                     * self.kcell(above, Tm)) / (self.wb[idx] + self.wa[idx])
+            G = g * k
+            rows += [ii, jj]
+            cols += [jj, ii]
+            vals += [-G, -G]
+            np.add.at(diag, ii, G)
+            np.add.at(diag, jj, G)
+        A = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows),
+                                                  np.concatenate(cols))),
+                          shape=(self.N, self.N))
+        return A + sp.diags(diag)
+
+    def capacity(self, T):
+        """Heat capacity of every node's control volume, J/K (per meter of
+        depth in 2D): the half cells below and above, each with its own
+        rho c_p at the node temperature."""
+        Tf = T.ravel()
+        r = self.zrow
+        below = np.clip(r - 1, 0, self.kz - 1)
+        above = np.clip(r, 0, self.kz - 1)
+        cb = np.zeros(self.N)
+        ca = np.zeros(self.N)
+        for c, m in enumerate(self.mats):
+            mb = below == c
+            ma = above == c
+            if mb.any():
+                cb[mb] = m.volumetric_heat(Tf[mb])
+            if ma.any():
+                ca[ma] = m.volumetric_heat(Tf[ma])
+        return self.latv * (self.wb[r] * cb + self.wa[r] * ca)
+
+    def solve(self, A, b, Ts):
+        import scipy.sparse.linalg as spl
+        free = ~self.sink
+        Af = A[free][:, free]
+        rhs = b[free] - A[free][:, self.sink] @ np.full(int(self.sink.sum()), Ts)
+        Tn = np.full(self.N, float(Ts))
+        Tn[free] = spl.spsolve(Af.tocsc(), rhs)
+        return Tn
+
+
 def solve_heat(lateral, z, cell_materials, heat, sink_temperature_K: float,
                T0=None, tol: float = 1e-7, max_iter: int = 200):
     """Steady temperature on a tensor grid.
@@ -179,106 +330,56 @@ def solve_heat(lateral, z, cell_materials, heat, sink_temperature_K: float,
         per meter of depth for 2D and W for 3D.
     Returns T (K), same shape as heat, and the number of iterations.
     """
-    import scipy.sparse as sp
-    import scipy.sparse.linalg as spl
-
-    lat = [np.asarray(a, float) * 1e-9 for a in lateral]
-    zz = np.asarray(z, float) * 1e-9
-    shape = tuple(a.size for a in lat) + (zz.size,)
-    N = int(np.prod(shape))
-    H = np.asarray(heat, float).reshape(shape)
+    g = _HeatGrid(lateral, z, cell_materials)
+    H = np.asarray(heat, float).reshape(g.shape)
     if not np.all(np.isfinite(H)):
         raise ValueError("heat must be finite")
-    if len(cell_materials) != zz.size - 1:
-        raise ValueError("one material per z cell is needed")
-    I = np.arange(N).reshape(shape)
-    hz = np.diff(zz)
-    cvs = [_cv(a) for a in lat] + [_cv(zz)]
-    nd = len(shape)
-    # edges: (i, j, area / length, kind, z-cell or z-row)
-    edges = []
-    for ax in range(nd):
-        sl_i = [slice(None)] * nd
-        sl_j = [slice(None)] * nd
-        sl_i[ax] = slice(0, -1)
-        sl_j[ax] = slice(1, None)
-        ii = I[tuple(sl_i)].ravel()
-        jj = I[tuple(sl_j)].ravel()
-        area = np.ones(I[tuple(sl_i)].shape)
-        for b in range(nd):
-            if b == ax:
-                continue
-            sh = [1] * nd
-            cvb = cvs[b] if b != ax else None
-            sh[b] = cvb.size
-            area = area * cvb.reshape(sh)
-        coords = np.indices(I[tuple(sl_i)].shape)
-        if ax == nd - 1:
-            hh = hz[coords[ax]].ravel()
-            zc = coords[ax].ravel()          # z cell index
-            edges.append((ii, jj, (area.ravel() / hh), "z", zc))
-        else:
-            h = np.diff(lat[ax])
-            hh = h[coords[ax]].ravel()
-            zr = coords[nd - 1].ravel()      # z row index
-            edges.append((ii, jj, (area.ravel() / hh), "l", zr))
-    mats = list(cell_materials)
-    kz = len(mats)
-    k300 = np.array([m.k300 for m in mats])
-    alp = np.array([m.exponent for m in mats])
-    # half-cell weights of each z row (below, above)
-    wb = np.zeros(zz.size)
-    wa = np.zeros(zz.size)
-    wb[1:] = 0.5 * hz
-    wa[:-1] = 0.5 * hz
-
-    def kcell(c, T):
-        return k300[c] * (T / 300.0) ** (-alp[c])
-
-    def conductances(T):
-        Tf = T.ravel()
-        out = []
-        for ii, jj, g, kind, idx in edges:
-            Tm = 0.5 * (Tf[ii] + Tf[jj])
-            if kind == "z":
-                k = kcell(idx, Tm)
-            else:
-                below = np.clip(idx - 1, 0, kz - 1)
-                above = np.clip(idx, 0, kz - 1)
-                k = (wb[idx] * kcell(below, Tm) + wa[idx] * kcell(above, Tm)) / (
-                    wb[idx] + wa[idx])
-            out.append((ii, jj, g * k))
-        return out
-
     Ts = float(sink_temperature_K)
-    T = np.full(shape, Ts) if T0 is None else np.array(T0, float).reshape(shape)
-    sink = np.zeros(shape, bool)
-    sink[..., 0] = True
-    sinkf = sink.ravel()
-    free = ~sinkf
-    b = H.ravel().copy()
-    it = 0
+    T = np.full(g.N, Ts) if T0 is None else np.array(T0, float).ravel()
+    b = H.ravel()
     for it in range(1, max_iter + 1):
-        rows, cols, vals = [], [], []
-        diag = np.zeros(N)
-        for ii, jj, G in conductances(T):
-            rows += [ii, jj]
-            cols += [jj, ii]
-            vals += [-G, -G]
-            np.add.at(diag, ii, G)
-            np.add.at(diag, jj, G)
-        A = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows),
-                                                  np.concatenate(cols))), shape=(N, N))
-        A = A + sp.diags(diag)
-        # Dirichlet at the sink: move known values to the right side
-        Af = A[free][:, free]
-        rhs = b[free] - A[free][:, sinkf] @ np.full(int(sinkf.sum()), Ts)
-        Tn = np.full(N, Ts)
-        Tn[free] = spl.spsolve(Af.tocsc(), rhs)
-        change = float(np.max(np.abs(Tn - T.ravel())))
-        T = Tn.reshape(shape)
+        Tn = g.solve(g.matrix(T), b, Ts)
+        change = float(np.max(np.abs(Tn - T)))
+        T = Tn
         if change < tol:
-            break
-    else:
-        raise RuntimeError("the heat equation did not converge")
-    return T, it
+            return T.reshape(g.shape), it
+    raise RuntimeError("the heat equation did not converge")
+
+
+def solve_heat_transient(lateral, z, cell_materials, heat, sink_temperature_K: float,
+                         times, T0=None, tol: float = 1e-7, max_iter: int = 100):
+    """Temperature in time (new in 0.20.0): C dT/dt = div(k grad T) + H by
+    backward Euler at the given times (s, increasing, the first step from
+    t = 0), the heat sink at the bottom, adiabatic elsewhere. heat is an
+    array (held constant) or a function heat(t, T) returning one. The
+    capacities and conductivities are taken at the new temperature
+    (iterated within each step). Returns (times, list of T arrays)."""
+    g = _HeatGrid(lateral, z, cell_materials)
+    Ts = float(sink_temperature_K)
+    T = np.full(g.N, Ts) if T0 is None else np.array(T0, float).ravel()
+    times = np.asarray(times, float)
+    if times.ndim != 1 or np.any(np.diff(times) <= 0) or times[0] <= 0:
+        raise ValueError("times must be positive and increasing")
+    out = []
+    t_prev = 0.0
+    for t in times:
+        dt = t - t_prev
+        Told = T.copy()
+        Tk = T.copy()
+        for _ in range(max_iter):
+            Hk = heat(t, Tk.reshape(g.shape)) if callable(heat) else heat
+            Hk = np.asarray(Hk, float).ravel()
+            C = g.capacity(Tk)
+            import scipy.sparse as sp
+            A = g.matrix(Tk) + sp.diags(C / dt)
+            Tn = g.solve(A, Hk + C / dt * Told, Ts)
+            change = float(np.max(np.abs(Tn - Tk)))
+            Tk = Tn
+            if change < tol:
+                break
+        else:
+            raise RuntimeError("a heat time step did not converge")
+        T = Tk
+        out.append(T.reshape(g.shape).copy())
+        t_prev = t
+    return times, out
