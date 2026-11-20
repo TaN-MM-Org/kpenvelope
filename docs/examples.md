@@ -7,7 +7,7 @@ describes every function used here.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-prints with kpenvelope 0.22.0 (all of them were rerun for this release).
+prints with kpenvelope 0.23.0 (all of them were rerun for this release).
 Numbers labeled illustrative are chosen for the example, not taken from
 a source.
 
@@ -21,7 +21,8 @@ electrons); 36 to 42 velocity overshoot, band steps, tunneling barriers,
 band-to-band tunneling, breakdown by current and thermal runaway,
 implants and a curved mesh; 43 to 47 leakage and runaway with
 temperature, hot electrons with heating, a tunnel diode, oxidation, and
-a process flow into a device.
+a process flow into a device; 48 to 50 Peltier heat, a tunnel diode that
+heats itself, and tunneling on a turned mesh.
 
 ### 1. Energy levels and what they are made of
 
@@ -69,7 +70,7 @@ print("edge masses (m0):   ", np.round(res.masses, 3))
 print("holes per subband (1e13 cm^-2):",
       np.round(sheet_density_to_cm2(res.occupations) / 1e13, 3))
 centroid = (z * res.density).sum() / res.density.sum()
-print(f"centre of the hole gas: {centroid:.2f} nm from the interface")
+print(f"center of the hole gas: {centroid:.2f} nm from the interface")
 ```
 
 ```
@@ -78,7 +79,7 @@ enough states: True
 subband edges (meV): [-402.37 -402.37 -413.58 -413.58 -548.47 -548.47 -559.02 -559.02]
 edge masses (m0):    [0.445 0.442   inf 0.17  0.604 0.601   inf 0.206]
 holes per subband (1e13 cm^-2): [1.622 1.61  0.    0.581 0.356 0.355 0.    0.076]
-centre of the hole gas: 0.76 nm from the interface
+center of the hole gas: 0.76 nm from the interface
 ```
 
 The 4.6e13 cm^-2 density is the measured value used by the source
@@ -333,7 +334,7 @@ print("holes per Kramers pair (1e13 cm^-2):",
       np.round(sheet_density_to_cm2(pairs) / 1e13, 3))
 print(f"Fermi level: {res.fermi_level * 1e3:.2f} meV")
 centroid = (z * res.density).sum() / res.density.sum()
-print(f"centre of the hole gas: {centroid:.2f} nm from the interface")
+print(f"center of the hole gas: {centroid:.2f} nm from the interface")
 ```
 
 ```
@@ -342,7 +343,7 @@ subband edges (meV): [-394.74 -394.74 -405.91 -405.91]
 holes per state (1e13 cm^-2):  [1.974 1.964 0.352 0.311]
 holes per Kramers pair (1e13 cm^-2): [3.938 0.662]
 Fermi level: -450.10 meV
-centre of the hole gas: 0.63 nm from the interface
+center of the hole gas: 0.63 nm from the interface
 ```
 
 This is example 2 again, but every iteration now solves the problem
@@ -388,15 +389,15 @@ for sheet in (None, 5.0):
           f"after {r.iterations} iterations")
     if r.converged:
         in_aln = r.density[z < 5.0].sum() * (z[1] - z[0]) / 0.2
-        centre = (z * r.density).sum() / r.density.sum()
+        center = (z * r.density).sum() / r.density.sum()
         print(f"  {100 * in_aln:.1f} % of the holes in the AlN, "
-              f"centre of the gas at {centre:.2f} nm")
+              f"center of the gas at {center:.2f} nm")
 ```
 
 ```
 sheet_z = None: converged False after 60 iterations
 sheet_z = 5.0: converged True after 30 iterations
-  0.8 % of the holes in the AlN, centre of the gas at 5.75 nm
+  0.8 % of the holes in the AlN, center of the gas at 5.75 nm
 ```
 
 The holes are held by a fixed sheet of negative charge at the
@@ -2149,6 +2150,154 @@ triangles, `doping()` hands the doping to the device, and
 `surface_nodes` picks the contacts on the exposed GaN. The whole implant
 dose ends up in the window, and the device then solves like any other
 `MeshDevice`.
+
+### 48. Peltier heat at the contacts (new in 0.23.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+from kpenvelope.electrons import KB
+
+# a 2 um bar of n-type GaN (1e18 cm^-3) between two contacts; doping and
+# mobility are illustrative
+def bar(heat_model):
+    return Device([StackLayer(algan(0.0), 2000.0, donors=1e-3)], 20.0,
+                  [Electrode("top", "ohmic", 0, 20), Electrode("bottom", "ohmic", 0, 20, face="bottom")],
+                  Mobility(1000.0, "illustrative"), Surface("pinned", barrier=1.0),
+                  grid=dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 2000, 201)),
+                  statistics="boltzmann", heat_model=heat_model)
+
+for model in ("joule", "thermoelectric"):
+    dev = bar(model)
+    st = dev.solve({"bottom": 0.5})
+    H = st.heat.sum(axis=0)                          # W/mm along the bar, bottom first
+    print(f"{model:14s} bottom end {H[:3].sum()*1e3:+6.3f} mW/mm, top end {H[-3:].sum()*1e3:+6.3f}, "
+          f"total {st.heat.sum()*1e3:.3f} (power {st.power*1e3:.3f})")
+Pi = KB * 300 * (2.5 + np.log(dev.Nc[0] * 1e21 / 1e18))    # eV, at 300 K
+print(f"Pi = {Pi*1e3:.1f} meV; Pi I = {Pi * st.power / 0.5 * 1e3:.3f} mW/mm")
+```
+
+```
+joule          bottom end +0.501 mW/mm, top end +0.501, total 40.054 (power 40.054)
+thermoelectric bottom end +7.352 mW/mm, top end -6.351, total 40.054 (power 40.054)
+Pi = 85.5 meV; Pi I = 6.852 mW/mm
+```
+
+Electrons carry heat with them as they flow. With
+`heat_model="thermoelectric"` each one carries Pi = kT (5/2 + ln(N_c /
+n)), here 85.5 meV. They enter at the top contact and leave at the
+bottom one, so the top cools and the bottom warms, each by Pi times the
+current (6.85 mW/mm): the ends now differ by 13.7 mW/mm, where the
+Joule heat alone heats them alike. Inside the uniform bar nothing
+changes, and the total is still the electrical power, because this heat
+is only moved, not made. Along a temperature difference the same term
+gives the Thomson heat. The value of Pi is the one for a non-degenerate
+gas; in a dense electron layer it comes out too small (see the
+[limits](limits.md)).
+
+### 49. A tunnel diode that heats itself
+
+```python
+import dataclasses
+import numpy as np
+from kpenvelope import StackLayer, ingan
+from kpenvelope.device import BandToBand, Device, Electrode, Mobility, Surface
+from kpenvelope.interfaces import interface_charges
+from kpenvelope.nitride import gap_shift
+from kpenvelope.thermal import ThermalLayer, ThermalMaterial, ThermalModel
+
+# the InN tunnel diode of example 45, now with the full temperature model:
+# the gap follows the cited Varshni numbers of InN (its change shared evenly
+# between the two bands, an assumption)
+inn = ingan(1.0)
+layers = [StackLayer(inn, 100.0, acceptors=3e-2, name="p+"),
+          StackLayer(dataclasses.replace(inn, name="InN n"), 100.0, donors=1e-2, name="n+")]
+dev = Device(layers, 20.0,
+             [Electrode("top", "ohmic", 0, 20), Electrode("bottom", "ohmic", 0, 20, face="bottom")],
+             Mobility(1000.0, "illustrative"), Surface("pinned", barrier=0.5),
+             grid=dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 200, 401)),
+             hole_mass=0.5, hole_mobility=Mobility(50.0, "illustrative"),
+             extra_sheet={c.index: -c.sigma_nm2 for c in interface_charges(layers)},
+             band_to_band=BandToBand("illustrative reduced mass", reduced_mass_m0=0.03, model="nonlocal"),
+             temperature_model="full", band_gap_temperature=gap_shift("InN", conduction_share=0.5))
+# a 2 um substrate under the diode, illustrative conductivity
+sink = ThermalModel(ThermalMaterial("InN, illustrative", 45.0, 0.0, "illustrative"),
+                    substrate=(ThermalLayer("substrate", 2000.0,
+                                            ThermalMaterial("substrate", 5.0, 0.0, "illustrative")),))
+for V in (-0.3, -0.2, 0.1, 0.3):
+    I300 = dev.solve({"bottom": V}).current["bottom"]
+    I400 = dev.solve({"bottom": V}, lattice_temperature=400.0).current["bottom"]
+    hot = dev.solve({"bottom": V}, thermal=sink)
+    print(f"{V:+.1f} V: {I300:+.3e} A/mm at 300 K, {I400:+.3e} at 400 K, "
+          f"{hot.current['bottom']:+.3e} self-heated (hottest {hot.temperature.max():.0f} K)")
+```
+
+```
+-0.3 V: -9.880e-03 A/mm at 300 K, -1.013e-02 at 400 K, -1.005e-02 self-heated (hottest 361 K)
+-0.2 V: -4.638e-03 A/mm at 300 K, -4.620e-03 at 400 K, -4.643e-03 self-heated (hottest 319 K)
++0.1 V: +1.419e-04 A/mm at 300 K, +1.104e-04 at 400 K, +1.418e-04 self-heated (hottest 300 K)
++0.3 V: +2.619e-10 A/mm at 300 K, +4.799e-08 at 400 K, +2.619e-10 self-heated (hottest 300 K)
+```
+
+Band-to-band tunneling now runs with a lattice temperature you set
+and with self-heating. At 400 K the tunneling peak at 0.1 V drops by about
+a fifth, while the current in the valley at 0.3 V grows almost two
+hundredfold, because more carriers get over the junction by heat; so the
+ratio of peak to valley falls from about 540 000 to about 2 300. In
+reverse bias the diode heats itself through the poor substrate, to
+361 K at -0.3 V, and its current lies between the 300 K and the 400 K
+values. `nitride.gap_shift` gives the gap's change with temperature
+from the same cited numbers as the layer records. The material numbers
+other than InN's band numbers are illustrative.
+
+### 50. Tunneling on a triangle mesh, at an angle
+
+```python
+import dataclasses
+import numpy as np
+from kpenvelope import ingan
+from kpenvelope.device import BandToBand, Electrode, Mobility
+from kpenvelope.mesh import Mesh, MeshDevice, MeshRegion, mesh_from_grid
+
+# the InN tunnel diode of example 45, turned by 30 degrees on a triangle mesh
+inn = ingan(1.0)
+flat = mesh_from_grid(np.array([0.0, 10.0, 20.0]), np.linspace(0, 200, 401),
+                      lambda x, z: "p+" if z < 100 else "n+")
+a = np.radians(30.0)
+rot = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+mesh = Mesh(flat.points @ rot.T, flat.triangles, flat.regions)
+up = rot @ [0.0, 1.0]                                   # across the junction
+contacts = {"top": np.flatnonzero(np.isclose(flat.points[:, 1], 200.0)),
+            "bottom": np.flatnonzero(np.isclose(flat.points[:, 1], 0.0))}
+regions = {"p+": MeshRegion(material=inn, mobility=Mobility(1000.0, "illustrative"),
+                            acceptors=3e-2, hole_mobility=Mobility(50.0, "illustrative")),
+           "n+": MeshRegion(material=dataclasses.replace(inn, name="InN n"),
+                            mobility=Mobility(1000.0, "illustrative"), donors=1e-2,
+                            hole_mobility=Mobility(50.0, "illustrative"))}
+tunnel = BandToBand("illustrative reduced mass", reduced_mass_m0=0.03, model="nonlocal",
+                    direction=tuple(up), path_spacing=5.0)
+dev = MeshDevice(mesh, regions, [Electrode("top", "ohmic", 0, 1), Electrode("bottom", "ohmic", 0, 1)],
+                 contacts, hole_mass=0.5, band_to_band=tunnel)
+prev = None
+for V in (-0.2, 0.1, 0.2, 0.3):
+    prev = dev.solve({"bottom": V}, guess=prev)
+    print(f"{V:5.2f} V: {prev.current['bottom']:+.3e} A/mm")
+```
+
+```
+-0.20 V: -4.638e-03 A/mm
+ 0.10 V: +1.419e-04 A/mm
+ 0.20 V: +1.991e-05 A/mm
+ 0.30 V: +2.619e-10 A/mm
+```
+
+The nonlocal band-to-band model now works on meshes. Its paths are
+straight parallel lines in the `direction` you give, `path_spacing` nm
+apart. Here the diode of example 45 is turned by 30 degrees and the
+paths run across the junction, and the currents are those of example
+45. Point the paths along the junction instead and they find no
+tunneling. Pick the direction in which the field points.
 
 ## Tutorials
 

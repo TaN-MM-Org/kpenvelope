@@ -5,7 +5,7 @@ the corrections made in earlier versions.
 
 ## How the results are checked
 
-318 automated tests run on every push and pull request, on Python 3.9,
+329 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -42,12 +42,12 @@ the tests use:
 **Cited parameters**
 
 - The GaN and AlN numbers are locked to their tabulated values.
-- The GaN zone-centre splittings equal their closed forms to 1e-12 eV
+- The GaN zone-center splittings equal their closed forms to 1e-12 eV
   and the published 5.20 and 21.80 meV to 0.01 meV.
 - The GaN high-momentum masses reach m0/|A2+A4-A5| = 1.89 m0 and
   m0/|A2+A4+A5| = 0.180 m0 (to 0.03 and 0.003 m0).
 - A hard-wall self-consistent GaN run at 0.46 nm^-2 keeps the charge
-  to a relative 5e-3, puts the gas centre between 0.4 and 0.8 nm, and
+  to a relative 5e-3, puts the gas center between 0.4 and 0.8 nm, and
   has the two heavy branches dominate.
 
 **Self-consistency and filling**
@@ -342,6 +342,40 @@ the tests use:
 - Meshes: a rectangular grid cut into right triangles reproduces the
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
+
+**Peltier heat, tunneling with heat and on meshes, the app (new in 0.23.0)**
+
+- Peltier heat: in a uniformly doped bar at one temperature the extra
+  heat sits only at the two contacts, Pi I / q where the electrons leave
+  and -Pi I / q where they enter, Pi = kT (5/2 + ln(N_c / n)) (1e-9); the
+  inside gets none (1e-12 of that), and the total heat is the electrical
+  power in both heat models (1e-12).
+- Thomson heat: along a bar with a linear temperature profile, the extra
+  heat at each node equals -Gamma . grad Pi worked out by hand from the
+  temperature there (1e-6).
+- Band-to-band tunneling at a set lattice temperature of 360 K equals
+  the device built for 360 K with its gap shifted by hand (1e-8). With
+  self-heating the result is a fixed point: solving again at its own
+  temperature gives its current (1e-6), and its heat gives its
+  temperature (0.01 K); the total heat is the power (1e-10). With hot
+  electrons that relax at once it equals drift-diffusion (1e-5).
+- Nonlocal tunneling on a mesh: a rectangular grid cut into right
+  triangles gives the tensor grid's current (1e-9). On an unstructured
+  mesh, in a uniform field with full supply along three directions
+  (vertical, horizontal and slanted), the electron and hole rates add
+  up to Kane's formula integrated over each path's tunneling region
+  (1e-7).
+- `gap_shift` equals the change of the gap that `algan`, `ingan` and
+  `inaln` give between two temperatures (1e-12 eV).
+- `thermal_runaway(stop_above=)` stops at the first voltage past the
+  temperature and repeats the earlier steps exactly.
+- The app: the I-V sweep with tunneling shows a tunnel diode's dip; the
+  vertical device it uses equals the 1D solver's diode without tunneling
+  (1e-4); the Process steps tab gives the mask's area (1e-6), the dose
+  through the window, and Deal-Grove oxide to 1e-12; the transistor runs
+  with the full temperature model, Peltier heat, thermionic emission
+  and hot electrons with heating together; bad recipe lines and ScAlN
+  without gap numbers are refused with a message.
 
 **Temperature, tunnel diodes, meshes and process shapes (new in 0.22.0)**
 

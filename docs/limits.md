@@ -18,7 +18,7 @@ The limits of each part of the package, in detail. The
   With a strain that breaks in-plane isotropy it is refused (since
   0.16.0). Use `filling="kgrid"` (example 8) for occupations you rely
   on; it costs `nk` extra solutions per iteration.
-- With `filling="kgrid"` the states are labelled by their energy order
+- With `filling="kgrid"` the states are labeled by their energy order
   at each momentum, so where two subbands cross, the holes of the two
   labels are shared out by that order. The totals and the density do
   not depend on the labels.
@@ -155,20 +155,36 @@ The limits of each part of the package, in detail. The
 - Band-to-band tunneling: the local model is Kane's rate as a generation
   only, scaled to vanish in equilibrium by the spread of the electrode
   voltages. The nonlocal model (generation and recombination, tunnel
-  diodes) follows straight vertical paths along the grid lines of a
-  tensor grid, with the two-band WKB transmission; it is not available
-  on meshes, and neither model runs together with self-heating, hot
-  electrons or a set lattice temperature yet. Both are coupled by
-  repeated solves, not inside Newton's method.
+  diodes) uses the two-band WKB transmission along straight, parallel
+  paths: the grid's columns on a tensor grid, and lines in one direction
+  you choose on a mesh. Real paths follow the field and can bend; one
+  direction is right where the field points mostly one way, as across a
+  junction. Both models are coupled by repeated solves, not inside
+  Newton's method, also when they run with self-heating, hot electrons
+  or a set lattice temperature (since 0.23.0), so a solve with tunneling
+  and heat repeats the heated solve several times.
 - Temperature: with `temperature_model="full"` the lattice temperature
   sets kT, the densities of states, the gap (Varshni's form, with your
   split of the change between the bands), trap emission, the Richardson
   velocity and the ohmic contacts. A Schottky barrier height, the
   impact-ionization and band-to-band coefficients and the capture
-  coefficients stay at their given values. The heat put into the lattice is the Joule heat plus the
-  recombination heat; Peltier and Thomson heat are left out. Thermal
-  runaway is found as the voltage beyond which no steady self-heated
-  state exists; what happens after (the device in time) needs `pulse`.
+  coefficients stay at their given values. Thermal runaway is found as
+  the voltage beyond which no steady self-heated state exists; what
+  happens after (the device in time) needs `pulse`.
+- Heat: the default is Joule plus recombination heat. With
+  `heat_model="thermoelectric"` (since 0.23.0) the Peltier and Thomson
+  heat are added, with the heat each carrier carries taken from the
+  package's own thermoelectric current, Pi = kT (5/2 + ln(N_c / n)),
+  so that heat and current agree. That is the value for a
+  non-degenerate gas with a constant mobility. Where the electrons are
+  degenerate (n above N_c, as in a transistor channel) it comes out too
+  small and can even change sign: with the Fermi level 4 kT above the
+  band edge it gives 0.63 kT, against 1.09 kT for the same gas (same
+  constant scattering time) worked out with Fermi-Dirac statistics. The
+  change of the band edges with temperature does not enter Pi. Other
+  codes write the thermoelectric power differently (the Kelvin formula
+  used by M. Kantner, arXiv:1911.00377, has 3/2 in place of 5/2), so
+  compare like with like.
 - Breakdown of a dielectric or a barrier is a comparison with a critical
   field you give (`field_check`), not a model of the breakdown itself.
   Small-signal response is linear; f_max needs a gate resistance you

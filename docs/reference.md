@@ -190,7 +190,9 @@ read the results on the right:
   electrons treated simply or by quantum mechanics) that says where the
   electron layer empties, the gate leakage (thermionic emission and
   tunneling through the barrier), or an I-V sweep (with your transport
-  numbers and their source, and thermionic emission at a metal).
+  numbers and their source, and thermionic emission at a metal). Since
+  0.23.0 the I-V sweep can include band-to-band tunneling, for tunnel
+  junctions and tunnel diodes.
 - **Fit my data**: paste a measured C-V curve (in nF/cm^2, or pF with
   the gate area) and/or a Hall density, tick the numbers you are unsure
   of, and the app finds them with error bars, plots measured against
@@ -221,7 +223,16 @@ read the results on the right:
   voltage in the off state, and the current and temperature during a
   pulse. Since 0.21.0 the hot electrons can change the current (energy
   balance solved with it), and breakdown can also be read where the
-  off-state drain current reaches a value you choose.
+  off-state drain current reaches a value you choose. Since 0.23.0 the
+  heat can follow the full temperature model (leakage and the band gap
+  follow the temperature too), include Peltier heat, and run together
+  with the hot electrons; electrons can cross the barrier step by
+  thermionic emission; and a thermal runaway button raises the drain
+  voltage until no steady temperature is left.
+- **Process steps** (new in 0.23.0): write a short recipe, one step per
+  line (deposit, etch, implant, anneal, oxidize), and see the
+  cross-section it builds, with its materials or its doping, the
+  thickness in the middle and the doses.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -576,6 +587,33 @@ example) gives its inputs, units and conventions.
   with Fermi-Dirac statistics, so traps no longer recombine in
   equilibrium where a band is degenerate. Self-heating converges faster
   near thermal runaway, and runaway is recognized sooner.
+
+**Peltier heat, tunneling with heat, tunneling on meshes (new in 0.23.0)**
+
+- `Device(..., heat_model="thermoelectric")` (also `MeshDevice`) -- the
+  heat source includes the Peltier and Thomson heat: each carrier flow
+  carries the heat Pi = kT (5/2 + ln(N_c / n)) per electron (and the
+  same with N_v / p for holes), Pi being the package's own thermoelectric
+  power times T. Where the flow crosses a change of Pi, that heat is
+  released or taken. It only moves heat around, so the total heat is
+  still the electrical power. The default, `"joule"`, is the earlier
+  model (Joule heat plus recombination heat).
+- Band-to-band tunneling (local or nonlocal) now runs together with
+  `thermal=`, `energy_relaxation=` and `lattice_temperature=`.
+- `BandToBand(..., model="nonlocal")` on a `MeshDevice`: the paths are
+  straight parallel lines across the mesh, `direction=(dx, dz)` (default
+  `(0, 1)`, vertical) and `path_spacing` (nm, default the median edge
+  length). On a tensor grid the paths stay the grid's columns.
+- `nitride.gap_shift(alloy, x, conduction_share)` -- how the gap of
+  GaN, AlN, InN, AlGaN, InGaN or InAlN changes with temperature, from
+  the same cited Varshni numbers as `algan`, `ingan` and `inaln`. Use it
+  as `band_gap_temperature` (one per layer).
+- `Device.thermal_runaway(..., stop_above=T)` -- stop the sweep once the
+  hottest point passes T (the result's `too_hot` says where).
+- The app: a Process steps tab, a thermal runaway search, band-to-band
+  tunneling in the I-V sweep, and in the Transistor tab the full
+  temperature model, Peltier heat, thermionic emission over the barrier
+  step, and hot electrons together with self-heating.
 
 **Phonons (new in 0.18.0)**
 
