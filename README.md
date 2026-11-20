@@ -79,7 +79,13 @@ response with f_T and f_max, heating that changes in time (pulses),
 avalanche breakdown from measured GaN impact ionization coefficients,
 tunneling through the gate barrier, the electron temperature of hot
 electrons, and shaped devices: passivation films, recessed gates,
-field plates and etched regions.
+field plates and etched regions. Since version 0.21.0 the electrons'
+energy can be solved together with the current (velocity overshoot),
+electrons cross band steps by thermionic emission and barriers by
+tunneling inside the solve, band-to-band tunneling, current-criterion
+breakdown and thermal runaway are built in, implants and anneals set the
+doping, and devices can be built on unstructured triangle meshes with
+curved and slanted shapes.
 And everything above can be used without writing code, in an app that
 opens in your web browser (`kpenvelope-app`) and says what each result
 means in plain words. It also answers:
@@ -127,7 +133,10 @@ says why, instead of returning a number that looks fine but is not.
   cross-section; 28 to 30 for transistor curves with self-heating, drain
   lag from traps, and a 3D transistor; 31 to 35 for contact resistance
   and f_T/f_max, recessed gates, passivation and field plates,
-  avalanche breakdown, pulsed heating, gate tunneling and hot electrons)
+  avalanche breakdown, pulsed heating, gate tunneling and hot electrons;
+  36 to 42 for velocity overshoot, emission over band steps, tunneling
+  barriers, band-to-band tunneling, breakdown by current and thermal
+  runaway, implant and anneal, and a curved device on a triangle mesh)
 - [Tutorials](#tutorials) (from data to a result with error bars)
 - [What is in the package](#what-is-in-the-package)
 - [Cited parameter sets](#cited-parameter-sets)
@@ -352,7 +361,9 @@ read the results on the right:
   loss time, how hot the electrons get. Three more buttons give the
   speed (f_T and f_max with the gain curves), the avalanche breakdown
   voltage in the off state, and the current and temperature during a
-  pulse.
+  pulse. Since 0.21.0 the hot electrons can change the current (energy
+  balance solved with it), and breakdown can also be read where the
+  off-state drain current reaches a value you choose.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -1537,7 +1548,7 @@ Vd =  1.0 V: 0.740 A/mm without heating, 0.719 A/mm with (hottest 307 K, 0.72 W/
 Vd =  2.0 V: 0.969 A/mm without heating, 0.916 A/mm with (hottest 317 K, 1.83 W/mm)
 Vd =  5.0 V: 1.046 A/mm without heating, 0.933 A/mm with (hottest 353 K, 4.66 W/mm)
 Vd = 10.0 V: 1.068 A/mm without heating, 0.870 A/mm with (hottest 411 K, 8.70 W/mm)
-currents add up to -5.7e-11 A/mm; heat put in 8.696261 W/mm = power 8.696261 W/mm
+currents add up to -4.7e-11 A/mm; heat put in 8.696261 W/mm = power 8.696261 W/mm
 ```
 
 `Device` builds a 3.5 um long transistor: ohmic source and drain on
@@ -1928,10 +1939,10 @@ for xx in (300, 1400, 2380, 2500):
 
 ```
 gate current -3.942e-03 A/mm; middle of the gate -1.3586e+02 A/cm^2, 1D solver -1.3566e+02 A/cm^2
-x =    310 nm: electrons at    343 K
-x =   1420 nm: electrons at    377 K
-x =   2377 nm: electrons at    634 K
-x =   2490 nm: electrons at   1009 K
+x =    310 nm: electrons at    335 K
+x =   1420 nm: electrons at    371 K
+x =   2377 nm: electrons at    595 K
+x =   2490 nm: electrons at    908 K
 ```
 
 `gate_tunneling` takes the band diagram of the 2D solution column by
@@ -1942,8 +1953,321 @@ changes. `electron_temperature` solves the energy balance of the
 electrons with the fields and currents of a solution, with an energy
 relaxation time you supply (0.47 ps here, measured at 250 K by Tiras et
 al. 2012). The electrons are a little warm under the gate and much
-hotter in the high field between the gate and the drain. The temperature is an output only:
-it does not feed back into the mobility (see [Limits](#limits)).
+hotter in the high field between the gate and the drain. Here the
+temperature is an output only; for the coupled model see example 36.
+
+### 36. Hot electrons that change the current: velocity overshoot (new in 0.21.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+
+# an n+ / n / n+ GaN diode, 200 nm each (illustrative doping and mobility)
+g = algan(0.0)
+layers = [StackLayer(g, 200.0, donors=1e-2, name="n+ bottom"),
+          StackLayer(g, 200.0, donors=1e-4, name="n"),
+          StackLayer(g, 200.0, donors=1e-2, name="n+ top")]
+mob = Mobility(1000.0, "illustrative", saturation_velocity=1.5e7)
+el = [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")]
+dev = Device(layers, 20.0, el, mob, Surface("pinned", barrier=1.0),
+             grid=dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 600, 601)),
+             statistics="boltzmann")
+dd = dev.solve({"bot": 2.0})
+# energy relaxation time 0.47 ps: measured at 250 K in AlGaN/AlN/GaN by
+# Tiras et al. (2012), used here as an example value
+hot = dev.solve({"bot": 2.0}, energy_relaxation=0.47e-12)
+
+
+def velocity(s):           # cm/s along the diode: J / (q n)
+    return abs(s.current["bot"]) / (20e-7 * 0.1) / (1.602176634e-19 * s.n[1])
+
+
+z = dev.axes[-1]
+m = (z > 200) & (z < 400)
+print(f"current: drift-diffusion {dd.current['bot']:.4f} A/mm, "
+      f"hydrodynamic {hot.current['bot']:.4f} A/mm")
+print(f"fastest electrons in the n layer: {velocity(dd)[m].max():.3e} cm/s and "
+      f"{velocity(hot)[m].max():.3e} cm/s (saturation speed 1.5e7)")
+print(f"hottest electrons {hot.electron_temperature.max():.0f} K")
+```
+
+```
+current: drift-diffusion 0.0646 A/mm, hydrodynamic 0.0865 A/mm
+fastest electrons in the n layer: 1.385e+07 cm/s and 3.968e+07 cm/s (saturation speed 1.5e7)
+hottest electrons 4625 K
+```
+
+With `energy_relaxation=` the solve couples the electrons' energy balance
+to the currents (the hydrodynamic or energy-transport model). The flux on
+every edge is the exact solution for a temperature that changes linearly
+along it (it reduces to Scharfetter-Gummel when the temperature is
+constant), and the mobility is the drift-diffusion model's at the field
+that would heat uniform electrons to the local temperature. So where the
+field is uniform the model gives back the drift-diffusion velocity and
+T_n = T_L + (2/3) tau mu E^2 / k exactly (a test checks both to 1e-5).
+Where the field jumps, the electrons stay cool for a moment and run
+faster than the saturation speed: 4.0e7 cm/s here against 1.4e7 cm/s in
+drift-diffusion, and 34 percent more current. Constant-tau models like
+this one are known to be able to overstate overshoot; compare with Monte
+Carlo where it matters.
+
+### 37. Electrons over a band step: thermionic emission
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.interfaces import interface_charges
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+
+# n-GaN / n-Al0.15Ga0.85N, 1e18 cm^-3 each, polarization charge removed so
+# only the band step matters (illustrative)
+layers = [StackLayer(algan(0.0), 100.0, donors=1e-3, name="GaN"),
+          StackLayer(algan(0.15), 100.0, donors=1e-3, name="AlGaN")]
+no_pol = {c.index: -c.sigma_nm2 for c in interface_charges(layers)}
+grid = dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 200, 5001))
+el = [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")]
+for model in ("drift-diffusion", "thermionic"):
+    dev = Device(layers, 20.0, el, Mobility(300.0, "illustrative"), Surface("pinned", barrier=1.0),
+                 extra_sheet=no_pol, grid=grid, heterojunctions=model, statistics="boltzmann")
+    I = [dev.solve({"top": v}).current["top"] for v in (0.02, 0.1)]
+    print(f"{model:16s}: {I[0]:.4e} A/mm at 0.02 V, {I[1]:.4e} A/mm at 0.1 V")
+```
+
+```
+drift-diffusion : 1.7609e-03 A/mm at 0.02 V, 5.8464e-03 A/mm at 0.1 V
+thermionic      : 1.7265e-04 A/mm at 0.02 V, 4.3164e-04 A/mm at 0.1 V
+```
+
+With `heterojunctions="thermionic"` the current across an abrupt band
+step is the emission current over it, J = q v_R n_b [exp(dF/kT) - 1],
+with the Richardson velocity and density of the barrier side (the form
+of K. Yang, J. R. East and G. I. Haddad, Solid-State Electron. 36, 321
+(1993)). Drift-diffusion treats the step as a very steep slope, which
+here lets ten times too much current through. A test solves the same
+model as a boundary-value problem with SciPy and agrees to 0.5 percent
+once the grid error (first order, from the single node at the interface)
+is extrapolated away.
+
+### 38. Tunneling through a barrier inside the device
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.interfaces import interface_charges
+from kpenvelope.device import Device, Electrode, Mobility, Surface, TunnelBarrier
+
+# n+ GaN / Al0.3Ga0.7N barrier / n+ GaN, polarization charge removed
+# (illustrative): the electrons cross the barrier by tunneling and over its
+# top, computed with the Tsu-Esaki integral inside the Newton solve
+for thick in (2.0, 4.0, 6.0):
+    layers = [StackLayer(algan(0.0), 60.0, donors=1e-2, name="bottom"),
+              StackLayer(algan(0.3), thick, name="barrier"),
+              StackLayer(algan(0.0), 60.0, donors=1e-2, name="top")]
+    z = np.unique(np.r_[np.linspace(0, 60, 121), np.linspace(60, 60 + thick, int(thick / 0.1) + 1),
+                        np.linspace(60 + thick, 120 + thick, 121)])
+    dev = Device(layers, 20.0,
+                 [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")],
+                 Mobility(300.0, "illustrative"), Surface("pinned", barrier=1.0),
+                 extra_sheet={c.index: -c.sigma_nm2 for c in interface_charges(layers)},
+                 grid=dict(x=np.array([0.0, 10.0, 20.0]), z=z),
+                 tunnel_barriers=[TunnelBarrier("barrier", n_energy=800)])
+    J = [dev.solve({"top": v}).current["top"] / (20e-7 * 0.1) for v in (0.05, 0.2)]
+    print(f"{thick:.0f} nm barrier: {J[0]:.3e} A/cm^2 at 0.05 V, {J[1]:.3e} A/cm^2 at 0.2 V")
+```
+
+```
+2 nm barrier: 1.075e+04 A/cm^2 at 0.05 V, 4.207e+04 A/cm^2 at 0.2 V
+4 nm barrier: 2.486e+01 A/cm^2 at 0.05 V, 1.623e+02 A/cm^2 at 0.2 V
+6 nm barrier: 1.291e+00 A/cm^2 at 0.05 V, 1.244e+01 A/cm^2 at 0.2 V
+```
+
+`TunnelBarrier("barrier")` takes the electrons across that layer with
+the Tsu-Esaki current through the solution's own band profile (WKB
+transmission, tunneling and emission over the top together), coupled
+into the Newton solve with its derivatives. A layer at the top under a
+gate gives the gate leakage as part of the solution; under a wide gate it
+matches the 1D `gate_leakage` to 2 percent in the tests.
+
+### 39. Band-to-band (Zener) tunneling in a reverse-biased junction
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, gan
+from kpenvelope.device import BandToBand, Device, Electrode, Mobility, Surface
+
+# a GaN p+/n+ junction, 5e19 cm^-3 on each side (illustrative)
+g = gan(polarization="hse-dreyer2016")
+layers = [StackLayer(g, 40.0, acceptors=5e-2, name="p+"), StackLayer(g, 40.0, donors=5e-2, name="n+")]
+el = [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")]
+dev = Device(layers, 20.0, el, Mobility(300.0, "illustrative"), Surface("pinned", barrier=1.0),
+             hole_mass=1.0, hole_mobility=Mobility(20.0, "illustrative"), statistics="boltzmann",
+             grid=dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 80, 401)),
+             band_to_band=BandToBand("Kane's formula as in arXiv:2108.09328, Eq. 13; "
+                                     "reduced mass from m_e and the illustrative m_h = 1"))
+for V in (5.0, 10.0, 15.0):
+    s = dev.solve({"top": V})
+    F = np.abs(np.gradient(s.psi[1], s.axes[-1])).max() * 1e7
+    print(f"{V:4.1f} V reverse: {abs(s.current['top']):.3e} A/mm, peak field {F / 1e6:.2f} MV/cm")
+```
+
+```
+ 5.0 V reverse: 1.544e-06 A/mm, peak field 8.50 MV/cm
+10.0 V reverse: 1.323e-04 A/mm, peak field 10.74 MV/cm
+15.0 V reverse: 1.767e-03 A/mm, peak field 12.59 MV/cm
+```
+
+`BandToBand` adds Kane's two-band generation rate at the local field (as
+written in Eq. 13 of arXiv:2108.09328), here at fields of 8.5 to 12.6
+MV/cm. The terminal current equals q times the generation integrated over
+the device (the tests check 1e-4). It is a generation term only: tunneling
+recombination and forward-bias (Esaki) tunneling are not modeled.
+
+### 40. Breakdown by current, and thermal runaway
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+from kpenvelope.thermal import ThermalLayer, ThermalMaterial, ThermalModel
+
+# 1) the off-state drain voltage where 1 mA/mm flows (punch-through here:
+#    a short gate on an undoped 200 nm buffer)
+layers = [StackLayer(algan(0.0), 200.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+el = [Electrode("source", "ohmic", 0, 100, implant_depth=40, implant_donors=1e20),
+      Electrode("gate", "schottky", 300, 400, barrier=1.0),
+      Electrode("drain", "ohmic", 600, 700, implant_depth=40, implant_donors=1e20)]
+dev = Device(layers, 700.0, el, Mobility(1800.0, "illustrative", saturation_velocity=1e7),
+             Surface("pinned", barrier=1.0), dx_fine=10, dx_max=50, dz_fine=2.0, dz_max=40,
+             fine_depth=40)
+r = dev.breakdown_by_current("drain", np.arange(1.0, 41.0, 1.0), bias={"gate": -8.0},
+                             current=1e-3)
+print(f"1 mA/mm at {r['voltage']:.2f} V; the current returns through: "
+      + ", ".join(f"{k} {100 * v:.1f}%" for k, v in r["share"].items()))
+
+# 2) thermal runaway of a bar whose mobility rises as T^2 (illustrative),
+#    on a poor heat sink (1 W/(m K), 1 um)
+bar = Device([StackLayer(algan(0.0), 100.0, donors=1e-4, name="bar")], 1000.0,
+             [Electrode("a", "ohmic", 0, 50, z0=50.0, z1=100.0),
+              Electrode("b", "ohmic", 950, 1000, z0=50.0, z1=100.0)],
+             Mobility(300.0, "illustrative", temperature_exponent=-2.0),
+             Surface("states", fixed_charge=0.0), dx_fine=25, dx_max=50, dz_fine=10, dz_max=10,
+             fine_depth=100)
+heat = ThermalModel({"bar": ThermalMaterial("bar", 5000.0, 0.0, "illustrative")},
+                    substrate=(ThermalLayer("sink", 1000.0,
+                                            ThermalMaterial("sink", 1.0, 0.0, "illustrative")),))
+G0 = bar.solve({"b": 0.01}).current["b"] / 0.01
+s1 = bar.solve({"b": 0.01}, thermal=heat)
+Rth = float(np.sum(s1.heat * (s1.temperature - 300)) / np.sum(s1.heat)) / s1.power
+Vc = np.sqrt(300.0 / (Rth * G0 * 4.0))     # T* = 600 K for mu ~ T^2
+run = bar.thermal_runaway("b", np.linspace(0.5, 1.5, 21), heat)
+print(f"lumped model: runaway at {Vc:.4f} V; device: steady up to {run['stable']:.4f} V, "
+      f"none at {run['runaway']:.4f} V (hottest {run['hottest'][-1]:.0f} K)")
+```
+
+```
+1 mA/mm at 1.25 V; the current returns through: source 100.0%, gate 0.0%
+lumped model: runaway at 1.1938 V; device: steady up to 1.1930 V, none at 1.1938 V (hottest 579 K)
+```
+
+`breakdown_by_current` steps a voltage until a terminal current reaches
+a value you choose (1 mA/mm is a common off-state criterion) and says
+where the current goes; whatever the device includes counts. Here the
+short gate on an undoped buffer never switches the channel off well, so
+1 mA/mm flows already at 1.25 V, all of it through the source (under the
+gate and through the buffer), none through the gate. `thermal_runaway`
+sweeps with self-heating and bisects to the voltage where no
+self-heated steady state is left. For a bar whose mobility grows as T^2
+the lumped model T = T0 + R_th G0 (T/T0)^2 V^2 has its last solution at
+1.1938 V; the device finds the edge between 1.1930 and 1.1938 V.
+
+### 41. Implant, anneal, then the transistor
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+from kpenvelope.process import Anneal, Implant, Process
+
+# Si-like donors implanted through a mask over the source and drain, then
+# annealed (every number illustrative: take R_p, straggle and D from SRIM or
+# SIMS and from a diffusion study of your material)
+implants = [Implant("donor", 2e15, 30.0, 12.0, "illustrative", surface_z=220.0,
+                    lateral_straggle_nm=10.0, window=w) for w in ((0.0, 120.0), (580.0, 700.0))]
+anneal = Anneal(30.0, 1473.0, 1e-4, 3.0, "illustrative")
+pr = Process(implants + [anneal], width=700.0, z_bottom=0.0, z_top=220.0, nx=351, nz=441)
+print(f"D at 1200 C: {anneal.diffusivity_nm2_s:.3g} nm^2/s; dose under the source "
+      f"{pr.sheet()[25]:.3e} cm^-2 (implanted 2e15)")
+layers = [StackLayer(algan(0.0), 200.0, name="buffer"), StackLayer(algan(0.25), 20.0, name="barrier")]
+el = [Electrode("source", "ohmic", 0, 100), Electrode("gate", "schottky", 300, 400, barrier=1.0),
+      Electrode("drain", "ohmic", 600, 700)]
+dev = Device(layers, 700.0, el, Mobility(1800.0, "illustrative", saturation_velocity=1e7),
+             Surface("pinned", barrier=1.0), doping=pr.doping(), dx_fine=10, dx_max=50,
+             dz_fine=1.0, dz_max=40, fine_depth=60)
+V, I, _ = dev.sweep("drain", [0.5, 2.0, 5.0], bias={"gate": 0.0})
+print("drain current:", ", ".join(f"{i:.3f} A/mm at {v:.1f} V" for v, i in zip(V, I["drain"])))
+```
+
+```
+D at 1200 C: 0.544 nm^2/s; dose under the source 1.988e+15 cm^-2 (implanted 2e15)
+drain current: 1.264 A/mm at 0.5 V, 1.661 A/mm at 2.0 V, 1.739 A/mm at 5.0 V
+```
+
+`Implant` gives the Gaussian depth profile of a range and straggle you
+supply, with error-function edges at a mask window; `Anneal` diffuses it
+with D = D0 exp(-Ea/kT), exactly in time, conserving the dose (0.6
+percent of this implant's Gaussian lies above the surface, which is why
+1.988e15 is left). `Process.doping()` hands the result to `Device(doping=)`.
+The tests check the anneal against the exact broadened Gaussian and the
+surface image solution to 1e-4, and the mask edge to 1e-7.
+
+### 42. A curved device on a triangle mesh
+
+```python
+import warnings
+import numpy as np
+from kpenvelope import algan
+from kpenvelope.device import Electrode, Mobility
+from kpenvelope.mesh import MeshDevice, MeshRegion, mesh_from_points
+
+# a quarter ring of n-GaN (radii 200 and 600 nm, 1e18 cm^-3, 500 cm^2/Vs,
+# illustrative) with contacts on its two straight ends:
+# R = rho (pi/2) / ln(b/a) per unit depth
+a, b, mu, nd = 200.0, 600.0, 500.0, 1e18
+R = 1 / (1.602176634e-19 * nd * mu) * (np.pi / 2) / (np.log(b / a) * 0.1)      # ohm mm
+for nr, nt in ((9, 13), (17, 25), (33, 49)):
+    r, t = np.meshgrid(np.linspace(a, b, nr), np.linspace(0, np.pi / 2, nt), indexing="ij")
+    pts = np.column_stack([(r * np.cos(t)).ravel(), (r * np.sin(t)).ravel()])
+    mesh = mesh_from_points(pts, lambda x, z: "GaN" if a - 1e-9 <= np.hypot(x, z) <= b + 1e-9
+                            else None)
+    P = mesh.points
+    contacts = {"a": np.flatnonzero(np.isclose(P[:, 1], 0.0)),
+                "b": np.flatnonzero(np.isclose(P[:, 0], 0.0))}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)   # obtuse triangles on the arcs
+        dev = MeshDevice(mesh, {"GaN": MeshRegion(material=algan(0.0),
+                                                  mobility=Mobility(mu, "illustrative"),
+                                                  donors=nd * 1e-21)},
+                         [Electrode("a", "ohmic", 0, 1), Electrode("b", "ohmic", 0, 1)],
+                         contacts, statistics="boltzmann")
+    I = abs(dev.solve({"b": 0.01}).current["b"])
+    print(f"{mesh.triangles.shape[0]:5d} triangles: {I:.6f} A/mm, exact {0.01 / R:.6f} A/mm, "
+          f"error {I * R / 0.01 - 1:+.2e}")
+```
+
+```
+  192 triangles: 0.056423 A/mm, exact 0.056028 A/mm, error +7.06e-03
+  768 triangles: 0.056127 A/mm, exact 0.056028 A/mm, error +1.77e-03
+ 3072 triangles: 0.056053 A/mm, exact 0.056028 A/mm, error +4.42e-04
+```
+
+`MeshDevice` solves the same equations on an unstructured triangle mesh
+with the box (Voronoi) method, so shapes can be curved or slanted. On this
+quarter ring the error falls by four with every halving of the mesh size
+(second order) toward the exact resistance. On a rectangular grid cut
+into right triangles it reproduces the tensor-grid `Device` to rounding
+(a test checks 1e-10).
 
 ## Tutorials
 
@@ -2356,6 +2680,26 @@ example) gives its inputs, units and conventions.
   semiconductor (`regions=`), electrodes as metal boxes (`z0`, `z1`),
   and electrodes in several pieces (one name, one metal); `Device.field`
   gives the electric field.
+
+**Hot electrons, band steps, tunneling, breakdown, process and meshes (new in 0.21.0)**
+
+- `Device.solve(..., energy_relaxation=tau)` -- the electrons' energy
+  balance solved with the currents (hydrodynamic model); the state carries
+  `electron_temperature`.
+- `Device(..., heterojunctions="thermionic")` -- thermionic emission over
+  abrupt band steps, for electrons and holes.
+- `TunnelBarrier(layer)` in `Device(tunnel_barriers=[...])` -- Tsu-Esaki
+  tunneling and emission across a layer, coupled into the solve (also
+  between a channel and a gate on top).
+- `BandToBand(reference)` in `Device(band_to_band=)` -- Kane's
+  band-to-band generation.
+- `Device.breakdown_by_current`, `Device.field_check` (peak field per
+  material against critical fields you give), `Device.thermal_runaway`.
+- `Device(doping=f)` with `f(x, z) -> (N_d, N_a)`; module `process`:
+  `Implant`, `Anneal`, `Process`.
+- Module `mesh`: `Mesh`, `mesh_from_points`, `mesh_from_grid`,
+  `MeshRegion`, `MeshDevice`. `Mobility` now also takes a negative
+  temperature exponent (a mobility that rises with temperature).
 
 **Phonons (new in 0.18.0)**
 
@@ -2993,6 +3337,37 @@ the tests use:
   surface of the app holds the bare surface's electron density (2
   percent).
 
+**Hot electrons, band steps, tunneling, breakdown, process and meshes (new in 0.21.0)**
+
+- Hydrodynamic model: the discrete flux on an edge is the exact solution
+  of the edge's equation for a linear temperature (against SciPy's ODE
+  solver, 1e-9); in a uniform field the coupled model returns the
+  drift-diffusion velocity and T_n = T_L + (2/3) tau mu E^2 / k (1e-5); an
+  n+ n n+ diode shows overshoot above twice the saturation speed while
+  drift-diffusion never exceeds it, the same on two grids within 3
+  percent.
+- Thermionic emission: zero current in equilibrium; against a
+  boundary-value solution of the same model with SciPy's `solve_bvp`
+  (5e-3, after extrapolating the first-order grid error).
+- Tunnel barriers: zero in equilibrium; the coupled current equals
+  `tsu_esaki_current` on the solution's bands (1e-8); gate tunneling
+  through a coupled barrier matches the 1D `gate_leakage` under a wide gate
+  (2 percent).
+- Band-to-band: the rate equals a hand evaluation of Kane's formula
+  (1e-12) and its derivative a finite difference (1e-6); zero current in
+  equilibrium; the terminal current equals q times the integrated
+  generation (1e-4).
+- Breakdown: the current criterion interpolates between the bracketing
+  steps; the field in a capacitor's dielectric is V/d (2e-3); thermal
+  runaway lies within 0.3 percent of the lumped model's critical voltage.
+- Process: the anneal against the exact broadened Gaussian and the
+  surface image solution (1e-4), the dose conserved (1e-9), the mask edge
+  against a numerical convolution (1e-7), the dose carried into a device
+  (2 percent, from the device grid).
+- Meshes: a rectangular grid cut into right triangles reproduces the
+  tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
+  ring converges to the exact resistance with second order.
+
 **InGaN, InAlN, ScAlN, devices, phonons and the app (new in 0.18.0)**
 
 - The Vurgaftman-Meyer and Ambacher numbers equal the printed tables
@@ -3398,41 +3773,53 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
   along the channel, classical electrons, holes only if asked, the free
   surface pinned at one barrier, and SciPy for speed (the NumPy fallback
   is slower). For current, use `Device`.
-- Devices in 2D and 3D (`Device`): drift-diffusion with classical
-  carriers (no quantum confinement of the channel, no ballistic
-  transport or velocity overshoot), and a heterojunction as a band step
-  between two nodes (no thermionic emission over it as a separate
-  process). Hot electrons: `electron_temperature` solves the electrons'
-  energy balance afterwards; the temperature does not feed back into
-  the mobility or the current (this is not a full hydrodynamic model),
-  and where electrons are very sparse it can give a few of them very
-  high temperatures that carry nothing. Tunneling is computed through
-  the gate barrier only (`gate_tunneling`, vertical paths, WKB, one
-  band; an approximation at the gate edges), not between layers inside
-  the device or band to band, and not through dielectrics. Impact
-  ionization uses one set of coefficients; the shipped one is measured
-  on GaN and the app applies it in GaN only. Breakdown is avalanche
-  breakdown along one field line through the highest field; leakage,
-  trap-assisted or thermal runaway breakdown are not predicted (a
-  device that is not off at the gate voltage chosen leaks first, and
-  the app says so). Small-signal response is linear (no large-signal
-  harmonics or load-pull); f_max needs a gate resistance you supply.
-  Shapes are boxes on a tensor-product grid (no slanted walls or
-  unstructured meshes); etched regions keep their layer's material in
-  the heat equation; a passivation film is a dielectric with no charge
-  of its own except what you set on the surface. No process simulation
-  (growth, etching, implantation, annealing). The lattice temperature
-  changes the mobility only (the carrier statistics stay at the ambient
-  temperature). The mobility's field is rounded near zero (0.1 percent
-  of its saturation term at most) to keep it smooth. The quasi-Fermi
-  driving force (an option) often fails to converge at high drain
-  voltage; the default field driving force does not have that problem.
-  Each Newton step is a sparse LU solve, so a 2D sweep takes seconds to
+- Devices in 2D and 3D (`Device`, `MeshDevice`): classical carriers (no
+  quantum confinement of the channel, no ballistic transport). The
+  hydrodynamic model uses one energy relaxation time (yours); models of
+  this kind are known to be able to overstate velocity overshoot, it
+  cannot be combined with self-heating or band-to-band tunneling yet, and
+  the lattice statistics stay at the ambient temperature. Thermionic
+  emission at band steps uses the non-degenerate form on the barrier side
+  and the lattice temperature; the single node at an abrupt interface
+  gives an error first order in the grid step there, so refine the grid
+  at band steps (example 37). `TunnelBarrier` works on layered tensor
+  grids, along vertical paths with WKB transmission and one band, and its
+  derivatives by finite differences make a solve several times slower;
+  there is no tunneling through dielectrics, trap-assisted tunneling or
+  image-force lowering. Band-to-band tunneling is Kane's local rate as a
+  generation term (no recombination, no Esaki forward current), scaled to
+  vanish in equilibrium by the spread of the electrode voltages. Thermal
+  runaway acts through the mobility only: carrier statistics and trap
+  emission stay at the ambient temperature, so runaway from
+  temperature-activated leakage is not predicted. Breakdown of a
+  dielectric or a barrier is a comparison with a critical field you give
+  (`field_check`), not a model of the breakdown itself. Small-signal
+  response is linear; f_max needs a gate resistance you supply.
+- Shapes: `Device` builds boxes on a tensor grid; `MeshDevice` takes any
+  triangle mesh, but the package's own mesh generators are simple
+  (Delaunay of your points, or a rectangular grid cut into triangles):
+  bring a quality mesh from a mesh generator for complex shapes, and
+  refine where the warning about negative dual faces appears. On meshes
+  there is no self-heating, no `TunnelBarrier`, no field-line breakdown
+  tools, and interface polarization charges are given by you as sheets.
+- Process: Gaussian implant profiles from ranges you supply, and
+  constant-diffusivity anneals with no flux through the faces. No
+  implant-range calculation, no concentration- or Fermi-level-dependent
+  diffusion, segregation, damage, activation kinetics, epitaxy, etching
+  topography or oxidation: this is a doping model for device simulation,
+  not a process simulator.
+- Support: there is no commercial support. Questions and bug reports go
+  to the GitHub issues of the repository.
+- The mobility's field is rounded near zero (0.1 percent of its
+  saturation term at most) to keep it smooth. Each Newton step is a
+  sparse LU solve, so a 2D sweep takes seconds to
   a minute and a 3D one minutes. Currents below about 1e-10 A/mm are at
   the solver's numerical floor. With an undoped buffer and no traps the
-  current under a pinched-off gate flows through the buffer, as it
-  would in such a device. Check the grid by refining it near the gate
-  edges.
+  current under a pinched-off gate flows through the buffer, as it would
+  in such a device. The quasi-Fermi driving force (an option) often
+  fails to converge at high drain voltage; the default field driving
+  force does not have that problem. Check the grid by refining it near
+  the gate edges.
 - Phonons: only the interface (decaying) modes of the dielectric
   continuum model, not the confined or half-space modes, and no
   phonon-limited mobility. The single-oscillator dielectric function

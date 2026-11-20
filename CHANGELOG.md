@@ -4,6 +4,76 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.21.0 (2026-11-20)
+
+The remaining gaps of the device solver are closed as far as an open
+package can close them: hot electrons now change the current (velocity
+overshoot), electrons cross band steps by thermionic emission and
+barriers by tunneling inside the solve, band-to-band tunneling,
+current-criterion breakdown and thermal runaway are built in, implants
+and anneals set the doping, and devices can be built on unstructured
+triangle meshes with curved and slanted shapes. README examples 1 to 34
+print what they printed before, except the sum of the terminal currents in
+example 28, which is at the rounding level (now -4.7e-11 A/mm, was
+-5.7e-11); example 35 prints lower electron temperatures because of the
+correction below; examples 36 to 42 are new.
+
+### Added
+
+- Hydrodynamic (energy-transport) model: `Device.solve(...,
+  energy_relaxation=tau)` solves the electrons' energy balance together
+  with the currents. The flux on every edge is the exact solution for a
+  temperature that changes linearly along the edge (Scharfetter-Gummel
+  when it is constant); the hot-electron mobility is the drift-diffusion
+  model's at the field that would heat uniform electrons to the local
+  temperature, so a uniform field gives back the drift-diffusion
+  velocity exactly. Continuation in the electron temperature and
+  Anderson acceleration of the outer loop. `DeviceState.electron_temperature`.
+- `Device(heterojunctions="thermionic")`: thermionic emission over abrupt
+  band steps for electrons and holes, J = q v_R n_b [exp(dF/kT) - 1] with
+  barrier-side quantities (the form of K. Yang, J. R. East, G. I. Haddad,
+  Solid-State Electron. 36, 321 (1993)).
+- `TunnelBarrier` (`Device(tunnel_barriers=[...])`): the Tsu-Esaki current
+  through a layer's band profile, coupled into the Newton solve with
+  finite-difference derivatives; into a gate on top it is the gate
+  leakage as part of the solution.
+- `BandToBand` (`Device(band_to_band=)`): Kane's two-band generation rate
+  (as written in arXiv:2108.09328, Eq. 13), updated from the field until
+  it settles.
+- `Device.breakdown_by_current`, `Device.field_check` and
+  `Device.thermal_runaway` (with bisection to the edge).
+- `Device(doping=)` takes a doping profile; module `process` with
+  `Implant` (Gaussian depth profile, error-function mask edges) and
+  `Anneal` (constant diffusivity, solved exactly in time), and `Process`.
+- Module `mesh`: `MeshDevice` on unstructured triangle meshes (box
+  method), `Mesh`, `MeshRegion`, `mesh_from_points`, `mesh_from_grid`.
+- The app: "let hot electrons change the current", and breakdown read at
+  a drain current you choose.
+
+### Changed
+
+- `Mobility.temperature_exponent` may be negative.
+- When light (or band-to-band tunneling) feeds sparse carriers, Newton's
+  convergence test also weighs each level change by the density it leads
+  to, so a large rise from a vanishing density no longer looks converged.
+
+### Corrected
+
+- `electron_temperature`: the energy the field gives the electrons is now
+  -Gamma_n . grad E_c (J . E, as in the energy balance), not
+  -Gamma_n . grad F_n; the two differ where the density changes (a
+  degenerate channel), and the temperatures there come out lower
+  (example 35). Nodes with practically no electrons are held at the
+  lattice temperature.
+
+### Not included (see the README's Limits)
+
+- Process simulation beyond implant profiles and constant-diffusivity
+  anneals, self-heating and tunnel barriers on meshes, the hydrodynamic
+  model together with self-heating, band-to-band recombination and Esaki
+  tunneling, runaway from temperature-activated leakage, and commercial
+  support.
+
 ## 0.20.0 (2026-11-19)
 
 The device solver of 0.19.0 gains what it was missing next to the
