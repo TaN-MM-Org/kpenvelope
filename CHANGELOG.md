@@ -4,6 +4,74 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.24.0 (2026-11-20)
+
+The device solver can treat the electrons of a transistor channel as
+quantum states, and the process steps gain line-of-sight etching and
+deposition (shadowing in narrow openings) and two-dimensional oxidation
+(oxide under mask edges). The examples print what they printed before;
+examples 51 to 54 are new.
+
+### Added
+
+- `QuantumChannel(window, x_range, n_states, tol, max_outer, max_shift)`
+  for `Device(quantum=...)`: along every grid column inside the window,
+  the one-band Schroedinger equation (BenDaniel-Duke form, layer masses,
+  the device's own grid) with two-dimensional Fermi-Dirac filling at the
+  local electron quasi-Fermi level; the device sees the confined density
+  through a quantum potential added to the electrons' band edge, solved
+  in an outer, Anderson-accelerated loop until it settles. Every state up
+  to 40 kT above the quasi-Fermi level is kept. Trap emission keeps
+  detailed balance. `DeviceState.quantum_potential` and
+  `DeviceState.quantum` (levels, confined sheet density per column,
+  iterations); `ec` is the real band edge. By default the columns under
+  ohmic contacts are left classical. Runs with traps, holes, self-heating,
+  the full temperature model and hot electrons; `small_signal`,
+  `transient` and `pulse` hold the quantum potential of their start.
+- `device.column_states`: the eigenstates of one column on any grid.
+- `Structure.fluxes(exponent)`: the flux onto every exposed face from
+  particles with the in-plane angular distribution cos^n (n = 1 a gas at
+  rest, the 2D crossed-strings view factor; large n an ion beam), with
+  exact shadowing by the cells and mirror images at the sides.
+- `Structure.etch(..., mode="flux", exponent=, beams=)` and
+  `Structure.deposit(..., mode="flux", exponent=)`: etching and growth at
+  those fluxes (aspect-ratio dependent etching, thinner films at trench
+  bottoms).
+- `Structure.oxidize(..., mode="2d")`: the oxidant diffuses through the
+  oxide in two dimensions, with Deal and Grove's B and B/A as diffusion
+  and reaction; oxide grows under mask edges through a pad oxide (LOCOS)
+  and on trench walls; the new volume lifts its column (or swells into
+  the nearest gas from a sideways face).
+- The app: "treat the channel electrons as quantum states" in the
+  Transistor tab; mode=flux (with exponent=) for deposit and etch and
+  mode=2d for oxidize in Process steps. Process steps with mode=flux are
+  limited to 400 cells along a side.
+
+### Changed
+
+- `Device.equilibrium()` with a quantum channel solves the quantum
+  equilibrium.
+
+### Not included (see docs/limits.md)
+
+- Ballistic transport; quantum holes; a quantum channel on triangle
+  meshes or together with band-to-band tunneling; re-emission of
+  particles, gas or plasma chemistry and saturating surface kinetics in
+  the flux modes; stress and viscous flow of growing oxide.
+
+### Checks (tests)
+
+10 new tests (339 in all; docs/checks.md has the tolerances): the column
+eigenproblem against the infinite and the triangular well (second
+order); the device with a quantum channel against the separate 1D
+Schroedinger-Poisson solver at zero bias, under a biased gate and at
+360 K, with differences that halve with the grid step; a transistor with
+a quantum channel (detailed balance, current conservation, self-heating,
+hot electrons as without it, path independence); line-of-sight fluxes against exact
+view factors; flux etching and deposition; 2D oxidation against
+Deal-Grove and the oxidant's closed form, with LOCOS; the app's new
+options. All 54 documented examples were rerun.
+
 ## 0.23.0 (2026-11-20)
 
 Heat can now include the Peltier and Thomson heat, band-to-band

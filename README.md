@@ -38,16 +38,19 @@ only looks right.
 - Breakdown (avalanche, a current limit, or thermal runaway), tunneling
   through barriers and between bands (including tunnel diodes), hot
   electrons, and electrons hopping over band steps.
+- Electrons in the transistor channel as quantum states (their allowed
+  energies and where they sit), solved together with the current.
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
   shapes on triangle meshes.
-- Simple process steps that build the shape and the doping: deposition,
-  etching, oxidation, implants and anneals.
+- Process steps that build the shape and the doping: deposition and
+  etching (also with the shadowing of narrow openings), oxidation (also
+  under mask edges), implants and anneals.
 
 **An app** that runs many of these calculations in your web browser,
 with no code: charges, electrons, error bars, data fits, transistors with
-heat and runaway, tunnel diodes, and process steps.
+heat, runaway and quantum channels, tunnel diodes, and process steps.
 
 ## Install
 
@@ -160,7 +163,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  50 worked examples, each with the output it prints, and three
+  54 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -189,14 +192,13 @@ The full list is in [How it is checked](https://github.com/TaN-MM-Org/kpenvelope
 
 The main gaps, in plain terms:
 
-- Carriers are treated as classical particles in the device part: no
-  quantum confinement of the transistor channel and no ballistic
-  transport. The quantum solvers handle single layers and stacks, not
-  whole devices.
-- Process steps are simple. Oxidation is one-dimensional in each column
-  (no growth under a mask edge), etching and deposition follow fixed
-  rates (no plasma or gas chemistry), implant ranges and diffusion
-  constants come from you, and the shapes are built from square cells.
+- No ballistic transport. The quantum channel is one band, along the
+  grid's vertical lines, for electrons only; holes and the rest of the
+  device stay classical.
+- Process steps stay simple. There is no plasma or gas chemistry and no
+  stress in growing oxide, particles stick where they land, implant
+  ranges and diffusion constants come from you, and the shapes are built
+  from square cells.
 - The built-in meshes are simple. For complex shapes, bring a mesh from
   a mesh generator.
 - Tunneling between bands follows straight paths in one direction, not
