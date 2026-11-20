@@ -28,8 +28,10 @@ Boltzmann statistics). Traps follow Shockley-Read-Hall kinetics (W.
 Shockley and W. T. Read, Phys. Rev. 87, 835 (1952); R. N. Hall, Phys.
 Rev. 87, 387 (1952)): electrons are captured at c_n n (1 - f) and emitted
 at e_n f with e_n = c_n N_c exp(-(E_c - E_t)/kT), holes likewise, so the
-occupancy relaxes to the Fermi function in equilibrium (degeneracy 1;
-detailed balance is exact for Boltzmann statistics). An acceptor-like
+occupancy relaxes to the Fermi function in equilibrium (degeneracy 1).
+With Fermi-Dirac statistics each emission rate is multiplied by the
+degeneracy factor gamma = F_1/2(eta) / exp(eta) of its band (since
+0.22.0), which keeps detailed balance exact there too. An acceptor-like
 trap holds -q N_t f, a donor-like trap +q N_t (1 - f). In steady state f
 is eliminated: f = (c_n n + e_p) / (c_n n + e_n + c_p p + e_p). Without
 holes, traps exchange electrons with the conduction band only.
@@ -53,12 +55,12 @@ Self-heating: the heat put into the lattice at each node is the Joule
 heat -Gamma_n . grad F_n + Gamma_p . grad F_p (on each edge) plus
 R (F_n - F_p); summed over the device it equals the electrical power
 sum V I exactly (checked in the tests). It drives `thermal.solve_heat`
-on a grid that adds the substrate and any lateral extension; the lattice
-temperature then sets the mobility, and the two are iterated to
-consistency. The carrier statistics (N_c, kT in the fluxes) stay at the
-ambient temperature: the model captures the mobility drop that causes
-most of the current loss of a hot transistor, not the band-gap shrinkage
-or thermoelectric currents.
+on a grid that adds the substrate and any lateral extension, and the
+two are iterated to consistency. By default (temperature_model
+"mobility") the lattice temperature acts through the mobility only;
+with temperature_model "full" (new in 0.22.0) it also sets kT, the
+densities of states, the band gap, trap emission and the contacts, and
+the fluxes carry the temperature gradient.
 
 Terminal currents are the balance of each continuity equation over the
 electrode's nodes plus, in a transient, the change of the charge on the
@@ -85,13 +87,12 @@ top, metal boxes (recessed gates, field plates, contacts through a
 film), electrodes in several pieces, and regions cut out of the
 semiconductor.
 
-Limits, stated plainly: drift-diffusion (no ballistic transport or
-velocity overshoot, no quantum confinement of the channel; the electron
-temperature is computed afterwards and does not feed back), the
-heterojunction is a band step between two nodes (no thermionic-emission
-condition at internal interfaces), tunneling only through the gate
-barrier, avalanche breakdown only, linear small-signal response, and
-the grid is a tensor product of boxes (no unstructured meshes).
+Added in 0.21.0 and 0.22.0: hot electrons coupled to the current (also
+with self-heating), thermionic emission at band steps, tunneling
+barriers, local and nonlocal band-to-band tunneling (tunnel diodes),
+breakdown by current and thermal runaway (also from leakage), doping
+profiles, and devices on triangle meshes (`mesh`). The limits of each
+model are listed in docs/limits.md of the repository.
 """
 from __future__ import annotations
 
@@ -108,7 +109,7 @@ from .twod import _graded
 __all__ = ["Mobility", "Electrode", "Trap", "Surface", "Device", "DeviceState",
            "TransientResult", "capture_coefficient", "with_series", "two_port",
            "rf_figures", "Ionization", "IMPACT_GAN", "Dielectric", "Region",
-           "BandToBand", "TunnelBarrier"]
+           "BandToBand", "TunnelBarrier", "Varshni"]
 
 _CP = QE / EPS0 * 1e9          # V nm, densities in nm^-3
 
@@ -465,23 +466,53 @@ class BandToBand:
     reduced mass of the two bands (as written in Eq. 13 of arXiv:2108.09328,
     after E. O. Kane). The device scales it by 1 - exp(-dV / kT), dV the
     spread of the electrode voltages, so it vanishes in equilibrium and is
-    Kane's rate under any bias of more than a few kT. It is a generation
-    only: tunneling recombination and forward-bias (Esaki) tunneling are
-    not modeled, so use it for reverse-biased junctions and high-field
-    regions. The generation follows the field of the solution (it is
-    updated between solves until it settles). reduced_mass_m0: m_r in
-    units of m0; None takes 1/m_r = 1/m_e + 1/m_h from the device's
+    Kane's rate under any bias of more than a few kT. This local model is
+    a generation only, so use it for reverse-biased junctions and
+    high-field regions. The generation follows the field of the solution
+    (it is updated between solves until it settles). reduced_mass_m0: m_r
+    in units of m0; None takes 1/m_r = 1/m_e + 1/m_h from the device's
     electron and hole masses. where: layer labels (None: every
     semiconductor layer). It needs holes.
+
+    model="nonlocal" (new in 0.22.0): electrons tunnel from the valence
+    band at one point to the conduction band at another, along the
+    columns of the grid (z), through the band profile of the solution.
+    For every energy E between the bands' extremes in a column, each path
+    through the gap from a point where E_v = E to one where E_c = E has the
+    WKB transmission exp(-2 int kappa dz) with the two-band
+
+        kappa(E) = 2 sqrt(m_r (E - E_v)(E_c - E) / E_g) / hbar,
+
+    integrated exactly on each edge (the bands are linear there), and
+    carries pairs at the rate
+
+        dGamma/dE = (q^2 / (18 pi hbar^2)) sqrt(m_r / E_g) F T(E) [f_v(E) - f_c(E)]
+
+    per area, F = E_g / (q L) the mean field over the path of length L,
+    f_v the Fermi function of the hole quasi-Fermi level where the path
+    starts and f_c that of the electron level where it ends. The electron
+    appears at the conduction-band end and the hole at the valence-band
+    end. The form is built so that in a uniform field, with full supply, it
+    gives back the local formula above exactly (kappa is scaled for that);
+    the supply term makes it vanish in equilibrium, makes it a
+    recombination when f_c > f_v (forward bias: tunneling recombination and
+    the current of an Esaki diode), and needs no electrode spread factor.
+    n_energy: energy points per column.
     """
 
     reference: str
     reduced_mass_m0: float = None
     where: tuple = None
+    model: str = "local"
+    n_energy: int = 200
 
     def __post_init__(self):
         if not (isinstance(self.reference, str) and self.reference.strip()):
             raise ValueError("BandToBand needs a reference")
+        if self.model not in ("local", "nonlocal"):
+            raise ValueError("BandToBand.model must be 'local' or 'nonlocal'")
+        if int(self.n_energy) < 20:
+            raise ValueError("BandToBand.n_energy must be at least 20")
         if self.reduced_mass_m0 is not None and not (
                 math.isfinite(self.reduced_mass_m0) and self.reduced_mass_m0 > 0):
             raise ValueError("BandToBand.reduced_mass_m0 must be > 0")
@@ -504,6 +535,39 @@ class BandToBand:
             G = pre * F * F * ex
             dG = np.where(F > 0, pre * ex * (2 * F + B), 0.0)
         return G * 1e-6, dG * 1e-6 * 100.0
+
+
+@dataclasses.dataclass(frozen=True)
+class Varshni:
+    """How a layer's band gap follows the lattice temperature (new in
+    0.22.0), Varshni's form E_g(T) = E_g(0) - alpha T^2 / (T + beta)
+    (Y. P. Varshni, Physica 34, 149 (1967)). The layer's gap `eg` is taken
+    as its value at the device temperature, and the gap at T is that value
+    plus E_g(T) - E_g(T_device). alpha (eV/K) and beta (K) come from you
+    with their source. conduction_share: the part of the gap change that
+    moves the conduction band (the rest moves the valence band the other
+    way); that split is not given by Varshni's form, so it is yours too
+    (0.5 splits it evenly)."""
+
+    alpha_eV_K: float
+    beta_K: float
+    conduction_share: float
+    reference: str
+
+    def __post_init__(self):
+        if not (math.isfinite(self.alpha_eV_K) and math.isfinite(self.beta_K)
+                and self.beta_K > 0):
+            raise ValueError("Varshni alpha must be finite and beta > 0 (K)")
+        if not (0.0 <= self.conduction_share <= 1.0):
+            raise ValueError("Varshni.conduction_share must be between 0 and 1")
+        if not (isinstance(self.reference, str) and self.reference.strip()):
+            raise ValueError("Varshni needs a reference for alpha and beta")
+
+    def shift(self, T, T0):
+        """E_g(T) - E_g(T0) in eV."""
+        T = np.asarray(T, float)
+        a, b = self.alpha_eV_K, self.beta_K
+        return -a * (T * T / (T + b) - T0 * T0 / (T0 + b))
 
 
 def capture_coefficient(cross_section_cm2: float, mass_m0: float,
@@ -530,6 +594,9 @@ class DeviceState:
     or A (3D). charge : {electrode: charge on it}, C/mm (2D) or C (3D).
     heat : power into the lattice at each node (W/mm or W, summed over
     its control volume). converged, iterations, time (transients).
+    electron_temperature : with the hydrodynamic model, T_n (K).
+    lattice_heat : with the hydrodynamic model, the heat the lattice
+    receives (electrons give theirs where they relax; new in 0.22.0).
     """
 
     axes: tuple
@@ -551,6 +618,7 @@ class DeviceState:
     internal: dict = None
     _x: np.ndarray = dataclasses.field(default=None, repr=False)
     electron_temperature: np.ndarray = None
+    lattice_heat: np.ndarray = None
 
     def sheet(self, depth: float = 150.0):
         """Electrons per cm^2 below the top `depth` nm, at each lateral
@@ -636,6 +704,46 @@ def _z_grid(layers, extra, dz_fine, fine_depth, dz_max, growth):
 _SMOOTH = 1e-3     # field rounding at zero, as a fraction of v_sat / mu_0
 
 
+class _Anderson:
+    """Anderson acceleration of a damped fixed-point iteration T -> T + R
+    (memory 5, damping 0.8). The history restarts when the residual grows,
+    and a proposal more than ten times the plain step away is not taken."""
+
+    def __init__(self, m=5, beta=0.8):
+        self.m, self.beta = m, beta
+        self.T, self.R = [], []
+
+    def step(self, T, R, plain, change):
+        if self.R and change > float(np.max(np.abs(self.R[-1]))):
+            self.T, self.R = [], []
+        self.T.append(T.copy())
+        self.R.append(R.copy())
+        if len(self.T) > self.m:
+            self.T.pop(0)
+            self.R.pop(0)
+        if len(self.T) < 2:
+            return plain
+        dR = np.stack([self.R[q + 1] - self.R[q] for q in range(len(self.R) - 1)], 1)
+        dT = np.stack([self.T[q + 1] - self.T[q] for q in range(len(self.T) - 1)], 1)
+        gam, *_ = np.linalg.lstsq(dR, R, rcond=None)
+        out = T + self.beta * R - (dT + self.beta * dR) @ gam
+        if (np.all(np.isfinite(out)) and np.all(out > 0)
+                and np.max(np.abs(out - T)) <= 10.0 * max(change, 1e-12)):
+            return out
+        return plain
+
+
+def _bern_d(xv):
+    """Bernoulli function B(x) = x / (e^x - 1) and its derivative."""
+    from .driftdiffusion import bernoulli
+    B = bernoulli(xv)
+    small = np.abs(xv) < 1e-3
+    with np.errstate(divide="ignore", invalid="ignore"):
+        d = np.where(small, -0.5 + xv / 6.0 - xv ** 3 / 180.0,
+                     B * (1.0 - B) / np.where(small, 1.0, xv) - B)
+    return B, d
+
+
 def _edge_mu(m, d, h, Te):
     """Mobility on each edge and its derivative with respect to the edge
     difference d (V, of psi or of the quasi-Fermi level). The field is
@@ -693,7 +801,8 @@ class Device:
                  driving_force: str = "field", generation=None,
                  ionization: "Ionization" = None, cap=(), regions=(),
                  heterojunctions: str = "drift-diffusion", band_to_band=None,
-                 doping=None, tunnel_barriers=()):
+                 doping=None, tunnel_barriers=(), temperature_model: str = "mobility",
+                 band_gap_temperature=None):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover - depends on install
@@ -1183,6 +1292,106 @@ class Device:
         self._setup_heterojunctions()
         self._setup_band_to_band()
         self._setup_tunnel_barriers(tunnel_barriers)
+        self._setup_lattice(temperature_model, band_gap_temperature,
+                            np.array(labels, dtype=object)[np.broadcast_to(
+                                idx.reshape((1,) * (self.dim - 1) + (-1,)),
+                                self.shape).ravel()])
+
+    # ------------------------------------- lattice temperature (0.22.0)
+    def _setup_lattice(self, model, gaps, node_labels):
+        """temperature_model "full": the lattice temperature also sets the
+        carrier statistics (kT, N_c and N_v as T^(3/2), the band gap by
+        Varshni's form, trap emission, contacts) and the fluxes carry the
+        temperature gradient. "mobility": only the mobility follows it (as
+        before 0.22.0)."""
+        self._lat = None
+        if model not in ("mobility", "full"):
+            raise ValueError("temperature_model must be 'mobility' or 'full'")
+        if model == "mobility":
+            if gaps is not None:
+                raise ValueError("band_gap_temperature needs temperature_model='full'")
+            return
+        alpha = np.zeros(self.N)
+        beta = np.ones(self.N)
+        share = np.zeros(self.N)
+        if gaps is not None:
+            if isinstance(gaps, Varshni):
+                gaps = {lab: gaps for lab in set(node_labels.tolist())}
+            if not isinstance(gaps, dict) or not all(isinstance(v, Varshni)
+                                                    for v in gaps.values()):
+                raise ValueError("band_gap_temperature must be a Varshni or a dict of them")
+            known = set(node_labels.tolist())
+            bad = [k for k in gaps if k not in known]
+            if bad:
+                raise ValueError(f"band_gap_temperature names no layer or region: {bad}")
+            for lab, v in gaps.items():
+                m = node_labels == lab
+                alpha[m], beta[m], share[m] = v.alpha_eV_K, v.beta_K, v.conduction_share
+        self._lat = dict(
+            alpha=alpha, beta=beta, share=share, has_gap=gaps is not None,
+            Nc=self.Nc.copy(), Nv=self.Nv.copy(), Eg=self.Eg.copy(), Ec0=self.Ec0.copy(),
+            kT=self.kT, vR=self.vR.copy(),
+            vRp=self.vRp.copy() if self.holes else None,
+            traps=[dict(en=tr["en"].copy() if isinstance(tr["en"], np.ndarray) else tr["en"],
+                        ep=tr["ep"].copy() if isinstance(tr["ep"], np.ndarray) else tr["ep"])
+                   for tr in self._traps],
+            neutral={k: v.copy() for k, v in self._neutral.items()},
+            cur=None, active=False)
+
+    def _set_lattice(self, TL):
+        """Put every temperature-dependent node quantity at the lattice
+        temperature TL (None: the device temperature everywhere)."""
+        L = self._lat
+        if L is None:
+            return
+        T0 = self.T
+        if TL is None:
+            TL = np.full(self.N, T0)
+        TL = np.asarray(TL, float).ravel()
+        if L["cur"] is not None and TL.shape == L["cur"].shape and np.array_equal(TL, L["cur"]):
+            return
+        L["cur"] = TL.copy()
+        if np.all(TL == T0):
+            # exactly the isothermal device
+            self.kT = L["kT"]
+            self.Nc, self.Nv = L["Nc"].copy(), L["Nv"].copy()
+            self.Eg, self.Ec0 = L["Eg"].copy(), L["Ec0"].copy()
+            self.vR = L["vR"].copy()
+            if self.holes:
+                self.vRp = L["vRp"].copy()
+            for tr, b in zip(self._traps, L["traps"]):
+                tr["en"], tr["ep"] = b["en"], b["ep"]
+            self._neutral = {k: v.copy() for k, v in L["neutral"].items()}
+            L["active"] = False
+            return
+        if np.any(TL <= 0) or not np.all(np.isfinite(TL)):
+            raise ValueError("the lattice temperature must be finite and > 0")
+        ratio = TL / T0
+        self.kT = KB * TL
+        self.Nc = L["Nc"] * ratio ** 1.5
+        self.Nv = L["Nv"] * ratio ** 1.5
+        a, b_ = L["alpha"], L["beta"]
+        dEg = -a * (TL * TL / (TL + b_) - T0 * T0 / (T0 + b_))
+        self.Eg = L["Eg"] + dEg
+        self.Ec0 = L["Ec0"] + L["share"] * dEg
+        self.vR = L["vR"] * np.sqrt(ratio)
+        if self.holes:
+            self.vRp = L["vRp"] * np.sqrt(ratio)
+        for tr, t in zip(self._traps, self.traps):
+            if t.from_band == "ec":
+                lev_c, lev_v = t.level, self.Eg - t.level
+            else:
+                lev_c, lev_v = self.Eg - t.level, t.level
+            n1 = self.Nc * np.exp(-np.asarray(lev_c, float) / self.kT)
+            p1 = (self.Nv * np.exp(-np.asarray(lev_v, float) / self.kT)
+                  if self.holes else np.zeros(self.N))
+            tr["en"], tr["ep"] = tr["cn"] * n1, tr["cp"] * p1
+        self._neutral = self._neutral_psi()
+        L["active"] = True
+
+    def _kt_at(self, nodes):
+        kT = self.kT
+        return kT[nodes] if np.ndim(kT) else kT
 
     # --------------------------------------------- heterojunctions (0.21.0)
     def _setup_heterojunctions(self):
@@ -1223,8 +1432,10 @@ class Device:
         if e.size:
             hj = te["n_hi_j"]
             ii, jj = i[e], j[e]
-            dfn = np.clip((fn[jj] - fn[ii]) / kT, -700, 700)
             hi = np.where(hj, jj, ii)
+            if np.ndim(self.kT):
+                kT = self.kT[hi]
+            dfn = np.clip((fn[jj] - fn[ii]) / kT, -700, 700)
             vR = self.vR[hi]
             nb = n[hi]
             sgn = np.where(hj, 1.0, -1.0)
@@ -1249,8 +1460,10 @@ class Device:
             if e.size:
                 hj = te["p_hi_j"]
                 ii, jj = i[e], j[e]
-                dfp = np.clip((fp[jj] - fp[ii]) / kT, -700, 700)
                 hi = np.where(hj, jj, ii)
+                if np.ndim(self.kT):
+                    kT = self.kT[hi]
+                dfp = np.clip((fp[jj] - fp[ii]) / kT, -700, 700)
                 vR = self.vRp[hi]
                 pb = p[hi]
                 sgn = np.where(hj, 1.0, -1.0)
@@ -1358,7 +1571,7 @@ class Device:
         the Tsu-Esaki current, evaluated for all links at once."""
         from .leakage import richardson_constant
         path = grp["path"]
-        z = self.axes[-1][path % self.axes[-1].size] * 1e-9          # m
+        z = (grp["z"] if "z" in grp else self.axes[-1][path % self.axes[-1].size]) * 1e-9
         ec = self.Ec0[path] - psi[path]
         m = grp["mass"] * M0
         if grp["metal"]:
@@ -1369,8 +1582,12 @@ class Device:
             m = np.concatenate([m, m[:, -1:]], axis=1)
         Fa, Fb = fn[grp["a"]], fn[grp["b"]]
         kT = self.kT
+        Ta = self.T
+        if np.ndim(kT):
+            kT = kT[grp["a"]][:, None]
+            Ta = kT[:, 0] / KB
         e_lo = np.maximum(ec[:, 0], ec[:, -1])
-        e_hi = np.maximum(np.maximum(ec.max(axis=1), Fa), Fb) + 40 * kT
+        e_hi = np.maximum(np.maximum(ec.max(axis=1), Fa), Fb) + 40 * np.ravel(kT)
         t = np.linspace(0.0, 1.0, grp["n_energy"])
         E = e_lo[:, None] + (e_hi - e_lo)[:, None] * t[None, :]     # (L, nE)
         dE = np.clip(ec[:, None, :] - E[:, :, None], 0.0, None) * QE
@@ -1384,7 +1601,7 @@ class Device:
         integral = np.sum(0.5 * (f[:, 1:] + f[:, :-1]) * np.diff(E, axis=1), axis=1)
         mt = self.me_node[grp["a"]]
         Ar = np.array([richardson_constant(float(v)) for v in mt])
-        J = Ar * self.T / KB * integral                                 # A/cm^2
+        J = Ar * Ta / KB * integral                                     # A/cm^2
         return J / QE * 1e-14
 
     def _link_balance(self, psi, fn):
@@ -1393,7 +1610,7 @@ class Device:
             return out
         for grp in self._tb["groups"]:
             G = self._link_current(grp, psi, fn)
-            A = self.lat_area[grp["a"]]
+            A = grp["area"] if "area" in grp else self.lat_area[grp["a"]]
             np.add.at(out, grp["a"], G * A)
             np.add.at(out, grp["b"], -G * A)
         return out
@@ -1407,7 +1624,7 @@ class Device:
             return rows, cols, vals
         d = 1e-6
         for grp in self._tb["groups"]:
-            A = self.lat_area[grp["a"]]
+            A = grp["area"] if "area" in grp else self.lat_area[grp["a"]]
             a, b = grp["a"], grp["b"]
             for which, idx in (("fa", a), ("fb", b)):
                 fp_, fm_ = fn.copy(), fn.copy()
@@ -1458,7 +1675,160 @@ class Device:
         W = np.zeros((self.N, self.dim))
         np.add.at(W, (m_, ax), w[e_])
         self._bt = dict(mask=mask, mr=mr, m=m_, e=e_, ax=ax, w=w[e_],
-                        W=np.where(W > 0, W, 1.0))
+                        W=np.where(W > 0, W, 1.0), nonlocal_=bt.model == "nonlocal")
+        if bt.model == "nonlocal":
+            nz = self.axes[-1].size
+            cols = np.arange(self.N).reshape(-1, nz)
+            self._bt.update(cols=cols, z=self.axes[-1].copy(),
+                            area=self.lat_area[cols[:, 0]].copy())
+
+    def _nonlocal_rates(self, x):
+        """Electron and hole generation (nm^-3 s^-1, negative where they
+        recombine) of the nonlocal band-to-band model (see `BandToBand`)
+        for the state x."""
+        bt = self._bt
+        psi, fn, fp, _ = self._unpack(x)
+        Ec = self.Ec0 - psi
+        Ev = Ec - self.Eg
+        kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
+        Gn = np.zeros(self.N)
+        Gp = np.zeros(self.N)
+        Gfull = np.zeros(self.N)
+        nE = int(self.band_to_band.n_energy)
+        c_k = 2.0 * math.sqrt(M0 * QE) / HBAR                 # kappa per sqrt(m_r eV) ... 1/m
+        z = bt["z"] * 1e-9                                     # m
+        for c, nodes in enumerate(bt["cols"]):
+            ok = bt["mask"][nodes]
+            if ok.sum() < 2:
+                continue
+            ev, eg, mr = Ev[nodes], self.Eg[nodes], bt["mr"][nodes]
+            lo = float(np.min((ev + eg)[ok]))
+            hi = float(np.max(ev[ok]))
+            if hi <= lo:
+                continue
+            dE = (hi - lo) / nE
+            E = lo + (np.arange(nE) + 0.5) * dE                # midpoints
+            u_node = E[:, None] - ev[None, :]                  # (nE, nz)
+            open_ = np.zeros(nE, bool)
+            stype = np.zeros(nE)                               # -1 started in V, +1 in C
+            s_k = np.zeros(nE, int)
+            s_t = np.zeros(nE)
+            phase = np.zeros(nE)
+            Lacc = np.zeros(nE)
+            Gacc = np.zeros(nE)
+            Macc = np.zeros(nE)
+            ends = []                                          # (mask, k_end, t_end) of emissions
+
+            def emit(sel, k, t, etype):
+                # a path that started at (s_k, s_t) of type stype ends here in etype
+                good = sel & open_ & (stype == -etype)
+                if good.any():
+                    ends.append((good.copy(), np.full(nE, k), np.broadcast_to(t, (nE,)).copy(),
+                                 s_k.copy(), s_t.copy(), stype.copy(), phase.copy(),
+                                 Lacc.copy(), Gacc.copy(), Macc.copy()))
+
+            for k in range(nodes.size - 1):
+                if not (ok[k] and ok[k + 1]):
+                    open_[:] = False
+                    continue
+                h = z[k + 1] - z[k]
+                Eg_e = 0.5 * (eg[k] + eg[k + 1])
+                m_e = 0.5 * (mr[k] + mr[k + 1])
+                u0, u1 = u_node[:, k], u_node[:, k + 1]
+                du = u1 - u0
+                flat = np.abs(du) < 1e-14
+                dsafe = np.where(flat, 1.0, du)
+                t0 = np.where(flat, np.inf, -u0 / dsafe)               # u = 0
+                tg = np.where(flat, np.inf, (Eg_e - u0) / dsafe)       # u = Eg
+                inc = du > 0
+                # where the gap part of this edge starts and ends (t), and of what
+                # type the band is before (entry) and after (exit) it
+                t_in = np.where(inc, t0, tg)
+                t_out = np.where(inc, tg, t0)
+                in_type = np.where(inc, -1.0, 1.0)                    # V below, C above
+                out_type = -in_type
+                # flat edges: the class of the whole edge
+                cls0 = np.where(u0 < 0, -1.0, np.where(u0 > Eg_e, 1.0, 0.0))
+                # 1) a gap run entering inside this edge (0 < t_in <= 1)
+                enter = ~flat & (t_in >= 0) & (t_in < 1)
+                if enter.any():
+                    open_ = np.where(enter, True, open_)
+                    stype = np.where(enter, in_type, stype)
+                    s_k = np.where(enter, k, s_k)
+                    s_t = np.where(enter, t_in, s_t)
+                    phase = np.where(enter, 0.0, phase)
+                    Lacc = np.where(enter, 0.0, Lacc)
+                    Gacc = np.where(enter, 0.0, Gacc)
+                    Macc = np.where(enter, 0.0, Macc)
+                # 2) the gap part of the edge, [ta, tb]
+                ta = np.where(flat, 0.0, np.clip(np.minimum(t_in, t_out), 0, 1))
+                tb = np.where(flat, np.where(cls0 == 0, 1.0, 0.0),
+                              np.clip(np.maximum(t_in, t_out), 0, 1))
+                span = np.maximum(tb - ta, 0.0)
+                ua = np.clip(u0 + du * ta, 0.0, Eg_e)
+                ub = np.clip(u0 + du * tb, 0.0, Eg_e)
+
+                def Fint(u):
+                    v = np.clip(u * (Eg_e - u), 0.0, None)
+                    return ((2 * u - Eg_e) / 4.0) * np.sqrt(v) + Eg_e ** 2 / 8.0 * np.arcsin(
+                        np.clip((2 * u - Eg_e) / Eg_e, -1.0, 1.0))
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    integ = np.where(flat | (np.abs(ub - ua) < 1e-12),
+                                     np.sqrt(np.clip(ua * (Eg_e - ua), 0, None)) * h * span,
+                                     (Fint(ub) - Fint(ua)) * h / dsafe)
+                integ = np.abs(integ) / math.sqrt(Eg_e)
+                acc = open_ & (span > 0)
+                phase = phase + np.where(acc, c_k * math.sqrt(m_e) * integ, 0.0)
+                Lacc = Lacc + np.where(acc, h * span, 0.0)
+                Gacc = Gacc + np.where(acc, Eg_e * h * span, 0.0)
+                Macc = Macc + np.where(acc, m_e * h * span, 0.0)
+                # 3) the run leaves the gap inside this edge (0 <= t_out < 1)
+                leave = ~flat & (t_out > 0) & (t_out <= 1)
+                emit(leave, k, t_out, out_type)
+                open_ = np.where(leave, False, open_)
+                # a flat edge in a band: a run open at node k ends there
+                fl_band = flat & (cls0 != 0)
+                emit(fl_band, k, 0.0, cls0)
+                open_ = np.where(fl_band, False, open_)
+                # an edge that starts in a band (node k in V or C) and stays in it
+                # closes nothing more; one entirely outside the gap leaves open_ as is
+            if not ends:
+                continue
+            Fk = fn[nodes]
+            Fp_ = fp[nodes]
+            kTc = kT[nodes]
+            area = bt["area"][c]
+            for (good, k_end, t_end, k_st, t_st, styp, ph, L_, G_, M_) in ends:
+                g = np.flatnonzero(good)
+                Lm = np.maximum(L_[g], 1e-30)
+                Egm = G_[g] / Lm
+                mm = M_[g] / Lm
+                F = Egm / Lm                                   # V/m (eV / m)
+                pre = QE ** 2 / (18 * np.pi * HBAR ** 2) * np.sqrt(mm * M0 / (Egm * QE))
+                # the valence end and the conduction end
+                vs = styp[g] < 0
+                kv = np.where(vs, k_st[g], k_end[g])
+                tv = np.where(vs, t_st[g], t_end[g])
+                kc = np.where(vs, k_end[g], k_st[g])
+                tc = np.where(vs, t_end[g], t_st[g])
+                fpv = (1 - tv) * Fp_[kv] + tv * Fp_[kv + 1]
+                kTv = (1 - tv) * kTc[kv] + tv * kTc[kv + 1]
+                fnc = (1 - tc) * Fk[kc] + tc * Fk[kc + 1]
+                kTcc = (1 - tc) * kTc[kc] + tc * kTc[kc + 1]
+                Eg_ = E[g]
+                fv = 0.5 * (1.0 - np.tanh(0.5 * (Eg_ - fpv) / kTv))
+                fc = 0.5 * (1.0 - np.tanh(0.5 * (Eg_ - fnc) / kTcc))
+                full = pre * F * np.exp(-2.0 * ph[g]) * dE * 1e-18     # nm^-2 s^-1
+                r_ = full * (fv - fc) * area
+                np.add.at(Gfull, nodes[kc], full * area * (1 - tc))
+                np.add.at(Gfull, nodes[kc + 1], full * area * tc)
+                np.add.at(Gn, nodes[kc], r_ * (1 - tc))
+                np.add.at(Gn, nodes[kc + 1], r_ * tc)
+                np.add.at(Gp, nodes[kv], r_ * (1 - tv))
+                np.add.at(Gp, nodes[kv + 1], r_ * tv)
+        vol = np.where(self.vol > 0, self.vol, 1.0)
+        self._bt["full"] = Gfull / vol
+        return Gn / vol, Gp / vol
 
     def _node_field(self, psi):
         """Field components at every node (V/cm), the semiconductor-weighted
@@ -1480,7 +1850,7 @@ class Device:
         Ecomp = self._node_field(psi)
         F = np.sqrt(np.sum(Ecomp ** 2, axis=1))
         G, _ = BandToBand.rate(F, self.Eg, bt["mr"])
-        phi = 1.0 if spread is None else -math.expm1(-abs(spread) / self.kT)
+        phi = 1.0 if spread is None else -np.expm1(-abs(spread) / self.kT)
         return G * self.vol * 1e-21 * bt["mask"] * phi
     def _map_edge_cells(self, cshape, cell_semi, cell_prod):
         """For every edge, the cells around it with their (semiconductor)
@@ -1587,16 +1957,53 @@ class Device:
                 (Ev + self.Ea[m] - fp[m]) / kT, -700, 700)))
         return ndp, nam
 
-    def _f_steady(self, tr, n, p):
-        return (tr["cn"] * n + tr["ep"]) / (tr["cn"] * n + tr["en"] + tr["cp"] * p
-                                            + tr["ep"] + 1e-300)
+    def _gamma(self, psi, fn, fp, nodes=None):
+        """Degeneracy factors gamma = F_1/2(eta) / exp(eta) of electrons and
+        holes (1 for Boltzmann statistics). Emission from a trap into a
+        band is scaled by its gamma (new in 0.22.0), so the trap rates obey
+        detailed balance with Fermi-Dirac statistics too: before, a trap
+        in a degenerate region recombined a little in equilibrium."""
+        if not self.fermi:
+            return 1.0, 1.0
+        sl = slice(None) if nodes is None else nodes
+        kT = self.kT[sl] if np.ndim(self.kT) else self.kT
+        Ec = self.Ec0[sl] - psi
+        eta = np.clip((fn - Ec) / kT, -700.0, 700.0)
+        F, _ = fermi_dirac_half(eta)
+        gn = np.where(eta < -40.0, 1.0, np.exp(np.log(np.maximum(np.asarray(F, float), 1e-300))
+                                                - eta))
+        if not self.holes:
+            return gn, 1.0
+        etap = np.clip((Ec - self.Eg[sl] - fp) / kT, -700.0, 700.0)
+        Fp, _ = fermi_dirac_half(etap)
+        gp = np.where(etap < -40.0, 1.0, np.exp(np.log(np.maximum(np.asarray(Fp, float), 1e-300))
+                                                 - etap))
+        return gn, gp
+
+    def _gamma_fast(self, Ec, fn, fp, lnn, lnp):
+        """`_gamma` from the log densities `_carriers` already made:
+        ln gamma = ln n - ln N_c - eta."""
+        if not self.fermi:
+            return 1.0, 1.0
+        eta = np.clip((fn - Ec) / self.kT, -700.0, 700.0)
+        gn = np.where(eta < -40.0, 1.0, np.exp(lnn - np.log(self.Nc) - eta))
+        if not self.holes:
+            return gn, 1.0
+        etap = np.clip((Ec - self.Eg - fp) / self.kT, -700.0, 700.0)
+        gp = np.where(etap < -40.0, 1.0, np.exp(lnp - np.log(self.Nv) - etap))
+        return gn, gp
+
+    def _f_steady(self, tr, n, p, g=(1.0, 1.0)):
+        en, ep = tr["en"] * g[0], tr["ep"] * g[1]
+        return (tr["cn"] * n + ep) / (tr["cn"] * n + en + tr["cp"] * p + ep + 1e-300)
 
     def _rho_local(self, psi, fn, fp, focc=None):
         Ec, n, p, lnn, lnp = self._carriers(psi, fn, fp)
         ndp, nam = self._dopants(Ec, fn, fp)
         rho = p - n + ndp - nam
+        g = self._gamma(psi, fn, fp) if self._traps else (1.0, 1.0)
         for k, tr in enumerate(self._traps):
-            f = self._f_steady(tr, n, p) if focc is None else focc[k]
+            f = self._f_steady(tr, n, p, g) if focc is None else focc[k]
             rho += -tr["Nt"] * f if tr["acc"] else tr["Nt"] * (1.0 - f)
         return rho
 
@@ -1615,29 +2022,32 @@ class Device:
             hi = self.Ec0[nodes] + 2.0
             zero = np.zeros(nodes.size)
 
+            kTn = self.kT[nodes] if np.ndim(self.kT) else np.full(nodes.size, self.kT)
+
             def g(ps):
                 Ec = self.Ec0[nodes] - ps
-                Fn_, _ = self._occ(-Ec / self.kT)
+                Fn_, _ = self._occ(-Ec / kTn)
                 n = self.Nc[nodes] * Fn_
                 if self.holes:
-                    Fp_, _ = self._occ((Ec - self.Eg[nodes]) / self.kT)
+                    Fp_, _ = self._occ((Ec - self.Eg[nodes]) / kTn)
                     p = self.Nv[nodes] * Fp_
                 else:
                     p = 0.0 * n
                 nd = self.ND[nodes].copy()
                 m = np.isfinite(self.Ed[nodes]) & (nd > 0)
                 nd[m] = nd[m] / (1 + 2 * np.exp(np.clip((-Ec[m] + self.Ed[nodes][m])
-                                                        / self.kT, -700, 700)))
+                                                        / kTn[m], -700, 700)))
                 na = self.NA[nodes].copy()
                 m = np.isfinite(self.Ea[nodes]) & (na > 0)
                 Ev = Ec - self.Eg[nodes]
                 na[m] = na[m] / (1 + 4 * np.exp(np.clip((Ev[m] + self.Ea[nodes][m])
-                                                        / self.kT, -700, 700)))
+                                                        / kTn[m], -700, 700)))
                 rho = p - n + nd - na
+                g = self._gamma(ps, zero, zero, nodes) if self._traps else (1.0, 1.0)
                 for tr in self._traps:
                     f = self._f_steady({k: (v[nodes] if isinstance(v, np.ndarray) else v)
                                         for k, v in tr.items() if k in
-                                        ("cn", "cp", "en", "ep")}, n, p)
+                                        ("cn", "cp", "en", "ep")}, n, p, g)
                     Nt = tr["Nt"][nodes]
                     rho += -Nt * f if tr["acc"] else Nt * (1 - f)
                 return rho
@@ -1665,6 +2075,8 @@ class Device:
         return 2 + int(self.holes) + (len(self._traps) if self._transient else 0)
 
     _transient = False
+    _lat = None
+    _Gx = None
     _density_update = True
     _qf_margin = 0.0
     _damp_capped = False
@@ -1696,6 +2108,11 @@ class Device:
 
     # ----------------------------------------------------------- residual
     def _fluxes(self, psi, fn, fp, n, p, lnn, lnp, Tn):
+        if self._lat is not None and self._lat["active"]:
+            out = self._flux_general(psi, fn, fp, Tn, deriv=False)
+            Gn, Gp = out["Gn"], out.get("Gp", np.zeros_like(out["Gn"]))
+            Gn, Gp = self._te_fluxes(fn, fp, n, p, Gn, Gp)
+            return self._block_fluxes(Gn), Gp
         kT = self.kT
         i, j, h = self.ei, self.ej, self.eh
         Te = 0.5 * (Tn[i] + Tn[j])
@@ -1731,6 +2148,7 @@ class Device:
     def _balances(self, x, Tn, dt=None, old=None):
         """Raw balances (Poisson, electrons, holes, traps) before boundary
         conditions, and the pieces needed for currents and heat."""
+        self._set_lattice(Tn)
         psi, fn, fp, focc = self._unpack(x)
         Ec, n, p, lnn, lnp = self._carriers(psi, fn, fp)
         ndp, nam = self._dopants(Ec, fn, fp)
@@ -1738,17 +2156,20 @@ class Device:
         Rn = np.zeros(self.N)
         Rp = np.zeros(self.N)
         rt = []
+        gn, gp = self._gamma_fast(Ec, fn, fp, lnn, lnp) if self._traps else (1.0, 1.0)
         for k, tr in enumerate(self._traps):
+            en, ep = tr["en"] * gn, tr["ep"] * gp
             if self._transient:
                 f = focc[k]
-                rn_ = tr["Nt"] * (tr["cn"] * n * (1 - f) - tr["en"] * f)
-                rp_ = tr["Nt"] * (tr["cp"] * p * f - tr["ep"] * (1 - f))
+                rn_ = tr["Nt"] * (tr["cn"] * n * (1 - f) - en * f)
+                rp_ = tr["Nt"] * (tr["cp"] * p * f - ep * (1 - f))
                 rt.append(rn_ - rp_)
             else:
-                f = self._f_steady(tr, n, p)
-                # net SRH rate: c_n c_p (n p - n1 p1) / (c_n (n + n1) + c_p (p + p1))
-                den = tr["cn"] * n + tr["en"] + tr["cp"] * p + tr["ep"]
-                u = tr["Nt"] * (tr["cn"] * tr["cp"] * n * p - tr["en"] * tr["ep"]) / (
+                f = self._f_steady(tr, n, p, (gn, gp))
+                # net SRH rate: c_n c_p (n p - n1 p1) / (c_n (n + n1) + c_p (p + p1)),
+                # n1 and p1 scaled by the degeneracy factors
+                den = tr["cn"] * n + en + tr["cp"] * p + ep
+                u = tr["Nt"] * (tr["cn"] * tr["cp"] * n * p - en * ep) / (
                     den + 1e-300)
                 rn_ = u
                 rp_ = u
@@ -1770,6 +2191,9 @@ class Device:
             Gnode = Gnode + self._ionization_nodes(psi, Gn, Gp)
         rN -= Gnode
         rQ -= Gnode
+        if self._Gx is not None:
+            rN -= self.vol * self._Gx[0]
+            rQ -= self.vol * self._Gx[1]
         if dt is not None:
             _, n0, p0, _, _ = self._carriers(*self._unpack(old)[:3])
             rN += self.vol * (n - n0) / dt
@@ -1815,6 +2239,7 @@ class Device:
         return 0.5 * (np.bincount(self.ei, G, self.N) + np.bincount(self.ej, G, self.N))
 
     def _residual(self, x, bias, Tn, dt=None, old=None):
+        self._set_lattice(Tn)
         b = self._balances(x, Tn, dt, old)
         rP, rN, rQ = b["rP"].copy(), b["rN"].copy(), b["rQ"].copy()
         psi, fn, fp, n, p = b["psi"], b["fn"], b["fp"], b["n"], b["p"]
@@ -1822,11 +2247,12 @@ class Device:
             rP[nodes] = psi[nodes] - ps
             if e.kind == "schottky" and e.thermionic:
                 A = self.lat_area[nodes]
-                n0 = self.Nc[nodes] * self._occ(np.full(nodes.size, -e.barrier / self.kT))[0]
+                kTe = self._kt_at(nodes)
+                n0 = self.Nc[nodes] * self._occ(np.full(nodes.size, -e.barrier) / kTe)[0]
                 rN[nodes] += self.vR[nodes] * (n[nodes] - n0) * A
                 if self.holes:
                     p0 = self.Nv[nodes] * self._occ(
-                        (e.barrier - self.Eg[nodes]) / self.kT)[0]
+                        (e.barrier - self.Eg[nodes]) / kTe)[0]
                     rQ[nodes] += self.vRp[nodes] * (p[nodes] - p0) * A
             else:
                 rN[nodes] = fn[nodes] - F
@@ -1867,17 +2293,19 @@ class Device:
         Rn = np.zeros(self.N)
         Rp = np.zeros(self.N)
         rt = []
+        gn, gp = self._gamma_fast(Ec, fn, fp, lnn, lnp) if self._traps else (1.0, 1.0)
         for k, tr in enumerate(self._traps):
+            en, ep = tr["en"] * gn, tr["ep"] * gp
             if self._transient:
                 f = focc[k]
-                rn_ = tr["Nt"] * (tr["cn"] * n * (1 - f) - tr["en"] * f)
-                rp_ = tr["Nt"] * (tr["cp"] * p * f - tr["ep"] * (1 - f))
+                rn_ = tr["Nt"] * (tr["cn"] * n * (1 - f) - en * f)
+                rp_ = tr["Nt"] * (tr["cp"] * p * f - ep * (1 - f))
                 rt.append(rn_ - rp_)
             else:
-                f = self._f_steady(tr, n, p)
-                den = tr["cn"] * n + tr["en"] + tr["cp"] * p + tr["ep"]
+                f = self._f_steady(tr, n, p, (gn, gp))
+                den = tr["cn"] * n + en + tr["cp"] * p + ep
                 rn_ = rp_ = tr["Nt"] * (tr["cn"] * tr["cp"] * n * p
-                                        - tr["en"] * tr["ep"]) / (den + 1e-300)
+                                        - en * ep) / (den + 1e-300)
             Rn += rn_
             Rp += rp_
             rho += -tr["Nt"] * f if tr["acc"] else tr["Nt"] * (1.0 - f)
@@ -1892,10 +2320,11 @@ class Device:
             if e.kind == "schottky" and e.thermionic and include_te:
                 nodes = self.enodes[e.name]
                 A = self.lat_area[nodes]
-                n0 = self.Nc[nodes] * self._occ(np.full(nodes.size, -e.barrier / self.kT))[0]
+                kTe = self._kt_at(nodes)
+                n0 = self.Nc[nodes] * self._occ(np.full(nodes.size, -e.barrier) / kTe)[0]
                 out[1][nodes] += self.vR[nodes] * (n[nodes] - n0) * A
                 if self.holes:
-                    p0 = self.Nv[nodes] * self._occ((e.barrier - self.Eg[nodes]) / self.kT)[0]
+                    p0 = self.Nv[nodes] * self._occ((e.barrier - self.Eg[nodes]) / kTe)[0]
                     out[2][nodes] += self.vRp[nodes] * (p[nodes] - p0) * A
         if self._transient:
             for k, tr in enumerate(self._traps):
@@ -1937,10 +2366,168 @@ class Device:
                                                      np.concatenate(cols))),
                              shape=(N * nv, N * nv)).tocsr()
 
+    def _flux_general(self, psi, fn, fp, Tn, deriv=True):
+        """Fluxes where the lattice temperature varies (temperature_model
+        "full", new in 0.22.0), with their exact derivatives.
+
+        Electrons: Gamma = -mu [n grad E_c + grad(n k T)], solved exactly
+        along an edge on which E_c and T change linearly (the
+        Scharfetter-Gummel idea with a temperature gradient; T is the
+        electron temperature of the hydrodynamic model when that is on,
+        else the lattice temperature):
+
+            Gamma = -(mu k T_log / h) n_i B(C) [exp(S) - 1],
+
+        T_log = (T_j - T_i) / ln(T_j / T_i). E_c is written through the
+        density and the quasi-Fermi level (E_c = F_n - kT_L ln(n / N_c(T_L))
+        for Boltzmann statistics, the same expression with the Fermi-Dirac
+        occupancy otherwise), plus the density-of-states step kT ln(N_c)
+        between materials, so that at one temperature C and S are exactly
+        the isothermal edge's dw and dF_n / kT. Holes alike, at the lattice
+        temperature."""
+        i, j, h = self.ei, self.ej, self.eh
+        L = self._lat
+        TL = L["cur"]
+        Te = 0.5 * (Tn[i] + Tn[j])
+        kTn = self.kT                           # node kT (lattice)
+        Ec = self.Ec0 - psi
+        TLi, TLj = TL[i], TL[j]
+        dTL = TLj - TLi
+        Tbar = 0.5 * (TLi + TLj)
+        dlnT = np.log(TLj / TLi)
+
+        def edge_T(Tf):
+            Ti, Tj = Tf[i], Tf[j]
+            small = np.abs(Tj - Ti) <= 1e-9 * Ti
+            r = np.where(small, 0.0, np.log(Tj / Ti))
+            Tlog = np.where(small, 0.5 * (Ti + Tj), (Tj - Ti) / np.where(small, 1.0, r))
+            return Tlog, r
+
+        def occ_d(eta):
+            eta = np.clip(eta, -700.0, 700.0)
+            if not self.fermi:
+                F = np.exp(eta)
+                return F, np.ones_like(F), eta
+            F, dF = fermi_dirac_half(eta)
+            F = np.asarray(F, float)
+            rr = np.where(eta < -40.0, 1.0, np.asarray(dF, float) / np.maximum(F, 1e-300))
+            return F, rr, np.where(eta < -40.0, eta, np.log(np.maximum(F, 1e-300)))
+
+        out = {}
+        hy = self._hydro
+        # ---- electrons
+        Fn_, rn_, Ln = occ_d((fn - Ec) / kTn)
+        n = self.Nc * Fn_
+        Tf = hy["Tf"] if hy is not None else TL
+        Tlog, r = edge_T(Tf)
+        kTl = KB * Tlog
+        dfn = fn[j] - fn[i]
+        dL = Ln[j] - Ln[i]
+        dlnN = np.log(L["Nc"][j] / L["Nc"][i])
+        C = (dfn / kTl - (TLj / Tlog) * dL - (dTL / Tlog) * Ln[i]
+             - (Tbar / Tlog) * dlnN + r)
+        S = (dfn / kTl + dL * (1.0 - TLj / Tlog) - (dTL / Tlog) * Ln[i]
+             + dlnN * (1.0 - Tbar / Tlog) + 1.5 * dlnT + r)
+        S = np.clip(S, -700, 700)
+        B, dB = _bern_d(C)
+        E_ = np.expm1(S)
+        eS = np.exp(S)
+        K = -1e14 * kTl / h
+        qf = self.force == "quasi-fermi"
+        if hy is None:
+            mu, dmu = _edge_mu(self._mob_n, dfn if qf else psi[j] - psi[i], h, Te)
+        else:
+            mu, dmu = hy["mu"], np.zeros_like(h)
+        a = n[i]
+        G = K * mu * a * B * E_
+        out["Gn"] = G
+        if deriv:
+            ri, rj = rn_[i], rn_[j]
+            kTi, kTj = (kTn[i], kTn[j]) if np.ndim(kTn) else (kTn, kTn)
+            dC = dict(fi=(ri - 1.0) / kTl, fj=(1.0 - rj) / kTl, pi=ri / kTl, pj=-rj / kTl)
+            dS = dict(fi=dC["fi"] - ri / kTi, fj=dC["fj"] + rj / kTj,
+                      pi=dC["pi"] - ri / kTi, pj=dC["pj"] + rj / kTj)
+            da = a * ri / kTi
+            tm = K * dmu * a * B * E_
+            d = {}
+            for k_ in ("fi", "fj", "pi", "pj"):
+                v = K * mu * (a * dB * dC[k_] * E_ + a * B * eS * dS[k_])
+                if k_ in ("fi", "pi"):
+                    v = v + K * mu * da * B * E_
+                d[k_] = v
+            if hy is None:
+                if qf:
+                    d["fi"] = d["fi"] - tm
+                    d["fj"] = d["fj"] + tm
+                else:
+                    d["pi"] = d["pi"] - tm
+                    d["pj"] = d["pj"] + tm
+            out["n"] = d
+            out["rn"] = rn_
+        if self.holes:
+            Ev = Ec - self.Eg
+            Fp_, rp_, Mp = occ_d((Ev - fp) / kTn)
+            p = self.Nv * Fp_
+            Tlog, r = edge_T(TL)
+            kTl = KB * Tlog
+            dfp = fp[j] - fp[i]
+            dM = Mp[j] - Mp[i]
+            dlnN = np.log(np.maximum(L["Nv"][j], 1e-300) / np.maximum(L["Nv"][i], 1e-300))
+            Cp = (-dfp / kTl - (TLj / Tlog) * dM - (dTL / Tlog) * Mp[i]
+                  - (Tbar / Tlog) * dlnN + r)
+            Sp = (-dfp / kTl + dM * (1.0 - TLj / Tlog) - (dTL / Tlog) * Mp[i]
+                  + dlnN * (1.0 - Tbar / Tlog) + 1.5 * dlnT + r)
+            Sp = np.clip(Sp, -700, 700)
+            Bp, dBp = _bern_d(Cp)
+            Ep = np.expm1(Sp)
+            eSp = np.exp(Sp)
+            Kp = -1e14 * kTl / h
+            mup, dmup = _edge_mu(self._mob_p, dfp if qf else psi[j] - psi[i], h, Te)
+            ap = p[i]
+            out["Gp"] = Kp * mup * ap * Bp * Ep
+            if deriv:
+                ri, rj = rp_[i], rp_[j]
+                kTi, kTj = (kTn[i], kTn[j]) if np.ndim(kTn) else (kTn, kTn)
+                dC = dict(fi=(1.0 - ri) / kTl, fj=(rj - 1.0) / kTl, pi=-ri / kTl, pj=rj / kTl)
+                dS = dict(fi=dC["fi"] + ri / kTi, fj=dC["fj"] - rj / kTj,
+                          pi=dC["pi"] + ri / kTi, pj=dC["pj"] - rj / kTj)
+                dap = -ap * ri / kTi
+                tp = Kp * dmup * ap * Bp * Ep
+                d = {}
+                for k_ in ("fi", "fj", "pi", "pj"):
+                    v = Kp * mup * (ap * dBp * dC[k_] * Ep + ap * Bp * eSp * dS[k_])
+                    if k_ in ("fi", "pi"):
+                        v = v + Kp * mup * dap * Bp * Ep
+                    d[k_] = v
+                if qf:
+                    d["fi"] = d["fi"] - tp
+                    d["fj"] = d["fj"] + tp
+                else:
+                    d["pi"] = d["pi"] - tp
+                    d["pj"] = d["pj"] + tp
+                out["p"] = d
+                out["rp"] = rp_
+        return out
+
     def _flux_derivatives(self, psi, fn, fp, Tn):
         """Fluxes and their exact derivatives with respect to the node
         values at both ends of every edge."""
         from .driftdiffusion import bernoulli
+        if self._lat is not None and self._lat["active"]:
+            out = self._flux_general(psi, fn, fp, Tn, deriv=True)
+            if self._te is not None:
+                Ec = self.Ec0 - psi
+                _, n_, p_, _, _ = self._carriers(psi, fn, fp)
+                Gn2, Gp2 = self._te_fluxes(fn, fp, n_, p_ if self.holes else n_, out["Gn"],
+                                           out.get("Gp", np.zeros_like(out["Gn"])), deriv=out)
+                out["Gn"] = Gn2
+                if self.holes:
+                    out["Gp"] = Gp2
+                del Ec
+            out["Gn"] = self._block_fluxes(out["Gn"])
+            for k_ in ("fi", "fj", "pi", "pj"):
+                out["n"][k_] = self._block_fluxes(out["n"][k_])
+            return out
         kT = self.kT
         i, j, h = self.ei, self.ej, self.eh
         Te = 0.5 * (Tn[i] + Tn[j])
@@ -2061,6 +2648,7 @@ class Device:
         on that node only, so all nodes are perturbed at once), then the
         boundary rows."""
         import scipy.sparse as sp
+        self._set_lattice(Tn)
         nv, N = self.nv, self.N
         psi, fn, fp, _ = self._unpack(x)
         i, j = self.ei, self.ej
@@ -2183,6 +2771,7 @@ class Device:
         import scipy.sparse.linalg as spl
         nv = self.nv
         k0 = 2 + int(self.holes)
+        self._set_lattice(Tn)
         for it in range(1, max_iter + 1):
             F = self._residual(x, bias, Tn, dt, old)
             if not np.all(np.isfinite(F)):
@@ -2259,8 +2848,11 @@ class Device:
             # the iteration). Not in time steps, where a level may lag.
             # (with hot electrons the quasi-Fermi level obeys no maximum
             # principle: thermal diffusion can push it past the contacts')
+            # (nor with a lattice temperature that varies: thermoelectric
+            # currents flow with every contact at one voltage)
             if (old is None and not np.any(self.Gopt > 0) and self._hydro is None
-                    and self._bt is None):
+                    and self._bt is None and not (self._lat is not None
+                                                  and self._lat["active"])):
                 X = x.reshape(self.N, nv)
                 lev = [-float(bias.get(e.name, 0.0)) for e in self.electrodes]
                 lo, hi = min(lev) - self._qf_margin, max(lev) + self._qf_margin
@@ -2302,6 +2894,8 @@ class Device:
         psi, fn, fp, _ = self._unpack(x)
         _, n, p, lnn, lnp = self._carriers(psi, fn, fp)
         G = self.vol * self.Gopt
+        if self._Gx is not None:
+            G = G + self.vol * (np.abs(self._Gx[0]) + np.abs(self._Gx[1]))
         if self.ionization is not None:
             Gn, Gp = self._fluxes(psi, fn, fp, n, p, lnn, lnp, Tn)
             G = G + self._ionization_nodes(psi, Gn, Gp)
@@ -2468,6 +3062,7 @@ class Device:
         """Poisson alone with F_n = F_p = 0 (all electrodes at 0 V)."""
         import scipy.sparse as sp
         import scipy.sparse.linalg as spl
+        self._set_lattice(None)
         if self._x0 is not None:
             return self._x0.copy()
         N = self.N
@@ -2551,10 +3146,13 @@ class Device:
         if self.holes or self._traps:
             H += self.vol * 0.5 * (b["Rn"] + b["Rp"]) * (fn - fp)
         H -= b["Gnode"] * (fn - fp)
+        if self._Gx is not None:
+            H -= self.vol * (self._Gx[0] * fn - self._Gx[1] * fp)
         H = H * QE * (1e6 if self.dim == 2 else 1.0)        # W/mm or W
         occ = []
         for k, tr in enumerate(self._traps):
-            f = (b["focc"][k] if self._transient else self._f_steady(tr, b["n"], b["p"]))
+            f = (b["focc"][k] if self._transient else self._f_steady(
+                tr, b["n"], b["p"], self._gamma(psi, fn, fp)))
             occ.append(np.where(tr["where"], f, np.nan).reshape(self.shape))
         sh = self.shape
         # carriers, band edge and quasi-Fermi levels exist only in the
@@ -2655,7 +3253,8 @@ class Device:
         if use_traps:
             X0 = state._x.reshape(self.N, 2 + int(self.holes))
             _, n, p, _, _ = self._carriers(*self._unpack_static(state._x))
-            occ = [np.where(tr["where"], self._f_steady(tr, n, p), 0.0) for tr in self._traps]
+            g = self._gamma(*self._unpack_static(state._x))
+            occ = [np.where(tr["where"], self._f_steady(tr, n, p, g), 0.0) for tr in self._traps]
             x = np.concatenate([X0, np.stack(occ, axis=1)], axis=1).ravel()
             self._transient = True
         else:
@@ -2677,6 +3276,7 @@ class Device:
     def equilibrium(self) -> DeviceState:
         """All electrodes at 0 V, without generation (true equilibrium)."""
         Tn = np.full(self.N, self.T)
+        self._set_lattice(Tn)
         bias = {e.name: 0.0 for e in self.electrodes}
         if self._x0 is not None:
             return self._state(self._x0.copy(), bias, Tn, True, 0)
@@ -2701,6 +3301,8 @@ class Device:
         if thermal is not None or energy_relaxation is not None:
             raise ValueError("band-to-band tunneling cannot be combined with thermal or "
                              "energy_relaxation yet")
+        if self._bt.get("nonlocal_"):
+            return self._solve_nonlocal(bias, guess, max_bias_step, tol)
         G_user = self.Gopt.copy()
         vol = np.where(self.vol > 0, self.vol, 1.0)
         target = self._check_bias(bias)
@@ -2740,6 +3342,79 @@ class Device:
         finally:
             self.Gopt = G_user
             self._bt_inner = False
+
+    def _solve_nonlocal(self, bias, guess, max_bias_step, tol, rtol=1e-6, max_outer=300):
+        """Nonlocal band-to-band tunneling: solve with the electron and hole
+        generation of the present bands held fixed, recompute it from the
+        new solution, and repeat (with under-relaxation when the change
+        grows) until the generation the solution makes is the one it was
+        solved with, to rtol of the largest node rate."""
+        target = self._check_bias(bias)
+        Tl = np.full(self.N, self.T)
+        G0 = getattr(guess, "band_to_band_rates", None) if guess is not None else None
+        G_now = (np.zeros(self.N), np.zeros(self.N)) if G0 is None else (
+            G0[0].ravel().copy(), G0[1].ravel().copy())
+        self._bt_inner = True
+        try:
+            self._Gx = G_now
+            st = self.solve(bias, guess=guess, max_bias_step=max_bias_step, tol=tol)
+            x, vint = st._x.copy(), dict(st.internal or st.bias)
+            omega, last = 1.0, math.inf
+            for k in range(1, max_outer + 1):
+                Gn, Gp = self._nonlocal_rates(x)
+                v = self.vol
+                scale = max(float(np.max(np.abs(Gn) * v)), float(np.max(np.abs(Gp) * v)))
+                diff = max(float(np.max(np.abs(Gn - G_now[0]) * v)),
+                           float(np.max(np.abs(Gp - G_now[1]) * v)))
+                if scale == 0.0 and diff == 0.0:
+                    st.band_to_band_iterations = k
+                    st.band_to_band_rates = (np.zeros(self.shape), np.zeros(self.shape))
+                    return st
+                # (to rtol of the largest rate, or of 1e-3 of the largest
+                # rate with full supply where the supply nearly cancels)
+                full = float(np.max(self._bt["full"] * v))
+                if diff <= rtol * max(scale, 1e-3 * full):
+                    self._Gx = G_now
+                    st = self._state(x, target, Tl, True, 0, internal=vint)
+                    st.band_to_band_iterations = k
+                    st.band_to_band_rates = (G_now[0].reshape(self.shape).copy(),
+                                             G_now[1].reshape(self.shape).copy())
+                    return st
+                if diff > last:
+                    omega = max(0.02, omega * 0.5)
+                else:
+                    omega = min(1.0, omega * 1.3)
+                last = diff
+                G_set = (G_now[0] + omega * (Gn - G_now[0]), G_now[1] + omega * (Gp - G_now[1]))
+                x = self._move_extra(x, vint, Tl, tol, G_now, G_set)
+                G_now = G_set
+            raise RuntimeError("nonlocal band-to-band tunneling and the bands did not settle")
+        finally:
+            self._Gx = None
+            self._bt_inner = False
+
+    def _move_extra(self, x, bias, Tn, tol, G0, G1):
+        """Change the separate electron and hole generation from G0 to G1
+        at fixed voltages, in steps that shrink when Newton's method needs
+        them to; in time if that fails."""
+        frac, step = 0.0, 1.0
+        while frac < 1.0:
+            f = min(1.0, frac + step)
+            self._Gx = (G0[0] + f * (G1[0] - G0[0]), G0[1] + f * (G1[1] - G0[1]))
+            xn, conv, it = self._newton(x, bias, Tn, tol=tol, max_iter=40)
+            if conv:
+                x, frac = xn, f
+                step = min(1.0, step * 2.0)
+                continue
+            step /= 4.0
+            if step < 1e-3:
+                self._Gx = G1
+                xs = self._pseudo_transient(x, bias, Tn, tol)
+                if xs is None:
+                    raise RuntimeError("could not follow the band-to-band generation")
+                return xs
+        self._Gx = G1
+        return x
 
     def _move_generation(self, x, bias, Tn, tol, G0, G1):
         """Change a fixed generation from G0 to G1 at fixed voltages, in
@@ -2897,7 +3572,8 @@ class Device:
     def solve(self, bias: dict, guess: DeviceState = None, thermal=None,
               max_bias_step: float = 0.5, tol: float = 1e-8,
               thermal_tol: float = 0.01, max_thermal_iter: int = 30,
-              energy_relaxation: float = None) -> DeviceState:
+              energy_relaxation: float = None,
+              lattice_temperature=None) -> DeviceState:
         """Steady state at the given voltages {electrode: V}; others at 0 V.
 
         guess : an earlier state of this device to start from (its bias is
@@ -2909,27 +3585,51 @@ class Device:
             with your source) to solve the energy balance together with the
             currents (hydrodynamic model, new in 0.21.0): the mobility and
             the diffusion follow the electron temperature, which is returned
-            as `electron_temperature`. Not with `thermal`.
+            as `electron_temperature`. Since 0.22.0 also with `thermal`.
+        lattice_temperature : a lattice temperature you set (K, one value
+            or one per node) instead of computing it from the heat
+            (new in 0.22.0); not with `thermal`.
         """
         target = self._check_bias(bias)
+        if lattice_temperature is not None:
+            if thermal is not None:
+                raise ValueError("give thermal or lattice_temperature, not both")
+            TLf = np.broadcast_to(np.asarray(lattice_temperature, float),
+                                  (self.N,)).copy() if np.ndim(lattice_temperature) <= 1 \
+                else np.asarray(lattice_temperature, float).ravel().copy()
+            if TLf.size != self.N or not (np.all(np.isfinite(TLf)) and np.all(TLf > 0)):
+                raise ValueError("lattice_temperature must be > 0, one value or one per node")
+        else:
+            TLf = None
         if self._bt is not None and not getattr(self, "_bt_inner", False):
+            if TLf is not None:
+                raise ValueError("band-to-band tunneling cannot be combined with "
+                                 "lattice_temperature yet")
             return self._solve_band_to_band(bias, guess, thermal, max_bias_step, tol,
                                             thermal_tol, max_thermal_iter, energy_relaxation)
         if energy_relaxation is not None:
-            if thermal is not None:
-                raise ValueError("energy_relaxation and thermal cannot be combined yet")
             if not (math.isfinite(energy_relaxation) and energy_relaxation > 0):
                 raise ValueError("energy_relaxation must be > 0 (s)")
-            Tl = np.full(self.N, self.T)
+            if thermal is not None:
+                return self._hydro_thermal(bias, target, guess, thermal, energy_relaxation,
+                                           max_bias_step, tol, thermal_tol, max_thermal_iter)
+            Tl = TLf if TLf is not None else np.full(self.N, self.T)
             if guess is not None:
                 x0, start = guess._x.copy(), dict(guess.internal or guess.bias)
                 Tg = guess.electron_temperature
+                T_guess = guess.temperature.ravel().copy()
             else:
-                st0 = self.solve(bias, max_bias_step=max_bias_step, tol=tol)
+                st0 = self.solve(bias, max_bias_step=max_bias_step, tol=tol,
+                                 lattice_temperature=TLf)
                 x0, start, Tg = st0._x.copy(), dict(st0.internal or st0.bias), None
+                T_guess = Tl
             if Tg is None:
                 # reach the voltages with drift-diffusion first
-                x0, start, _ = self._settle(x0, start, target, Tl, max_bias_step, tol)
+                if np.array_equal(T_guess, Tl):
+                    x0, start, _ = self._settle(x0, start, target, Tl, max_bias_step, tol)
+                else:
+                    x0, start, _ = self._settle_temperature(x0, start, target, T_guess, Tl,
+                                                            max_bias_step, tol)
             return self._hydro_solve(x0, start, target, Tl, energy_relaxation,
                                      max_bias_step, tol, start_Tn=Tg)
         if guess is not None:
@@ -2951,6 +3651,15 @@ class Device:
                     self.Gopt = G
                 x = self._switch_on_generation(x, vint0, Tn, tol)
                 start = dict(vint0)
+        if thermal is None and TLf is not None:
+            if np.array_equal(Tn, TLf):
+                x, vint, it = self._settle(x, start, target, TLf, max_bias_step, tol)
+            else:
+                # reach the voltages at the guess's temperature, then move it
+                x, vint, it = self._settle(x, start, target, Tn, max_bias_step, tol)
+                x, vint, it = self._settle_temperature(x, vint, target, Tn, TLf,
+                                                       max_bias_step, tol)
+            return self._state(x, target, TLf, True, it, internal=vint)
         if thermal is None:
             Tn = np.full(self.N, self.T)
             x, vint, it = self._settle(x, start, target, Tn, max_bias_step, tol)
@@ -2958,13 +3667,34 @@ class Device:
         # electrothermal: settle at the present temperature, then iterate
         x, vint, it = self._settle(x, start, target, Tn, max_bias_step, tol)
         th = self._thermal_setup(thermal)
+        acc = _Anderson()
+        trail = []                                # (hottest, change) per iteration
         for k in range(1, max_thermal_iter + 1):
             st = self._state(x, target, Tn, True, it, internal=vint)
             Tnew = self._temperature(th, st.heat, Tn)
             change = float(np.max(np.abs(Tnew - Tn)))
+            trail.append((float(Tnew.max()), change))
+            if k >= 40:
+                # still heating up every step for 15 steps, and the steps not
+                # shrinking: no steady state to settle into (runaway)
+                last = trail[-16:]
+                if (all(b[0] > a[0] for a, b in zip(last[:-1], last[1:]))
+                        and last[-1][1] > 0.7 * last[0][1] and change >= thermal_tol):
+                    break
             T_next = Tn + 0.8 * (Tnew - Tn) if k > 3 else Tnew
-            x, vint, it = self._settle_temperature(x, vint, target, Tn, T_next,
-                                                   max_bias_step, tol)
+            if k > 3:
+                # Anderson acceleration of the fixed point T -> heat(T) (new
+                # in 0.22.0): near thermal runaway the plain iteration
+                # contracts ever more slowly
+                T_next = acc.step(Tn, Tnew - Tn, T_next, change)
+            try:
+                x, vint, it = self._settle_temperature(x, vint, target, Tn, T_next,
+                                                       max_bias_step, tol)
+            except ValueError as err:
+                # (a temperature so high that the carrier statistics break
+                # down: no steady state near this one)
+                raise RuntimeError("self-heating did not converge (the device may be "
+                                   "in thermal runaway, or lower the bias)") from err
             Tn = T_next
             if change < thermal_tol:
                 st = self._state(x, target, Tn, True, it, internal=vint)
@@ -3078,8 +3808,9 @@ class Device:
         X0 = start._x.reshape(self.N, 2 + int(self.holes))
         occ0 = []
         _, n, p, _, _ = self._carriers(*(list(self._unpack_static(start._x))))
+        g = self._gamma(*self._unpack_static(start._x))
         for k, tr in enumerate(self._traps):
-            f0 = self._f_steady(tr, n, p)
+            f0 = self._f_steady(tr, n, p, g)
             if initial_occupancy is not None and initial_occupancy[k] is not None:
                 f0 = np.broadcast_to(np.asarray(initial_occupancy[k], float),
                                      self.shape).ravel()
@@ -3244,6 +3975,18 @@ class Device:
                 top += c_.thickness
         return model.material_for(self.layers[self.cell_layer[k]].label)
 
+    def _heat_grid(self, th):
+        from .thermal import _HeatGrid
+        return _HeatGrid(th["lat"], th["z"], th["mats"])
+
+    def _heat_to_dev(self, th, g, T):
+        return T.reshape(g.shape)[np.ix_(*th["maps"], th["zmap"])].ravel()
+
+    def _heat_from_dev(self, th, g, heat):
+        H = np.zeros(g.shape)
+        H[np.ix_(*th["maps"], th["zmap"])] = heat * (1e3 if self.dim == 2 else 1.0)
+        return H
+
     def _temperature(self, th, heat, Tn):
         from .thermal import solve_heat
         shape = tuple(a.size for a in th["lat"]) + (th["z"].size,)
@@ -3274,7 +4017,6 @@ class Device:
         array, states at the indices in `keep`).
         """
         import scipy.sparse as sp
-        from .thermal import _HeatGrid
         times = np.asarray(times, float)
         if times.ndim != 1 or np.any(np.diff(times) <= 0) or times[0] <= 0:
             raise ValueError("times must be positive and increasing")
@@ -3283,8 +4025,7 @@ class Device:
             if not m.has_capacity:
                 raise ValueError(f"{m.name} has no density and specific heat; "
                                  "heat that changes in time needs them")
-        g = _HeatGrid(th["lat"], th["z"], th["mats"])
-        sl = np.ix_(*th["maps"], th["zmap"])
+        g = self._heat_grid(th)
         Ts = thermal.sink_temperature_K
         Tfull = np.full(g.N, float(Ts))
         if Ts != self.T:
@@ -3303,15 +4044,14 @@ class Device:
             dt = t - t_prev
             Told = Tfull.copy()
             Tk = Tfull.copy()
-            Tprev_dev = Tk.reshape(g.shape)[sl].ravel()
+            Tprev_dev = self._heat_to_dev(th, g, Tk)
             for _ in range(60):
-                Tdev = Tk.reshape(g.shape)[sl].ravel()
+                Tdev = self._heat_to_dev(th, g, Tk)
                 x, vint, it = self._settle_temperature(x, vint, target, Tprev_dev, Tdev,
                                                        max_bias_step, tol)
                 Tprev_dev = Tdev
                 stk = self._state(x, target, Tdev, True, it, internal=vint)
-                H = np.zeros(g.shape)
-                H[sl] = stk.heat * (1e3 if self.dim == 2 else 1.0)
+                H = self._heat_from_dev(th, g, stk.heat)
                 C = g.capacity(Tk)
                 A = g.matrix(Tk) + sp.diags(C / dt)
                 Tnew = g.solve(A, H.ravel() + C / dt * Told, Ts)
@@ -3322,7 +4062,7 @@ class Device:
             else:
                 raise RuntimeError(f"the heating step to t = {t:g} s did not converge")
             Tfull = Tk
-            Tdev = Tfull.reshape(g.shape)[sl].ravel()
+            Tdev = self._heat_to_dev(th, g, Tfull)
             x, vint, it = self._settle(x, vint, target, Tdev, max_bias_step, tol)
             stk = self._state(x, target, Tdev, True, it, internal=vint, time=t)
             for e in self.electrodes:
@@ -3584,7 +4324,7 @@ class Device:
             # bisect between the last voltage with a steady state and the
             # first without one
             lo, hi, st_lo = V[-1], failed, prev
-            while hi - lo > rtol * abs(hi):
+            while abs(hi - lo) > rtol * abs(hi):
                 mid = 0.5 * (lo + hi)
                 b = dict(bias or {})
                 b[electrode] = mid
@@ -3708,7 +4448,7 @@ class Device:
         return Tn.reshape(self.shape)
 
     def _energy_balance(self, psi, n, Gn, mu, Tl, tau_energy, tol=1e-6, max_iter=400,
-                        start=None):
+                        start=None, want_heat=False):
         import scipy.sparse as sp
         import scipy.sparse.linalg as spl
         from .driftdiffusion import bernoulli
@@ -3758,11 +4498,79 @@ class Device:
                 break
         else:
             raise RuntimeError("the electron energy balance did not converge")
+        if want_heat:
+            # the energy the electrons hand to the lattice at every node:
+            # the field's work there minus the net energy flux leaving the
+            # node. Where T_n is solved this is (3/2) k n (T_n - T_L) / tau
+            # (the relaxation term); at a contact, where T_n is held, it is
+            # the energy the electrons bring into the contact. The total is
+            # the field's work on the electrons.
+            Tm = 0.5 * (Tn[i] + Tn[j])
+            D = mu * 1e14 * kB * Tm
+            kap = 2.5 * kB * nedge * D
+            kap = np.maximum(kap, 1e-12 * float(np.max(kap)) + 1e-300)
+            P = 2.5 * kB * Gn * h / kap
+            Se = (kap / h * bernoulli(-P) * A) * Tn[i] - (kap / h * bernoulli(P) * A) * Tn[j]
+            out = np.bincount(i, Se, self.N) - np.bincount(j, Se, self.N)
+            return np.maximum(Tn, Tl), H - out
         # keep the temperature physical (an energy balance from a poorly
         # resolved, nearly empty region can dip below the lattice)
         return np.maximum(Tn, Tl)
 
     # ------------------------------------------- hydrodynamic (0.21.0)
+    def _hydro_lattice_heat(self, x, Tl, tau, Tn):
+        """Heat into the lattice with hot electrons (W/mm or W per node):
+        the electrons' share is what they lose by energy relaxation (see
+        `_energy_balance`), so it lands where they cool down, downstream of
+        where the field heats them; holes give their Joule heat
+        Gamma_p . grad F_p, and recombination its R (F_n - F_p), as in the
+        drift-diffusion heat."""
+        b = self._balances(x, Tl)
+        psi, fn, fp, n = b["psi"], b["fn"], b["fp"], b["n"]
+        Gn, Gp = b["Gn"], b["Gp"]
+        _, He = self._energy_balance(psi, n, Gn, self._hydro["mu"], Tl, tau, start=Tn,
+                                     want_heat=True)
+        i, j = self.ei, self.ej
+        A = self.earea
+        pe = Gp * (fp[j] - fp[i]) * A
+        H = He + 0.5 * (np.bincount(i, pe, self.N) + np.bincount(j, pe, self.N))
+        if self.holes or self._traps:
+            H += self.vol * 0.5 * (b["Rn"] + b["Rp"]) * (fn - fp)
+        H -= b["Gnode"] * (fn - fp)
+        if self._Gx is not None:
+            H -= self.vol * (self._Gx[0] * fn - self._Gx[1] * fp)
+        return H * QE * (1e6 if self.dim == 2 else 1.0)
+
+    def _hydro_thermal(self, bias, target, guess, thermal, tau, max_bias_step, tol,
+                       thermal_tol, max_thermal_iter):
+        """Hot electrons and self-heating together (new in 0.22.0): the
+        hydrodynamic solve at a lattice temperature, the heat of
+        `_hydro_lattice_heat` into the heat equation, and the two iterated
+        until the lattice temperature changes by less than thermal_tol."""
+        th = self._thermal_setup(thermal)
+        TL = (guess.temperature.ravel().copy() if guess is not None
+              else np.full(self.N, self.T))
+        kw = dict(energy_relaxation=tau, max_bias_step=max_bias_step, tol=tol)
+        st = self.solve(bias, guess=guess, lattice_temperature=TL, **kw)
+        acc = _Anderson()
+        for k in range(1, max_thermal_iter + 1):
+            try:
+                Tnew = self._temperature(th, st.lattice_heat, TL)
+                change = float(np.max(np.abs(Tnew - TL)))
+                T_next = TL + 0.8 * (Tnew - TL) if k > 3 else Tnew
+                if k > 3:
+                    T_next = acc.step(TL, Tnew - TL, T_next, change)
+                st = self.solve(bias, guess=st, lattice_temperature=T_next, **kw)
+            except ValueError as err:
+                raise RuntimeError("self-heating did not converge (the device may be "
+                                   "in thermal runaway, or lower the bias)") from err
+            TL = T_next
+            if change < thermal_tol:
+                st.thermal_iterations = k
+                return st
+        raise RuntimeError("self-heating did not converge (the device may be "
+                           "in thermal runaway, or lower the bias)")
+
     def _hydro_mobility(self, Tn, Tl, tau):
         """Edge mobility of hot electrons: the low-field model of `Mobility`
         at the field E_eff that would heat uniform electrons to T_n,
@@ -3868,6 +4676,8 @@ class Device:
                     st = self._state(x, target, Tl, True, it, internal=vint)
                     st.electron_temperature = Tnew.reshape(self.shape)
                     st.hydro_iterations = k
+                    st.lattice_heat = self._hydro_lattice_heat(x, Tl, tau, Tnew).reshape(
+                        self.shape)
                     return st
                 # Anderson acceleration of the fixed point T -> EB(DD(T))
                 R = Tnew - Tn

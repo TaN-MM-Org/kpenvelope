@@ -16,9 +16,12 @@ tensor-grid `Device`, which the tests use as a check.
 Supported: semiconductor regions with their material, doping and mobility,
 dielectric regions, electrodes on any set of nodes (ohmic, Schottky,
 series resistance), deep-level traps per region, generation, impact
-ionization, band-to-band tunneling, thermionic emission at band steps,
-the hydrodynamic model, small-signal analysis and transients. Not on
-meshes: self-heating, `TunnelBarrier`, the field-line tools
+ionization, local band-to-band tunneling, thermionic emission at band
+steps, the hydrodynamic model, small-signal analysis and transients, and
+since 0.22.0 self-heating and pulses (the heat equation on the mesh,
+with its bottom as the heat sink), `TunnelBarrier` (with the barrier
+meshed in vertical columns) and the full temperature model. Not on
+meshes: the nonlocal band-to-band model, the field-line tools
 (`ionization_integral`, `breakdown_voltage`, `field_check`), and interface
 polarization charges, which you give as sheets on nodes yourself
 (`sheets=`).
@@ -150,7 +153,8 @@ class MeshDevice(Device):
                  traps=(), sheets=(), generation=None, ionization=None,
                  heterojunctions: str = "drift-diffusion", band_to_band=None,
                  doping=None, density_floor_cm3: float = 1.0,
-                 driving_force: str = "field"):
+                 driving_force: str = "field", tunnel_barriers=(),
+                 temperature_model: str = "mobility", band_gap_temperature=None):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover
@@ -222,12 +226,14 @@ class MeshDevice(Device):
         self.eh = h_e
         self.gpsi = np.bincount(inv, eps_t[tt] * dd, nE) / h_e
         self.earea = np.bincount(inv, np.where(semi_t[tt], dd, 0.0), nE)
-        if np.any(self.earea < -1e-9 * np.abs(self.earea).max()) or np.any(self.gpsi < 0):
+        if (np.any(self.earea < -1e-9 * np.abs(self.earea).max())
+                or np.any(self.gpsi < -1e-9 * np.abs(self.gpsi).max())):
             warnings.warn("some edges have a negative dual face (obtuse triangles at a "
                           "boundary); refine the mesh there", RuntimeWarning, stacklevel=2)
         sn = np.concatenate([s_[0] for s_ in sub_t])
         st_ = np.concatenate([s_[1] for s_ in sub_t])
         sa = np.concatenate([s_[2] for s_ in sub_t])
+        self._geo = dict(inv=inv, tt=tt, dd=dd, hh=hh, sn=sn, st=st_, sa=sa)
         self.vol = np.bincount(sn, np.where(semi_t[st_], sa, 0.0), N)
         self.vol_all = np.bincount(sn, sa, N)
         self.node_semi = self.vol > 0
@@ -250,7 +256,8 @@ class MeshDevice(Device):
         order = sorted(semi_labels, key=lambda r: cz[labels.index(r)])
         for r in order:                       # later (higher) wins ties
             v = share[r]
-            better = v >= bestv - 1e-12 * np.maximum(1.0, np.abs(bestv))
+            # (a tie within rounding of the circumcentres counts as a tie)
+            better = v >= bestv - 1e-9 * np.abs(self.vol_all)
             best = np.where(better & (v > 0), r, best)
             bestv = np.where(better & (v > 0), v, bestv)
         self.node_region = best
@@ -379,8 +386,8 @@ class MeshDevice(Device):
         self._x0 = None
         self._setup_heterojunctions()
         self._setup_band_to_band()
-        self._tb = None
-        self._tb_block = None
+        self._setup_tunnel_barriers(tunnel_barriers)
+        self._setup_lattice(temperature_model, band_gap_temperature, self.node_region)
 
     # ------------------------------------------------------------ geometry
     def _mesh_mobility(self, regions, inv, tt, dd, semi_t, what):
@@ -460,6 +467,9 @@ class MeshDevice(Device):
         self._bt = None
         if bt is None:
             return
+        if bt.model == "nonlocal":
+            raise ValueError("the nonlocal band-to-band model runs along the columns of "
+                             "a tensor grid; on a mesh use model='local'")
         mask = self.node_semi.copy()
         if bt.where is not None:
             mask &= np.isin(self.node_region.astype(str), bt.where)
@@ -489,8 +499,161 @@ class MeshDevice(Device):
         grad = np.einsum("nij,nj->ni", bt["Minv"], r)
         return -grad * 1e7
 
+    # --------------------------------------- tunnel barriers (0.22.0)
+    def _setup_tunnel_barriers(self, tbs):
+        """`TunnelBarrier` on a mesh: the barrier region and the row of
+        nodes just below it must be meshed in vertical columns (nodes with
+        the same x joined by vertical edges, as `mesh_from_grid` makes them;
+        the rest of the mesh may be anything). Every column through the
+        barrier becomes one link, exactly as in a tensor grid: from the node
+        below the barrier's bottom face to the node on its top face (or the
+        metal of an electrode there), with the flux area of the column's
+        vertical edge."""
+        from .device import TunnelBarrier
+        self._tb = None
+        self._tb_block = None
+        tbs = list(tbs)
+        if not tbs:
+            return
+        P = self.mesh.points
+        T_ = self.mesh.triangles
+        reg = self.mesh.regions
+        # triangles on each edge
+        ed = np.concatenate([T_[:, [0, 1]], T_[:, [1, 2]], T_[:, [2, 0]]])
+        et = np.concatenate([np.arange(T_.shape[0])] * 3)
+        lo, hi = ed.min(axis=1), ed.max(axis=1)
+        key = lo * self.N + hi
+        edge_key = np.minimum(self.ei, self.ej) * self.N + np.maximum(self.ei, self.ej)
+        e_index = {int(k): n for n, k in enumerate(edge_key)}
+        tri_of = {}
+        for k, t in zip(key.tolist(), et.tolist()):
+            tri_of.setdefault(k, []).append(t)
+        on_el = np.zeros(self.N, bool)
+        for nodes in self.enodes.values():
+            on_el[nodes] = True
+        xr = np.round(P[:, 0], 6)
+        links, interior = [], []
+        blocked = np.zeros(self.N, bool)
+        for tb in tbs:
+            if not isinstance(tb, TunnelBarrier):
+                raise ValueError("tunnel_barriers must be TunnelBarrier objects")
+            if tb.layer not in set(reg.tolist()):
+                raise ValueError(f"TunnelBarrier: {tb.layer!r} is not a region of the mesh")
+            in_b = np.zeros(self.N, bool)
+            in_b[np.unique(T_[reg == tb.layer])] = True
+            covered = np.zeros(self.N, bool)
+            for xv in np.unique(xr[in_b]):
+                col = np.flatnonzero(xr == xv)
+                col = col[np.argsort(P[col, 1])]
+                inside = []
+                for k in range(col.size - 1):
+                    kk = int(min(col[k], col[k + 1]) * self.N + max(col[k], col[k + 1]))
+                    ts = tri_of.get(kk)
+                    inside.append(bool(ts) and all(reg[t] == tb.layer for t in ts))
+                inside = np.array(inside, bool)
+                if not inside.any():
+                    continue
+                ks = np.flatnonzero(inside)
+                if np.any(np.diff(ks) != 1):
+                    raise ValueError("a column crosses the tunnel barrier twice")
+                kb0, kb1 = int(ks[0]), int(ks[-1]) + 1
+                if kb0 == 0:
+                    raise ValueError("a tunnel barrier needs semiconductor below it")
+                a = int(col[kb0 - 1])
+                b = int(col[kb1])
+                kk = int(min(a, col[kb0]) * self.N + max(a, col[kb0]))
+                if kk not in e_index:
+                    raise ValueError("the nodes below the tunnel barrier must be joined to "
+                                     "it by vertical edges (mesh it in columns)")
+                area = float(self.earea[e_index[kk]])
+                top = kb1 == col.size - 1 or not self.node_semi[col[kb1 + 1]]
+                inner = col[kb0:kb1 + (1 if top else 0)]
+                covered[col[kb0:kb1 + 1]] = True
+                if not (self.node_semi[a] and np.all(self.node_semi[inner])):
+                    continue
+                blocked[inner] = True
+                target = (b if on_el[b] else None) if top else b
+                if target is not None:
+                    path = col[kb0 - 1:kb1 + 1]
+                    links.append(dict(a=a, b=target, path=path, z=P[path, 1].copy(),
+                                      area=area, mass=tb.mass_m0, n_energy=int(tb.n_energy),
+                                      metal=bool(on_el[target])))
+                zb = P[b, 1]
+                for nd in inner:
+                    if on_el[nd]:
+                        continue
+                    if target is None:
+                        interior.append((nd, a, a, 1.0))
+                    else:
+                        interior.append((nd, a, target, (zb - P[nd, 1]) / (zb - P[a, 1])))
+            if np.any(in_b & ~covered):
+                raise ValueError("the tunnel barrier region must be meshed in vertical "
+                                 "columns (some of its nodes lie on none)")
+        i, j = self.ei, self.ej
+        self._tb_block = ~(blocked[i] | blocked[j])
+        self._tb = dict(links=links, interior=interior,
+                        int_nodes=np.array([t[0] for t in interior], int),
+                        int_a=np.array([t[1] for t in interior], int),
+                        int_b=np.array([t[2] for t in interior], int),
+                        int_w=np.array([t[3] for t in interior], float))
+        groups = {}
+        for L_ in links:
+            groups.setdefault((L_["path"].size, L_["n_energy"], L_["metal"]), []).append(L_)
+        self._tb["groups"] = [
+            dict(a=np.array([L_["a"] for L_ in g]), b=np.array([L_["b"] for L_ in g]),
+                 path=np.stack([L_["path"] for L_ in g]),
+                 z=np.stack([L_["z"] for L_ in g]),
+                 area=np.array([L_["area"] for L_ in g]),
+                 mass=np.stack([np.full(L_["path"].size, L_["mass"]) if L_["mass"] is not None
+                                else self.me_node[L_["path"]] for L_ in g]),
+                 n_energy=key[1], metal=key[2])
+            for key, g in groups.items()]
+
+    # ------------------------------------------------- heat (0.22.0)
     def _thermal_setup(self, model):
-        raise ValueError("self-heating is not available on meshes yet")
+        """The heat equation on the mesh itself, with the same box method
+        as the currents: every triangle adds k d / h to the conductance of
+        each of its edges (k of its region at the mean temperature of the
+        edge's two nodes) and its part of each node's dual cell to the heat
+        capacity. The nodes at the bottom of the mesh (lowest z) are the
+        heat sink; every other boundary is adiabatic. A ThermalModel for a
+        mesh names a ThermalMaterial for every region (dielectrics too);
+        the substrate goes into the mesh as regions, so `substrate` and
+        `lateral_extension` must be left empty."""
+        from .thermal import ThermalModel
+        if not isinstance(model, ThermalModel):
+            raise ValueError("thermal must be a ThermalModel")
+        if model.substrate or model.lateral_extension > 0:
+            raise ValueError("on a mesh the heat flows in the mesh itself: put the "
+                             "substrate into the mesh as regions and leave "
+                             "ThermalModel.substrate and lateral_extension empty")
+        mats_t = [model.material_for(r) for r in self.mesh.regions]
+        g = _MeshHeat(self, mats_t)
+        return dict(model=model, mats=g.mats, grid=g)
+
+    def _heat_grid(self, th):
+        return th["grid"]
+
+    def _heat_to_dev(self, th, g, T):
+        return np.asarray(T, float).ravel().copy()
+
+    def _heat_from_dev(self, th, g, heat):
+        return np.asarray(heat, float).ravel() * 1e3          # W/mm -> W/m
+
+    def _temperature(self, th, heat, Tn, tol=1e-7, max_iter=200):
+        g = th["grid"]
+        H = self._heat_from_dev(th, g, heat)
+        if not np.all(np.isfinite(H)):
+            raise ValueError("heat must be finite")
+        Ts = float(th["model"].sink_temperature_K)
+        T = np.full(g.N, Ts)
+        for _ in range(max_iter):
+            Tn_ = g.solve(g.matrix(T), H, Ts)
+            change = float(np.max(np.abs(Tn_ - T)))
+            T = Tn_
+            if change < tol:
+                return T
+        raise RuntimeError("the heat equation did not converge")
 
     def field(self, state):
         raise ValueError("on a mesh, take the field from state.psi with your own "
@@ -507,6 +670,71 @@ class MeshDevice(Device):
 
     def gate_tunneling(self, *a, **k):
         raise ValueError("gate_tunneling is for tensor grids")
+
+
+class _MeshHeat:
+    """Conductances and heat capacities of a mesh (SI, per meter of depth),
+    with the interface of thermal._HeatGrid."""
+
+    def __init__(self, dev, mats_t):
+        geo = dev._geo
+        self.N = dev.N
+        self.shape = (dev.N,)
+        self.ei, self.ej = dev.ei, dev.ej
+        uniq, midx = [], []
+        for m in mats_t:
+            for k, u in enumerate(uniq):
+                if u is m or u == m:
+                    midx.append(k)
+                    break
+            else:
+                uniq.append(m)
+                midx.append(len(uniq) - 1)
+        midx = np.array(midx, int)
+        self.mats = uniq
+        self.k300 = np.array([m.k300 for m in uniq])
+        self.alp = np.array([m.exponent for m in uniq])
+        self.c_edge = geo["inv"]
+        self.c_mat = midx[geo["tt"]]
+        self.c_w = geo["dd"] / geo["hh"]
+        self.v_node = geo["sn"]
+        self.v_mat = midx[geo["st"]]
+        self.v_area = geo["sa"] * 1e-18                      # m^2
+        z = dev.coords[1]
+        self.sink = z <= z.min() + 1e-9 * max(1.0, float(np.ptp(z)))
+        self.nE = dev.ei.size
+
+    def matrix(self, T):
+        import scipy.sparse as sp
+        Tf = np.asarray(T, float).ravel()
+        Tm = 0.5 * (Tf[self.ei] + Tf[self.ej])
+        m = self.c_mat
+        k = self.k300[m] * (Tm[self.c_edge] / 300.0) ** (-self.alp[m])
+        G = np.bincount(self.c_edge, self.c_w * k, self.nE)
+        N = self.N
+        diag = np.bincount(self.ei, G, N) + np.bincount(self.ej, G, N)
+        A = sp.csr_matrix((np.concatenate([-G, -G]),
+                           (np.concatenate([self.ei, self.ej]),
+                            np.concatenate([self.ej, self.ei]))), shape=(N, N))
+        return A + sp.diags(diag)
+
+    def capacity(self, T):
+        Tf = np.asarray(T, float).ravel()
+        c = np.zeros(self.v_node.size)
+        for k, m in enumerate(self.mats):
+            sel = self.v_mat == k
+            if sel.any():
+                c[sel] = m.volumetric_heat(Tf[self.v_node[sel]])
+        return np.bincount(self.v_node, self.v_area * c, self.N)
+
+    def solve(self, A, b, Ts):
+        import scipy.sparse.linalg as spl
+        free = ~self.sink
+        Af = A[free][:, free]
+        rhs = b[free] - A[free][:, self.sink] @ np.full(int(self.sink.sum()), Ts)
+        Tn = np.full(self.N, float(Ts))
+        Tn[free] = spl.spsolve(Af.tocsc(), rhs)
+        return Tn
 
 
 def _circumcentres(A, B, C):

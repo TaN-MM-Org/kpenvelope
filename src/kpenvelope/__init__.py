@@ -88,9 +88,10 @@ from .leakage import (gate_leakage, richardson_constant, richardson_velocity,
                       wkb_transmission)
 from .device import (IMPACT_GAN, BandToBand, Device, DeviceState, Dielectric, Electrode,
                      Ionization, Mobility, Region, Surface, Trap, TransientResult,
-                     TunnelBarrier, capture_coefficient, rf_figures, two_port, with_series)
+                     TunnelBarrier, Varshni, capture_coefficient, rf_figures, two_port,
+                     with_series)
 from .mesh import Mesh, MeshDevice, MeshRegion, mesh_from_grid, mesh_from_points
-from .process import Anneal, Implant, Process
+from .process import Anneal, Implant, Process, Structure
 from .thermal import (GAN_BULK, SIC_4H_ROOM, ThermalLayer, ThermalMaterial,
                       ThermalModel, boundary_resistance, solve_heat,
                       solve_heat_transient)
@@ -99,7 +100,7 @@ from .linecharge import (PUBLISHED_CONSTRAINTS, Constraint,
                          line_charge_error_from_density, plan_holography,
                          plan_sum_rule)
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",
@@ -158,5 +159,5 @@ __all__ = [
     "Dielectric", "Region", "Ionization", "IMPACT_GAN", "with_series", "two_port",
     "rf_figures", "solve_heat_transient",
     "BandToBand", "TunnelBarrier", "Mesh", "MeshDevice", "MeshRegion", "mesh_from_grid",
-    "mesh_from_points", "Implant", "Anneal", "Process",
+    "mesh_from_points", "Implant", "Anneal", "Process", "Varshni", "Structure",
 ]
