@@ -618,6 +618,23 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Quantum holes, ballistic limit, bouncing particles (new in 0.25.0)**
+
+- `QuantumChannel(..., holes=(m_z, m_inplane, reference), electrons=True)`
+  -- holes as quantum states too (one band, your masses with their
+  source); `DeviceState.quantum` then also holds `hole_subbands`,
+  `hole_sheet_cm2` and `hole_potential`.
+- The quantum channel now runs together with band-to-band tunneling
+  (the tunneling sees the real bands).
+- `Device.ballistic_current(state, source, drain)` -- the ballistic limit
+  of the current through the channel's subbands (top-of-the-barrier
+  model), with the current per subband.
+- `Structure.view_factors()` -- the diffuse view factors between all
+  exposed faces; `deposit(..., mode="flux", sticking=)` and
+  `etch(..., mode="flux", sticking=)` -- particles that do not stick are
+  re-emitted by the cosine law and land elsewhere.
+- The app: `sticking=` in the flux steps of Process steps.
+
 **Quantum channel, line-of-sight process steps, 2D oxidation (new in 0.24.0)**
 
 - `QuantumChannel(window, x_range=None, n_states=400, tol=1e-5,

@@ -5,7 +5,7 @@ the corrections made in earlier versions.
 
 ## How the results are checked
 
-339 automated tests run on every push and pull request, on Python 3.9,
+344 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -342,6 +342,28 @@ the tests use:
 - Meshes: a rectangular grid cut into right triangles reproduces the
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
+
+**Quantum holes, ballistic limit, bouncing particles (new in 0.25.0)**
+
+- Quantum holes: a well for holes built as the mirror image of a well for
+  electrons (same mass, band profile turned over, acceptors for donors)
+  gives the same confined sheet (1e-9), the same levels with the sign
+  turned (1e-9 eV), the same density profile (1e-9) and the current
+  scaled by the ratio of the mobilities (1e-8).
+- Quantum channel with band-to-band tunneling (electrons and holes
+  quantum): zero current in equilibrium, terminal currents that add up to
+  zero, and tunneling rates equal to those of the same device without the
+  quantum channel at the same potentials (1e-8), so the tunneling sees the
+  real bands.
+- Ballistic limit: the formula against a direct integral over the moving
+  2D Fermi gas (1e-9); zero at zero drain voltage; more than the
+  drift-diffusion current.
+- View factors: what a face does not send to other faces equals the
+  direct flux it receives from the sky (1e-3), and they are reciprocal
+  (2e-3). With re-emission, the flux at the bottom of a trench agrees with
+  an independent Monte Carlo simulation of bouncing particles (within
+  four standard errors plus 1 percent) for sticking 0.3 and 0.05; with
+  sticking 0.01 a film covers a trench bottom as thickly as the top.
 
 **Quantum channel, line-of-sight process steps, 2D oxidation (new in 0.24.0)**
 

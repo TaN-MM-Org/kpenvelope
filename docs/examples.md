@@ -7,7 +7,7 @@ describes every function used here.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-prints with kpenvelope 0.24.0 (all of them were rerun for this release).
+prints with kpenvelope 0.25.0 (all of them were rerun for this release).
 Numbers labeled illustrative are chosen for the example, not taken from
 a source.
 
@@ -24,7 +24,8 @@ temperature, hot electrons with heating, a tunnel diode, oxidation, and
 a process flow into a device; 48 to 50 Peltier heat, a tunnel diode that
 heats itself, and tunneling on a turned mesh; 51 to 54 quantum electrons
 in the device solver and a transistor, line-of-sight etching and
-deposition, and LOCOS oxidation.
+deposition, and LOCOS oxidation; 55 and 56 the ballistic limit of a
+transistor and particles that bounce.
 
 ### 1. Energy levels and what they are made of
 
@@ -2482,6 +2483,78 @@ Far from the mask the thickness is Deal and Grove's, 150 nm against
 149.9 nm from the closed form for a 10 nm start. The new oxide's extra
 volume moves cells up or out; the stress and flow of real oxide are not
 modeled.
+
+### 55. The ballistic limit of a transistor (new in 0.25.0)
+
+```python
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# the transistor of example 52 with quantum electrons: its current from
+# drift-diffusion, and the ballistic limit through the same bands
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1500.0, "illustrative", saturation_velocity=1.0e7)
+contacts = [Electrode("source", "ohmic", 0, 100, implant_depth=30, implant_donors=1e20),
+            Electrode("gate", "schottky", 300, 400, barrier=1.0),
+            Electrode("drain", "ohmic", 600, 700, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 700.0, contacts, mob, Surface("pinned", barrier=1.0),
+             dx_fine=10, dx_max=50, dz_fine=0.5, dz_max=50,
+             quantum=QuantumChannel((270.0, 319.5)))
+st = None
+for vg in (0.0, -2.0, -3.0):
+    st = dev.solve({"gate": vg, "drain": 1.0}, guess=st)
+    I_b, per = dev.ballistic_current(st)
+    print(f"gate {vg:+.0f} V: drift-diffusion {st.current['drain']:.3f} A/mm, "
+          f"ballistic limit {I_b:.3f} A/mm (ratio {st.current['drain'] / I_b:.2f}); "
+          f"top of the lowest subband {per[0][0]:+.3f} eV")
+```
+
+```
+gate +0 V: drift-diffusion 1.393 A/mm, ballistic limit 4.265 A/mm (ratio 0.33); top of the lowest subband -0.191 eV
+gate -2 V: drift-diffusion 1.053 A/mm, ballistic limit 3.789 A/mm (ratio 0.28); top of the lowest subband -0.180 eV
+gate -3 V: drift-diffusion 0.747 A/mm, ballistic limit 3.270 A/mm (ratio 0.23); top of the lowest subband -0.166 eV
+```
+
+`ballistic_current` asks how much current the channel would carry if no
+electron scattered between the contacts: every electron that gets over
+the top of the channel's energy barrier, in each subband, arrives at the
+other side (the top-of-the-barrier model of Natori and Lundstrom). The
+ratio of the drift-diffusion current to it says how far the transistor
+is from that limit, here about a third or less. The bands are those of
+the drift-diffusion solution; electrons below the top are not let
+through by tunneling. The mobility, speed and contacts are illustrative.
+
+### 56. Particles that bounce: sticking and conformal films
+
+```python
+from kpenvelope.process import Structure
+
+# a 10 nm film on a 40 nm wide, 100 nm deep trench, from a gas whose
+# particles stick at the first landing (sticking 1) or mostly bounce off
+# and land elsewhere (sticking 0.1 and 0.01); rates illustrative
+for s in (1.0, 0.1, 0.01):
+    st = Structure(200.0, 0.0, 250.0, 2.0, "Si", 150.0)
+    st.etch({"Si": 1.0}, 100.0, mode="directional", window=(80, 120))
+    st.deposit("film", 10.0, mode="flux", sticking=s)
+    wall = sum(1 for m in st.mat[:, 50] if m == "film") * st.h / 2       # each wall, at 101 nm
+    print(f"sticking {s:4.2f}: {st.thickness('film', 20):.0f} nm on top, "
+          f"{st.thickness('film', 100):.0f} nm at the bottom, {wall:.0f} nm on each wall")
+```
+
+```
+sticking 1.00: 10 nm on top, 2 nm at the bottom, 2 nm on each wall
+sticking 0.10: 10 nm on top, 6 nm at the bottom, 6 nm on each wall
+sticking 0.01: 10 nm on top, 10 nm at the bottom, 8 nm on each wall
+```
+
+With `sticking` below 1, a particle that does not stick leaves again in a
+random direction (the cosine law) and lands somewhere else. The more
+often particles bounce before they stick, the more evenly they cover the
+inside of a trench, which is why slow-reacting gases give conformal
+films. The package works this out from the view factors between all
+exposed faces (the tests compare it with an independent Monte Carlo
+simulation of bouncing particles). The cells round each film to 2 nm.
 
 ## Tutorials
 

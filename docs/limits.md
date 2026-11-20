@@ -144,7 +144,19 @@ The limits of each part of the package, in detail. The
 - Devices in 2D and 3D (`Device`, `MeshDevice`): carriers are classical
   unless a `QuantumChannel` is given, and transport is never ballistic. The
   hydrodynamic model uses one energy relaxation time (yours); models of
-  this kind are known to be able to overstate velocity overshoot.
+  this kind are known to be able to overstate velocity overshoot. With
+  velocity saturation it does not go over into drift-diffusion as the
+  relaxation time goes to zero: its mobility follows the local heating
+  J . E / n (through the effective field), the drift-diffusion mobility
+  follows the field, and where diffusion matters the two differ. In the
+  tests' transistor near switch-off the hot-electron current is 1 to 2
+  percent above drift-diffusion at 1e-16 to 1e-17 s; in a 200 nm, 1e18
+  cm^-3 bar at 1e6 V/cm and 1e-16 s it is 46, 41 and 29 percent above
+  with grid steps of 2, 1 and 0.25 nm (with an electron accumulation that
+  drift-diffusion does not have), so the difference shrinks only slowly
+  with the grid. Without velocity saturation the two agree within 4e-4
+  in that transistor. Check small relaxation times against
+  drift-diffusion before relying on them.
   Thermionic emission at band steps uses the non-degenerate form on the
   barrier side; the single node at an abrupt interface gives an error
   first order in the grid step there, so refine the grid at band steps
@@ -210,12 +222,20 @@ The limits of each part of the package, in detail. The
   quantum potential is held fixed in `small_signal`, `transient` and
   `pulse` (the quasi-static capacitance from charges at two voltages
   includes it; the small-signal one does not). It does not run with
-  band-to-band tunneling, or with tunnel barriers or thermionic band
-  steps inside its window. Where `x_range` ends inside a channel, the
-  quantum potential drops to 0 from one column to the next; put the ends
-  in the ungated access regions, or keep the default. Holes stay
-  classical. The outer iteration costs typically 5 to 30 device solves
-  per voltage.
+  tunnel barriers or thermionic band steps inside its window. Where
+  `x_range` ends inside a channel, the quantum potential drops to 0 from
+  one column to the next; put the ends in the ungated access regions, or
+  keep the default. Holes (since 0.25.0) are one band with one mass along
+  z and one in the plane, both yours: no heavy-, light- and split-off-hole
+  mixing (the six-band solvers of the package do that for single stacks,
+  not inside the device). The outer iteration costs typically 5 to 30
+  device solves per voltage.
+- Ballistic limit (`ballistic_current`, since 0.25.0): electrons over the
+  top of each subband's barrier pass, those below do not (no tunneling
+  through the barrier, no reflection above it); the bands are the
+  drift-diffusion ones, not solved again with ballistic electrons. It is
+  the limit of no scattering, not a quantum transport simulation of the
+  device (no non-equilibrium Green's functions).
 - Process (`Implant`, `Anneal`, `Process`, `Structure`): Gaussian implant
   profiles from ranges you supply (the same range in every material),
   constant diffusivity in the semiconductor only, no segregation, damage
@@ -224,9 +244,9 @@ The limits of each part of the package, in detail. The
   whose error shrinks with the cell size (about 1 percent of the etched
   area at 60 cells per etch depth in the tests). The flux modes (since
   0.24.0) add shadowing by the geometry, but particles stick where they
-  land (no re-emission, so no surface diffusion or conformal coverage
-  from low sticking), the angular distribution is one cos^n law that you
-  choose, there is no plasma or gas-phase chemistry and no
+  land unless you give a sticking coefficient below 1 (then they are
+  re-emitted by the cosine law; there is no surface diffusion), the
+  angular distribution is one cos^n law that you choose, there is no plasma or gas-phase chemistry and no
   ion-enhanced or saturating surface kinetics (rates of several beams
   simply add), and the cross-section repeats as its mirror image at both
   sides. Their cost grows as the square of the number of surface cells.
