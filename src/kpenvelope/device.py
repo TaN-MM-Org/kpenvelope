@@ -98,6 +98,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 
 import numpy as np
 
@@ -109,7 +110,7 @@ from .twod import _graded
 __all__ = ["Mobility", "Electrode", "Trap", "Surface", "Device", "DeviceState",
            "TransientResult", "capture_coefficient", "with_series", "two_port",
            "rf_figures", "Ionization", "IMPACT_GAN", "Dielectric", "Region",
-           "BandToBand", "TunnelBarrier", "Varshni"]
+           "BandToBand", "TunnelBarrier", "Varshni", "QuantumChannel"]
 
 _CP = QE / EPS0 * 1e9          # V nm, densities in nm^-3
 
@@ -580,6 +581,110 @@ class Varshni:
         return -a * (T * T / (T + b) - T0 * T0 / (T0 + b))
 
 
+@dataclasses.dataclass(frozen=True)
+class QuantumChannel:
+    """Confined electrons in a channel (new in 0.24.0).
+
+    Along every grid column inside `window` = (z_min, z_max) (nm, the
+    device's z, bottom up) and `x_range` (nm; None: every column), the
+    electrons fill the eigenstates of the one-band Schroedinger equation
+
+        -(hbar^2 / 2) d/dz (1 / m(z)) dpsi/dz + E_c(z) psi = E psi
+
+    (BenDaniel-Duke form, the layer masses, finite differences on the
+    device's own z grid, psi = 0 just outside the window), each a 2D gas
+    with the state-averaged in-plane mass m_i:
+
+        n(z) = sum_i (m_i / (pi hbar^2)) kT ln(1 + exp((F_n(z) - E_i) / kT)) |psi_i(z)|^2,
+
+    with F_n(z) the local electron quasi-Fermi level (in equilibrium, and
+    across a channel, where F_n does not change along the column, this is
+    the Schroedinger-Poisson density exactly). The currents and the rest of
+    the device see these electrons through a quantum potential Lambda, a
+    shift of the electrons' band edge chosen at every node so that the
+    device's classical density relation n = N_c F(F_n - E_c - Lambda) gives
+    the quantum density; the device is solved with Lambda held fixed, Lambda
+    is updated from the new bands, and the two are repeated until Lambda
+    changes by less than `tol` eV wherever the electrons are. Outside the
+    window, and at electrode and surface nodes, Lambda = 0 (classical
+    electrons). Holes are classical. x_range=None takes every column
+    except those under an ohmic contact on the top face (the implanted,
+    three-dimensional electron gas there needs no confinement). Lambda
+    changes from one column to the next as the bands do; where the window
+    ends sideways (x_range) it drops to 0, so put those ends where the
+    channel is not gated (the access regions) rather than under a gate.
+
+    n_states : the most eigenstates kept per column; every state up to
+        40 kT above the column's highest quasi-Fermi level is kept, up to
+        this many (a warning tells you when the highest one kept still holds
+        electrons). max_shift : bound on |Lambda|
+        (eV) where there are almost no confined electrons (next to the
+        walls).
+    """
+
+    window: tuple
+    x_range: tuple = None
+    n_states: int = 400
+    tol: float = 1e-5
+    max_outer: int = 200
+    max_shift: float = 1.0
+
+    def __post_init__(self):
+        w = tuple(float(v) for v in self.window)
+        if len(w) != 2 or not (math.isfinite(w[0]) and math.isfinite(w[1]) and w[0] < w[1]):
+            raise ValueError("QuantumChannel.window must be (z_min, z_max) with z_min < z_max")
+        object.__setattr__(self, "window", w)
+        if self.x_range is not None:
+            xr = tuple(float(v) for v in self.x_range)
+            if len(xr) != 2 or not (xr[0] <= xr[1]):
+                raise ValueError("QuantumChannel.x_range must be (x_min, x_max)")
+            object.__setattr__(self, "x_range", xr)
+        if not (isinstance(self.n_states, int) and self.n_states >= 1):
+            raise ValueError("QuantumChannel.n_states must be an integer >= 1")
+        if not (self.tol > 0 and self.max_shift > 0 and int(self.max_outer) >= 1):
+            raise ValueError("QuantumChannel: tol, max_shift and max_outer must be > 0")
+
+
+_H2M = HBAR ** 2 / (2.0 * M0 * QE) * 1e18            # hbar^2 / 2 m0, eV nm^2
+_G2D = M0 * QE / (math.pi * HBAR ** 2) * 1e-18      # m0 / (pi hbar^2), per eV per nm^2
+
+
+def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None):
+    """Eigenstates of -(hbar^2/2) d/dz (1/m) d/dz + E_c on the nodes z
+    (nm, increasing, any spacing), with psi = 0 at z_left < z[0] and
+    z_right > z[-1] (new in 0.24.0). ec in eV, mass in m0 (both per node;
+    the mass on each link is the mean of its two nodes). Returns the
+    energies (eV, lowest first) and psi^2 per node (1/nm, normalized so that
+    sum(w psi^2) = 1 with w the node's share of the column, the box
+    method). With e_max, every state below e_max (eV) instead of the
+    lowest n_states."""
+    from scipy.linalg import eigh_tridiagonal
+    z = np.asarray(z, float)
+    zz = np.concatenate([[z_left], z, [z_right]])
+    h = np.diff(zz)
+    if np.any(h <= 0):
+        raise ValueError("column nodes must increase, with the walls outside them")
+    m = np.asarray(mass, float)
+    mm = np.concatenate([[m[0]], m, [m[-1]]])
+    mh = 0.5 * (mm[1:] + mm[:-1])                      # on each link
+    c = _H2M / (mh * h)                                # eV nm per link
+    w = 0.5 * (h[:-1] + h[1:])                         # node widths, nm
+    diag = (np.asarray(ec, float) * w + c[:-1] + c[1:]) / w
+    off = -c[1:-1] / np.sqrt(w[:-1] * w[1:])
+    if e_max is not None:
+        lo = float(np.min(diag) - np.sum(np.abs(off))) - 1.0      # below every state
+        if not float(e_max) > lo:
+            return np.zeros(0), np.zeros((z.size, 0)), w
+        E, U = eigh_tridiagonal(diag, off, select="v", select_range=(lo, float(e_max)))
+        if E.size > n_states:
+            E, U = E[:n_states], U[:, :n_states]
+    else:
+        k = int(min(n_states, z.size))
+        E, U = eigh_tridiagonal(diag, off, select="i", select_range=(0, k - 1))
+    psi2 = U ** 2 / w[:, None]
+    return E, psi2, w
+
+
 def capture_coefficient(cross_section_cm2: float, mass_m0: float,
                         temperature_K: float = 300.0) -> float:
     """c = sigma v_th with the mean thermal speed v_th = sqrt(8 kT / (pi m))
@@ -607,6 +712,11 @@ class DeviceState:
     electron_temperature : with the hydrodynamic model, T_n (K).
     lattice_heat : with the hydrodynamic model, the heat the lattice
     receives (electrons give theirs where they relax; new in 0.22.0).
+    quantum_potential : with a QuantumChannel, Lambda (eV) at every node
+    (0 outside the window); quantum : with it, the subband energies of
+    every column (eV, same scale as ec), the confined sheet density per
+    column (cm^-2) and the outer iterations (new in 0.24.0). ec is the
+    real band edge, without Lambda.
     """
 
     axes: tuple
@@ -629,6 +739,8 @@ class DeviceState:
     _x: np.ndarray = dataclasses.field(default=None, repr=False)
     electron_temperature: np.ndarray = None
     lattice_heat: np.ndarray = None
+    quantum_potential: np.ndarray = None
+    quantum: dict = None
 
     def sheet(self, depth: float = 150.0):
         """Electrons per cm^2 below the top `depth` nm, at each lateral
@@ -719,8 +831,8 @@ class _Anderson:
     (memory 5, damping 0.8). The history restarts when the residual grows,
     and a proposal more than ten times the plain step away is not taken."""
 
-    def __init__(self, m=5, beta=0.8):
-        self.m, self.beta = m, beta
+    def __init__(self, m=5, beta=0.8, positive=True):
+        self.m, self.beta, self.positive = m, beta, positive
         self.T, self.R = [], []
 
     def step(self, T, R, plain, change):
@@ -737,7 +849,7 @@ class _Anderson:
         dT = np.stack([self.T[q + 1] - self.T[q] for q in range(len(self.T) - 1)], 1)
         gam, *_ = np.linalg.lstsq(dR, R, rcond=None)
         out = T + self.beta * R - (dT + self.beta * dR) @ gam
-        if (np.all(np.isfinite(out)) and np.all(out > 0)
+        if (np.all(np.isfinite(out)) and (not self.positive or np.all(out > 0))
                 and np.max(np.abs(out - T)) <= 10.0 * max(change, 1e-12)):
             return out
         return plain
@@ -797,7 +909,13 @@ class Device:
         to dx_max.
     density_floor_cm3 : carriers below this density do not hold up the
         convergence of their quasi-Fermi level (as in the 1D solver).
+    quantum : a QuantumChannel, for electrons confined in a channel
+        (Schroedinger along the grid columns, new in 0.24.0).
     """
+
+    _qc = None
+    _qL = None
+    _q_inner = False
 
     def __init__(self, layers, width: float, electrodes, mobility, surface,
                  traps=(), depth: float = None, temperature_K: float = 300.0,
@@ -812,7 +930,8 @@ class Device:
                  ionization: "Ionization" = None, cap=(), regions=(),
                  heterojunctions: str = "drift-diffusion", band_to_band=None,
                  doping=None, tunnel_barriers=(), temperature_model: str = "mobility",
-                 band_gap_temperature=None, heat_model: str = "joule"):
+                 band_gap_temperature=None, heat_model: str = "joule",
+                 quantum: "QuantumChannel" = None):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover - depends on install
@@ -1307,6 +1426,7 @@ class Device:
                             np.array(labels, dtype=object)[np.broadcast_to(
                                 idx.reshape((1,) * (self.dim - 1) + (-1,)),
                                 self.shape).ravel()])
+        self._setup_quantum(quantum)
 
     # ------------------------------------- lattice temperature (0.22.0)
     def _setup_lattice(self, model, gaps, node_labels):
@@ -1378,6 +1498,7 @@ class Device:
                 tr["en"], tr["ep"] = b["en"], b["ep"]
             self._neutral = {k: v.copy() for k, v in L["neutral"].items()}
             L["active"] = False
+            self._add_q()
             return
         if np.any(TL <= 0) or not np.all(np.isfinite(TL)):
             raise ValueError("the lattice temperature must be finite and > 0")
@@ -1402,6 +1523,7 @@ class Device:
             p1 = (self.Nv * np.exp(-np.asarray(lev_v, float) / self.kT)
                   if self.holes else np.zeros(self.N))
             tr["en"], tr["ep"] = tr["cn"] * n1, tr["cp"] * p1
+        self._add_q()
         self._neutral = self._neutral_psi()
         L["active"] = True
 
@@ -3206,15 +3328,17 @@ class Device:
         # as 0 and NaN)
         semi = self.node_semi
         nan = np.where(semi, 1.0, np.nan)
+        Ec_out = b["Ec"] if self._qL is None else b["Ec"] - self._qL
         return DeviceState(
-            axes=self.axes, psi=psi.reshape(sh), ec=(b["Ec"] * nan).reshape(sh),
+            axes=self.axes, psi=psi.reshape(sh), ec=(Ec_out * nan).reshape(sh),
             efn=(fn * nan).reshape(sh), efp=(fp * nan).reshape(sh),
             n=(b["n"] * 1e21 * semi).reshape(sh),
             p=(b["p"] * 1e21 * semi).reshape(sh), temperature=Tn.reshape(sh),
             occupancy=occ, bias=dict(bias), current=cur, charge=chg,
             heat=H.reshape(sh), converged=conv, iterations=it, time=time,
             internal=dict(internal) if internal is not None else dict(bias),
-            _x=x.copy())
+            _x=x.copy(),
+            quantum_potential=None if self._qL is None else self._qL.reshape(sh).copy())
 
     # ------------------------------------------------------ linear response
     def _ports(self):
@@ -3295,6 +3419,7 @@ class Device:
             raise ValueError("frequencies must be finite and >= 0")
         bias = dict(state.internal or state.bias)
         Tn = state.temperature.ravel().copy()
+        self._use_q(state)
         use_traps = traps and bool(self._traps)
         if use_traps:
             X0 = state._x.reshape(self.N, 2 + int(self.holes))
@@ -3321,6 +3446,8 @@ class Device:
     # ------------------------------------------------------------- public
     def equilibrium(self) -> DeviceState:
         """All electrodes at 0 V, without generation (true equilibrium)."""
+        if self._qc is not None and not self._q_inner:
+            return self.solve({})
         Tn = np.full(self.N, self.T)
         self._set_lattice(Tn)
         bias = {e.name: 0.0 for e in self.electrodes}
@@ -3337,6 +3464,208 @@ class Device:
             return self._state(x, bias, Tn, True, it)
         finally:
             self.Gopt = G
+
+    # ------------------------------------------- quantum channel (0.24.0)
+    def _setup_quantum(self, qc):
+        """The columns of a QuantumChannel: per grid column, the runs of
+        semiconductor nodes inside the window (electrode and surface nodes
+        excluded), each with the z of the nodes just outside it (walls)."""
+        self._qc, self._qL, self._qcols = None, None, []
+        if qc is None:
+            return
+        if not isinstance(qc, QuantumChannel):
+            raise ValueError("quantum must be a QuantumChannel")
+        if self._bt is not None:
+            raise ValueError("QuantumChannel does not run together with band_to_band "
+                             "(the tunneling uses the band gap, which the quantum "
+                             "correction shifts)")
+        nz = self.axes[-1].size
+        z = self.axes[-1]
+        excl = np.zeros(self.N, bool)
+        for nodes in self.enodes.values():
+            excl[nodes] = True
+        excl[self.surface_nodes] = True
+        ok = self.node_semi & ~excl
+        inz = (z >= qc.window[0] - 1e-9) & (z <= qc.window[1] + 1e-9)
+        inz[0] = inz[-1] = False                    # walls need a node outside
+        X = self.coords[0]
+        # by default, not under ohmic contacts on the top face (their
+        # implanted, three-dimensional electron gas needs no confinement)
+        under = [(e.x0, e.x1) for e in self.electrodes
+                 if e.kind == "ohmic" and getattr(e, "face", "top") == "top"]
+        cols = []
+        for c in range(self.N // nz):
+            base = c * nz
+            xc = X[base]
+            if qc.x_range is not None:
+                if not (qc.x_range[0] - 1e-9 <= xc <= qc.x_range[1] + 1e-9):
+                    continue
+            elif any(a - 1e-9 <= xc <= b + 1e-9 for a, b in under):
+                continue
+            sel = inz & ok[base:base + nz]
+            k = 0
+            while k < nz:
+                if not sel[k]:
+                    k += 1
+                    continue
+                k1 = k
+                while k1 + 1 < nz and sel[k1 + 1]:
+                    k1 += 1
+                if k1 - k + 1 >= 3:
+                    idx = np.arange(k, k1 + 1)
+                    nodes = base + idx
+                    cols.append(dict(nodes=nodes, z=z[idx], zl=z[k - 1], zr=z[k1 + 1],
+                                     mass=self.me_node[nodes].copy(), x=float(X[base])))
+                k = k1 + 1
+        if not cols:
+            raise ValueError("the QuantumChannel window holds no semiconductor column "
+                             "(at least 3 nodes in a row inside the device)")
+        qn = np.zeros(self.N, bool)
+        for col in cols:
+            qn[col["nodes"]] = True
+        if self._te is not None:
+            e = np.concatenate([self._te["n"], self._te["p"]])
+            if np.any(qn[self.ei[e]] | qn[self.ej[e]]):
+                raise ValueError("heterojunctions='thermionic' at band steps inside the "
+                                 "QuantumChannel window: the quantum channel already "
+                                 "treats those electrons; keep the steps outside the "
+                                 "window or use heterojunctions='drift-diffusion'")
+        if self._tb is not None:
+            tbn = np.concatenate([self._tb["int_nodes"]] +
+                                 [np.ravel(L_["path"]) for L_ in self._tb["links"]])
+            if np.any(qn[tbn.astype(int)]):
+                raise ValueError("a tunnel barrier lies inside the QuantumChannel window")
+        self._qc, self._qcols, self._qmask = qc, cols, qn
+        self._qL = np.zeros(self.N)
+        self._qbase = dict(Ec0=self.Ec0.copy(), Eg=self.Eg.copy(),
+                           en=[tr["en"] for tr in self._traps])
+
+    def _add_q(self):
+        """Add the quantum potential to freshly set band arrays (the
+        electrons' band edge moves by Lambda, the holes' does not, and a
+        trap level keeps its place relative to the real bands)."""
+        Lam = self._qL
+        if Lam is None or not np.any(Lam):
+            return
+        self.Ec0 = self.Ec0 + Lam
+        self.Eg = self.Eg + Lam
+        f = np.exp(-Lam / self.kT)
+        for tr in self._traps:
+            tr["en"] = tr["en"] * f
+
+    def _apply_q(self, Lam):
+        """Set the quantum potential to Lam (eV per node)."""
+        Lam = np.where(self._qmask, np.asarray(Lam, float).ravel(), 0.0)
+        self._qL = Lam
+        self._x0 = None
+        L = self._lat
+        if L is not None:
+            cur = L["cur"]
+            L["cur"] = None
+            self._set_lattice(cur)
+            return
+        b = self._qbase
+        self.Ec0, self.Eg = b["Ec0"].copy(), b["Eg"].copy()
+        for tr, en in zip(self._traps, b["en"]):
+            tr["en"] = en
+        self._add_q()
+
+    def _use_q(self, state):
+        """Hold the quantum potential of `state` (small-signal and transient
+        analyses keep it fixed)."""
+        if self._qc is None:
+            return
+        if state.quantum_potential is None:
+            raise ValueError("this state has no quantum potential; solve it with "
+                             "this device first")
+        self._apply_q(state.quantum_potential.ravel())
+
+    def _q_target(self, x):
+        """The quantum potential that makes the classical density equal the
+        confined density of the bands of x, column by column."""
+        qc = self._qc
+        psi, fn, _, _ = self._unpack(x)
+        Ec = (self.Ec0 - self._qL) - psi                  # the real band edge
+        kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
+        target = np.zeros(self.N)
+        weight = np.zeros(self.N, bool)
+        sub, sheets, top_share = [], [], 0.0
+        for col in self._qcols:
+            nd = col["nodes"]
+            kt = kT[nd]
+            E, p2, w = column_states(col["z"], Ec[nd], col["mass"], qc.n_states,
+                                     col["zl"], col["zr"],
+                                     e_max=float(np.max(fn[nd]) + 40.0 * np.max(kt)))
+            mi = (w[:, None] * p2 * col["mass"][:, None]).sum(0)
+            occ = kt[:, None] * np.logaddexp(0.0, (fn[nd][:, None] - E[None, :]) / kt[:, None])
+            parts = _G2D * mi[None, :] * occ * p2              # nm^-3 per state
+            nq = parts.sum(1)
+            if nq.max() > 0 and E.size == qc.n_states:
+                top_share = max(top_share, float((parts[:, -1] * w).sum() / (nq * w).sum()))
+            eta = self._inv_occ(nq / self.Nc[nd])
+            lam = fn[nd] - Ec[nd] - kt * eta
+            lam = np.clip(lam, -qc.max_shift, qc.max_shift)
+            target[nd] = lam
+            weight[nd] = (nq > 1e-6 * max(nq.max(), 1e-30)) & (np.abs(lam) < qc.max_shift)
+            sub.append((col["x"], E))
+            sheets.append(float((nq * w).sum() * 1e14))
+        return target, weight, dict(subbands=sub, sheet_cm2=sheets, top_share=top_share)
+
+    def _solve_quantum(self, bias, guess, kw):
+        """Outer loop of the QuantumChannel: solve with Lambda fixed, update
+        Lambda from the new bands (Anderson-accelerated), until it settles."""
+        qc = self._qc
+        if guess is not None and guess.quantum_potential is not None:
+            Lam = guess.quantum_potential.ravel().copy()
+        else:
+            Lam = np.zeros(self.N)
+        acc = _Anderson(m=5, beta=0.6, positive=False)
+        st = guess
+        hist = []
+        info = None
+        good = (Lam.copy(), None)        # Lambda (and state) of the last inner solve
+        for k in range(int(qc.max_outer)):
+            for _try in range(12):
+                self._apply_q(Lam)
+                self._q_inner = True
+                try:
+                    st_new = self.solve(bias, guess=st, **kw)
+                    break
+                except RuntimeError:
+                    base = good[0]
+                    if float(np.max(np.abs(Lam - base))) < 1e-9:
+                        raise              # not the quantum potential's doing
+                    # too large a change of Lambda for Newton from here:
+                    # take half of it
+                    Lam = base + 0.5 * (Lam - base)
+                    acc = _Anderson(m=5, beta=0.6, positive=False)
+                finally:
+                    self._q_inner = False
+            else:
+                raise RuntimeError("the quantum channel could not be solved: even small "
+                                   "changes of the quantum potential fail; approach "
+                                   "this bias in smaller steps (sweep)")
+            st = st_new
+            good = (Lam.copy(), st)
+            target, weight, info = self._q_target(st._x)
+            R = np.where(self._qmask, target - Lam, 0.0)
+            change = float(np.max(np.abs(R[weight]))) if np.any(weight) else 0.0
+            hist.append(change)
+            if change < qc.tol:
+                break
+            plain = Lam + 0.6 * R
+            Lam = acc.step(Lam, R, plain, change)
+        else:
+            raise RuntimeError(f"the quantum channel did not settle in {qc.max_outer} "
+                               f"outer iterations (last change {hist[-1]:.2e} eV)")
+        if info["top_share"] > 1e-4:
+            warnings.warn(f"QuantumChannel: the highest of the {qc.n_states} states "
+                          f"holds {100 * info['top_share']:.2g} percent of a column's "
+                          "electrons; raise n_states", RuntimeWarning, stacklevel=3)
+        st.quantum = dict(subbands=info["subbands"], sheet_cm2=info["sheet_cm2"],
+                          iterations=len(hist), last_change=hist[-1],
+                          top_state_share=info["top_share"])
+        return st
 
     def _solve_band_to_band(self, bias, guess, thermal, max_bias_step, tol, thermal_tol,
                             max_thermal_iter, energy_relaxation, rtol=1e-6, max_outer=80):
@@ -3706,6 +4035,14 @@ class Device:
             (new in 0.22.0); not with `thermal`.
         """
         target = self._check_bias(bias)
+        if self._qc is not None and not self._q_inner:
+            if guess is not None and guess._x.size != self.N * self.nv:
+                raise ValueError("guess is from a different device")
+            return self._solve_quantum(bias, guess, dict(
+                thermal=thermal, max_bias_step=max_bias_step, tol=tol,
+                thermal_tol=thermal_tol, max_thermal_iter=max_thermal_iter,
+                energy_relaxation=energy_relaxation,
+                lattice_temperature=lattice_temperature))
         if lattice_temperature is not None:
             if thermal is not None:
                 raise ValueError("give thermal or lattice_temperature, not both")
@@ -3920,6 +4257,7 @@ class Device:
         v0 = dict(start.bias)
         vint = dict(start.internal or start.bias)
         Tn = start.temperature.ravel().copy()
+        self._use_q(start)
         # extended unknowns: append the steady occupancies of `start`
         X0 = start._x.reshape(self.N, 2 + int(self.holes))
         occ0 = []
