@@ -378,6 +378,19 @@ def run_device(spec):
         tr = _transport(spec, len(layers))
         if top.kind == "schottky" and dev.get("thermionic", True):
             top = Contact("schottky", barrier=top.barrier, thermionic=True)
+        if dev.get("btbt"):
+            # the vertical stack as a device with nonlocal band-to-band
+            # tunneling (tunnel junctions, Zener current; new in 0.23.0)
+            if len(V) > 61:
+                raise SpecError("With band-to-band tunneling use at most 61 voltage "
+                                "points (a larger step).")
+            d = _vertical_device(spec, layers, ic, T, dz, top, True)
+            J, prev = [], None
+            for v in V:
+                prev = d.solve({"top": float(v)}, guess=prev)
+                J.append(-prev.current["top"] / (20e-7 * 0.1))
+            return {"mode": "iv", "v": list(map(float, V)), "j_A_cm2": J, "btbt": True,
+                    "sources": [TRANSISTOR_SOURCES["btbt"]], "warnings": warn}
         V, J, res = iv_curve(layers, tr, V, top=top, **kw)
         return {"mode": "iv", "v": list(map(float, V)), "j_A_cm2": J.tolist(),
                 "warnings": warn}
@@ -883,7 +896,34 @@ TRANSISTOR_SOURCES = {
               "highest field in GaN reaches 1",
     "mason": "f_max from Mason's unilateral gain U (S. J. Mason, IRE Trans. Circuit "
              "Theory 1, 20 (1954)); f_T where the current gain |h21| falls to 1",
+    "gap_T": "band gap against temperature: the Varshni numbers of I. Vurgaftman and "
+             "J. R. Meyer, J. Appl. Phys. 94, 3675 (2003), the ones the layer records "
+             "use; the change is shared evenly between the two bands (an assumption, "
+             "no source gives the split)",
+    "peltier": "Peltier and Thomson heat: the thermodynamic heat of G. K. Wachutka, "
+               "IEEE Trans. Comput.-Aided Des. 9, 1141 (1990), with the package's own "
+               "thermoelectric power",
+    "thermionic": "electrons cross the barrier step by thermionic emission (the form "
+                  "of K. Yang, J. R. East and G. I. Haddad, Solid-State Electron. 36, "
+                  "321 (1993))",
+    "btbt": "band-to-band tunneling: Kane's two-band rate (as written in Eq. 13 of "
+            "arXiv:2108.09328) on straight paths through the band profile, with the "
+            "reduced mass from the electron mass of each layer and your hole mass",
 }
+
+
+def _gap_shifts(spec, layers):
+    """Cited gap-temperature numbers for every layer of the stack."""
+    from ..nitride import gap_shift
+    out = {}
+    for L_spec, L in zip(spec.get("layers") or [], layers):
+        name = L_spec.get("material")
+        if name == "ScAlN":
+            raise SpecError("ScAlN has no cited band-gap numbers against temperature; "
+                            "untick 'the band gap follows the temperature'.")
+        x = 0.0 if name == "GaN" else float(L_spec.get("x") or 0.0)
+        out[L.label] = gap_shift(name, x, 0.5)
+    return out
 
 
 def _bajaj_vsat(ns_cm2):
@@ -989,9 +1029,19 @@ def _transistor_device(spec, with_traps=False):
         surf = Surface("states", fixed_charge=float(one.gate_charge / _QE))
     else:
         surf = Surface("pinned", barrier=surface)
+    extra = {}
+    if t.get("full_temp"):
+        extra.update(temperature_model="full", band_gap_temperature=_gap_shifts(spec, layers))
+        extra_src.append(TRANSISTOR_SOURCES["gap_T"])
+    if t.get("peltier"):
+        extra["heat_model"] = "thermoelectric"
+        extra_src.append(TRANSISTOR_SOURCES["peltier"])
+    if t.get("thermionic"):
+        extra["heterojunctions"] = "thermionic"
+        extra_src.append(TRANSISTOR_SOURCES["thermionic"])
     dev = Device(layers, width, el, mob, surf, cap=cap,
                  traps=traps, temperature_K=T, interfaces=ic, dx_fine=10.0,
-                 dx_max=150.0, dz_fine=1.0, dz_max=100.0, fine_depth=min(60.0, top))
+                 dx_max=150.0, dz_fine=1.0, dz_max=100.0, fine_depth=min(60.0, top), **extra)
     return dev, dict(layers=layers, warn=warn, width=width, gate=[x_g0, x_g0 + lg],
                      contacts=[[0.0, ls], [width - ls, width]], ns=ns, vsat=vs,
                      mobility=mu, gamma=gamma, sources=[mob.reference] + extra_src,
@@ -1087,11 +1137,9 @@ def run_transistor(spec):
     if t.get("heating"):
         thermal, heat_src = _fet_thermal(spec, info)
     coupled = bool(t.get("hot_coupled")) and tau is not None
-    if coupled and thermal is not None:
-        raise SpecError("Hot electrons that change the current and self-heating cannot "
-                        "be combined yet; switch one of them off.")
     if coupled:
-        V, I, S = dev.sweep(sweep, vals, bias=fixed, energy_relaxation=tau * 1e-12)
+        V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal,
+                            energy_relaxation=tau * 1e-12)
     else:
         V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal)
     last = S[-1]
@@ -1133,6 +1181,8 @@ def run_transistor(spec):
            "leak": leak, "hot": hot, "warnings": info["warn"]}
     if tau is not None:
         out["sources"].append(f"energy relaxation time {tau:g} ps: yours")
+    if thermal and max(out["tmax"]) > _TOO_HOT:
+        out["warnings"] = out["warnings"] + [_too_hot_note(max(out["tmax"]))]
     return out
 
 
@@ -1285,13 +1335,206 @@ def run_lag(spec):
             + info["sources"], "warnings": info["warn"]}
 
 
+_TOO_HOT = 1000.0
+
+
+def _too_hot_note(T):
+    return (f"The hottest point reaches {T:.0f} K. Check that the material numbers "
+            "you rely on still hold that hot, and read the result as 'far too hot' "
+            "rather than as a prediction.")
+
+
+def run_runaway(spec):
+    """Thermal runaway: raise the drain voltage with self-heating until no
+    steady temperature is left (new in 0.23.0)."""
+    dev, info = _transistor_device(spec)
+    model, heat_src = _fet_thermal(spec, info)
+    r = spec.get("runaway") or {}
+    vg = _num(r, "gate", 0.0, -60.0, 10.0, "the gate voltage")
+    vmax = _num(r, "to", 50.0, 0.5, 2000.0, "the highest drain voltage")
+    step = _num(r, "step", 5.0, 0.01, 500.0, "the voltage step")
+    n = int(math.floor(vmax / step + 1e-9))
+    if n < 1 or n > 80:
+        raise SpecError("Use between 1 and 80 steps.")
+    stop = _num(r, "stop_K", _TOO_HOT, 310.0, 5000.0, "the temperature to stop at (K)")
+    vals = step * np.arange(1, n + 1)
+    res = dev.thermal_runaway("drain", vals, model, bias={"gate": vg}, stop_above=stop)
+    warn = list(info["warn"])
+    if len(res["hottest"]) and float(np.max(res["hottest"])) > _TOO_HOT:
+        warn.append(_too_hot_note(float(np.max(res["hottest"]))))
+    return {"stable": res["stable"], "runaway": res["runaway"], "too_hot": res["too_hot"],
+            "stop_K": stop, "voltages": res["voltages"].tolist(),
+            "hottest": res["hottest"].tolist(), "power": res["power"].tolist(), "gate": vg,
+            "sources": info["sources"] + heat_src, "warnings": warn}
+
+
+def _vertical_device(spec, layers, ic, T, dz, top, btbt):
+    """The stack as a vertical device (contacts on top and at the bottom) for
+    an I-V curve with band-to-band tunneling (new in 0.23.0)."""
+    from ..device import BandToBand, Device, Electrode, Mobility, Surface, Trap
+    t = spec.get("transport") or {}
+    src = str(t.get("source", "")).strip()
+    mu_n = _num(t, "mobility_n", what="the electron mobility (cm2/Vs)", lo=1e-6)
+    mu_p = _num(t, "mobility_p", what="the hole mobility (cm2/Vs)", lo=1e-6)
+    hm = _num(t, "hole_mass", what="the hole mass (in electron masses)", lo=1e-3)
+    edges = np.cumsum([0.0] + [L.thickness for L in layers])
+    n = max(int(math.ceil(edges[-1] / dz)), 10)
+    if n > 4000:
+        raise SpecError("The grid would have more than 4000 points; use a larger "
+                        "grid step.")
+    z = np.unique(np.round(np.concatenate([np.linspace(0, edges[-1], n + 1), edges]), 9))
+    if top.kind == "schottky":
+        el_top = Electrode("top", "schottky", 0, 20, barrier=top.barrier,
+                           thermionic=bool(top.thermionic))
+    else:
+        el_top = Electrode("top", "ohmic", 0, 20)
+    traps = []
+    if t.get("lifetime") not in (None, ""):
+        tau = _num(t, "lifetime", lo=1e-18, what="the lifetime (s)")
+        # Shockley-Read-Hall through a midgap level with that lifetime; the
+        # level's density is far below any doping, so it holds no charge
+        Nt = 1e10
+        for lab in sorted({L.label for L in layers}):
+            eg = next(L.material.eg for L in layers if L.label == lab)
+            traps.append(Trap("acceptor", 0.5 * eg, "ec", Nt, 1.0 / (tau * Nt),
+                              1.0 / (tau * Nt), f"lifetime {tau:g} s: {src}", lab))
+    kw = {}
+    if btbt:
+        kw["band_to_band"] = BandToBand(TRANSISTOR_SOURCES["btbt"], model="nonlocal")
+    return Device(layers, 20.0, [el_top, Electrode("bottom", "ohmic", 0, 20, face="bottom")],
+                  Mobility(mu_n, src), Surface("pinned", barrier=1.0),
+                  grid=dict(x=np.array([0.0, 10.0, 20.0]), z=z), temperature_K=T,
+                  interfaces=ic, hole_mass=hm, hole_mobility=Mobility(mu_p, src),
+                  traps=traps, **kw)
+
+
+_PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thickness=50 "
+                 "mode=conformal', 'etch SiN=1 time=60 mode=directional from=100 to=900', "
+                 "'implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900', "
+                 "'anneal time=60 temperature=1300 D0=1e-4 Ea=3', 'oxidize material=Si "
+                 "oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44'")
+
+
+def run_process(spec):
+    """Build a cross-section from process steps (new in 0.23.0): deposition,
+    etching, oxidation, implants and anneals on a grid of square cells."""
+    from ..process import Anneal, Implant, Structure
+    p = spec.get("process") or {}
+    src = str(p.get("source", "")).strip()
+    if not src:
+        raise SpecError("Please say where your process numbers come from (rates, "
+                        "ranges, diffusivities): the 'source' box.")
+    W = _num(p, "width", 1000.0, 10.0, 20000.0, "the width (nm)")
+    H = _num(p, "height", 400.0, 10.0, 20000.0, "the height (nm)")
+    h = _num(p, "cell", 5.0, 0.1, 1000.0, "the cell size (nm)")
+    sub = str(p.get("substrate") or "GaN").strip()
+    s_top = _num(p, "substrate_top", 300.0, 0.0, H, "the top of the wafer (nm)")
+    if W / h > 1200 or H / h > 1200:
+        raise SpecError("That is more than 1200 cells along a side; use larger cells.")
+    try:
+        st = Structure(W, 0.0, H, h, sub, s_top)
+    except ValueError as e:
+        raise SpecError(f"The width and height must be whole numbers of cells ({e}).")
+    lines = [ln.split("#")[0].strip() for ln in str(p.get("recipe") or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        raise SpecError("Write at least one step: " + _PROCESS_HELP + ".")
+    if len(lines) > 40:
+        raise SpecError("At most 40 steps.")
+    oxide_x = None
+    for k, ln in enumerate(lines, 1):
+        words = ln.split()
+        kind, args = words[0].lower(), {}
+        for w in words[1:]:
+            if "=" not in w:
+                raise SpecError(f"Step {k}: '{w}' should be name=value ({_PROCESS_HELP}).")
+            a, b = w.split("=", 1)
+            args[a] = b
+
+        def num(name, default=None, lo=None, hi=None):
+            if name not in args:
+                if default is None:
+                    raise SpecError(f"Step {k} ({kind}) needs {name}=...")
+                return default
+            try:
+                v = float(args[name])
+            except ValueError:
+                raise SpecError(f"Step {k}: {name} must be a number.")
+            if not math.isfinite(v) or (lo is not None and v < lo) or (hi is not None and v > hi):
+                raise SpecError(f"Step {k}: {name}={args[name]} is out of range.")
+            return v
+        win = None
+        if "from" in args or "to" in args:
+            win = (num("from", 0.0, 0.0, W), num("to", W, 0.0, W))
+            if win[1] <= win[0]:
+                raise SpecError(f"Step {k}: 'to' must be larger than 'from'.")
+        try:
+            if kind == "deposit":
+                mat = args.get("material")
+                if not mat:
+                    raise SpecError(f"Step {k}: give material=...")
+                mode = args.get("mode", "conformal")
+                nd = num("donors", 0.0, 0.0)
+                na = num("acceptors", 0.0, 0.0)
+                st.deposit(mat, num("thickness", lo=1e-6), mode=mode, window=win,
+                           semiconductor=args.get("semiconductor", "no") == "yes",
+                           donors=nd, acceptors=na)
+            elif kind == "etch":
+                rates = {a: num(a, lo=0.0) for a in args if a not in ("time", "mode", "from", "to")}
+                if not rates:
+                    raise SpecError(f"Step {k}: give each material's rate, like SiN=1 (nm/s).")
+                st.etch(rates, num("time", lo=1e-12), mode=args.get("mode", "isotropic"),
+                        window=win)
+            elif kind == "implant":
+                sp = args.get("species", "donor")
+                st.implant(Implant(sp, num("dose", lo=1e-30), num("range", lo=0.0),
+                                   num("straggle", lo=1e-6), src, 0.0,
+                                   lateral_straggle_nm=num("lateral", 0.0, 0.0) or None,
+                                   window=win, activation=num("activation", 1.0, 0.0, 1.0)))
+            elif kind == "anneal":
+                st.anneal(Anneal(num("time", lo=1e-12), num("temperature", lo=1.0),
+                                 num("D0", lo=1e-300), num("Ea", lo=0.0), src,
+                                 species=args.get("species", "both")))
+            elif kind == "oxidize":
+                mat, ox = args.get("material", "Si"), args.get("oxide", "SiO2")
+                oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
+                                     num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
+                                     src)
+            else:
+                raise SpecError(f"Step {k}: unknown step '{kind}' ({_PROCESS_HELP}).")
+        except SpecError:
+            raise
+        except ValueError as e:
+            raise SpecError(f"Step {k} ({kind}): {e}")
+    mats = sorted({m for m in st.mat.ravel().tolist() if m is not None})
+    code = {m: i for i, m in enumerate(mats)}
+    # at most 240 x 120 pixels in the picture
+    fx = max(1, int(math.ceil(st.xc.size / 240)))
+    fz = max(1, int(math.ceil(st.zc.size / 120)))
+    pic = [[(-1 if st.mat[i, k] is None else code[st.mat[i, k]])
+            for k in range(0, st.zc.size, fz)] for i in range(0, st.xc.size, fx)]
+    dop = np.log10(np.maximum(st.donors + st.acceptors, 1.0))
+    dmap = [[float(dop[i, k]) for k in range(0, st.zc.size, fz)]
+            for i in range(0, st.xc.size, fx)]
+    xm = W / 2
+    return {"materials": mats, "picture": pic, "doping_log10": dmap,
+            "width": W, "height": H,
+            "areas": {m: st.area(m) for m in mats},
+            "thickness_center": {m: st.thickness(m, xm) for m in mats},
+            "donor_dose": float(st.donors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
+            "acceptor_dose": float(st.acceptors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
+            "oxide_exact": None if oxide_x is None else float(np.max(oxide_x)),
+            "steps": len(lines), "sources": [src], "warnings": []}
+
+
 ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "electrons": run_electrons, "device": run_device,
            "uncertainty": run_uncertainty, "line_charge": run_line_charge,
            "plan": run_plan, "code": python_code, "fit": run_fit,
            "design": run_design, "cross": run_cross,
            "transistor": run_transistor, "lag": run_lag, "rf": run_rf,
-           "breakdown": run_breakdown, "pulse": run_pulse}
+           "breakdown": run_breakdown, "pulse": run_pulse, "runaway": run_runaway,
+           "process": run_process}
 
 
 def _plain(e):

@@ -202,6 +202,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <label id="qBox" style="color:var(--ink)"><input type="checkbox" id="devQuantum"> Treat the electrons with quantum mechanics (more accurate, about ten times slower) <span class="help" title="The quick C-V treats the electrons as a simple gas. Ticking this solves for their quantum states at every voltage, which is closer to a real device. The two usually differ by a few percent.">?</span></label>
     <p class="note hidden" id="leakNote">Gate leakage counts electrons that pass over the energy step (thermionic emission) and through the barrier (tunneling), using the bands of the C-V model. It assumes an ideal barrier: real gates often leak more, through defects. Below the switch-off voltage the model's bands stop changing, so trust it above that voltage. No transport numbers are needed.</p>
     <label id="teBox" class="hidden" style="color:var(--ink)"><input type="checkbox" id="devTE" checked> Let electrons cross the metal by thermionic emission (realistic; untick for the simpler fixed-density contact)</label>
+    <label id="btBox" class="hidden" style="color:var(--ink)"><input type="checkbox" id="devBT"> Include tunneling from band to band (tunnel junctions, Zener current) <span class="help" title="Electrons can tunnel straight from the valence band on one side of a junction to the conduction band on the other when the bands are bent hard enough, as in heavily doped p-n junctions. With this ticked the app follows that tunneling through the real band profile at every energy; in a tunnel (Esaki) diode the forward current then rises, falls again and rises once more. It uses the electron mass of each layer and your hole mass. Slower: about a second per voltage.">?</span></label>
     <p class="note" id="cvNote">C-V needs none of the numbers below. The electrons stay connected to the side contacts and only the gate voltage changes. Holes are left out, because a quick sweep cannot create them in these materials.</p>
     <div id="trBox">
     <h3>Transport numbers (yours)</h3>
@@ -322,9 +323,10 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="fetGamma">How fast it falls when hot (power of temperature)</label><input id="fetGamma" type="text" inputmode="decimal" value="2.35"></div>
       <div><label for="fetVs">Top speed (cm/s) <span class="help" title="Leave it at auto to take it from the electron density, with the formula of Bajaj et al. (2015), which their pulsed measurements bore out: denser electron layers saturate at a lower speed.">?</span></label><input id="fetVs" type="text" inputmode="decimal" value="auto"></div>
       <div><label for="fetMuSrc">Where these come from (optional)</label><input id="fetMuSrc" type="text" placeholder="built-in sources if empty"></div>
-      <div><label for="fetHotC"><input type="checkbox" id="fetHotC"> Let hot electrons change the current <span class="help" title="With this ticked (and an energy loss time), the app solves the electrons' energy together with the current (the hydrodynamic model): hot electrons diffuse and keep their speed for a moment where the field jumps, so the current can be a little higher than without. Takes several times longer. Not together with self-heating.">?</span></label></div>
+      <div><label for="fetHotC"><input type="checkbox" id="fetHotC"> Let hot electrons change the current <span class="help" title="With this ticked (and an energy loss time), the app solves the electrons' energy together with the current (the hydrodynamic model): hot electrons diffuse and keep their speed for a moment where the field jumps, so the current can be a little higher than without. Takes several times longer. Works together with self-heating.">?</span></label></div>
       <div><label for="fetTau">Energy loss time for hot electrons (ps, optional) <span class="help" title="Fill this in to see how hot the electrons get (their temperature can be far above the crystal's). It is how fast hot electrons hand their energy to the crystal. E. Tiras et al. (2012) measured 0.47 ps at 250 K in AlGaN/AlN/GaN. Use a value for your own material if you have one.">?</span></label><input id="fetTau" type="text" inputmode="decimal" placeholder="for example 0.47"></div>
     </div>
+    <label style="color:var(--ink)"><input type="checkbox" id="fetTE"> Let electrons cross the barrier step by thermionic emission <span class="help" title="At the sharp step between the barrier and the base, electrons can only pass by having enough energy to go over it. Ticking this treats that step with thermionic emission instead of plain drift and diffusion. It matters most for current across the barrier, for example gate leakage paths.">?</span></label>
     <label style="color:var(--ink)"><input type="checkbox" id="fetHeat"> Include self-heating (the current warms the device, which slows the electrons) <span class="help" title="The heat made by the current flows down through the base and the substrate to a heat sink at the room temperature you set. The sides are treated as the middle between identical fingers, so the finger pitch sets how far the heat can spread.">?</span></label>
     <div class="grid2 hidden" id="fetHeatBox">
       <div><label for="fetSub">Substrate</label><select id="fetSub"><option value="SiC">Silicon carbide (4H-SiC)</option><option value="custom">My own</option></select></div>
@@ -333,6 +335,8 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="fetTbr">Boundary resistance under the base (m² K/W, optional)</label><input id="fetTbr" type="text" inputmode="decimal" placeholder="for example 1e-8"></div>
       <div class="fetCustom hidden"><label for="fetSubK">Its heat conductivity at 300 K (W/m/K)</label><input id="fetSubK" type="text" inputmode="decimal"></div>
       <div class="fetCustom hidden"><label for="fetSubSrc">Where that comes from</label><input id="fetSubSrc" type="text"></div>
+      <div style="grid-column:1/-1"><label><input type="checkbox" id="fetFullT"> Let the band gap and the leakage follow the temperature <span class="help" title="Normally only the mobility feels the heat. Ticking this lets the temperature also shrink the band gap (cited Varshni numbers of each layer) and change how many carriers there are, so leakage grows as the device warms. A leaky device can then heat itself into runaway. The gap change is shared evenly between the two bands, an assumption.">?</span></label></div>
+      <div style="grid-column:1/-1"><label><input type="checkbox" id="fetPelt"> Include Peltier and Thomson heat <span class="help" title="Besides the ordinary heat of the current, carriers carry heat with them: a contact or a junction can warm or cool where they cross it (Peltier), and current along a temperature difference adds or takes heat (Thomson). The total stays the same; only where the heat appears changes. In the dense electron layer the heat each electron carries uses a simple form that comes out too small.">?</span></label></div>
     </div>
     <p><button class="primary" id="runFet">Work out the currents</button> <span class="note">About 10 to 60 seconds.</span></p>
     <div id="outFet"></div>
@@ -359,6 +363,16 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <p><button id="runBd">Find the breakdown voltage</button> <span class="note">A few minutes.</span></p>
     <div id="outBd"></div>
     <canvas id="cvBd" class="hidden" aria-label="Ionization against drain voltage"></canvas>
+    <h3>Thermal runaway <span class="help" title="With self-heating, the app raises the drain voltage step by step. Warmer devices usually carry less current, which keeps the heating in check; but if the current grows with temperature (for example leakage, with 'the band gap follows the temperature' ticked), the heat can feed itself until no steady temperature is left. The app finds that voltage. It uses the heat settings above.">?</span></h3>
+    <div class="grid2">
+      <div><label for="ruG">Gate voltage (V)</label><input id="ruG" type="text" inputmode="decimal" value="0"></div>
+      <div><label for="ruTo">Highest drain voltage to try (V)</label><input id="ruTo" type="text" inputmode="decimal" value="30"></div>
+      <div><label for="ruStep">Step (V)</label><input id="ruStep" type="text" inputmode="decimal" value="3"></div>
+      <div><label for="ruStop">Stop once the hottest point passes (K) <span class="help" title="A design that is already this hot is broken in practice, so the app stops there instead of spending minutes on higher voltages.">?</span></label><input id="ruStop" type="text" inputmode="decimal" value="1000"></div>
+    </div>
+    <p><button id="runRu">Look for thermal runaway</button> <span class="note">A few minutes.</span></p>
+    <div id="outRu"></div>
+    <canvas id="cvRu" class="hidden" aria-label="Hottest point against drain voltage"></canvas>
     <h3>Heating during a pulse <span class="help" title="Measurements often use short pulses so the device does not heat up. The app switches the voltages on at time zero and follows the current and the hottest temperature as the device warms. It uses the heat settings above (silicon carbide substrate).">?</span></h3>
     <div class="grid2">
       <div><label for="puG">Gate voltage (V)</label><input id="puG" type="text" inputmode="decimal" value="0"></div>
@@ -381,6 +395,29 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <p><button id="runLag">Follow the current in time</button> <span class="note">About a minute.</span></p>
     <div id="outLag"></div>
     <canvas id="cvLag" class="hidden" aria-label="Current over time"></canvas>
+  </div>
+
+  <div class="panel" id="p-process" role="tabpanel">
+    <p class="lead">Build a cross-section from process steps.</p>
+    <p>Start from a wafer and apply steps in order: put down films (deposit), remove material (etch), grow oxide (oxidize), shoot in dopants (implant) and spread them by heating (anneal). The app shows the shape and the doping that result. It works on a grid of small square cells, so curved edges look like fine stairs.</p>
+    <div class="grid2">
+      <div><label for="prW">Width (nm)</label><input id="prW" type="text" inputmode="decimal" value="1000"></div>
+      <div><label for="prH">Height of the picture (nm)</label><input id="prH" type="text" inputmode="decimal" value="400"></div>
+      <div><label for="prCell">Cell size (nm) <span class="help" title="Smaller cells follow curved edges more closely but take longer. Width and height must be whole numbers of cells.">?</span></label><input id="prCell" type="text" inputmode="decimal" value="5"></div>
+      <div><label for="prSub">Wafer material (a name)</label><input id="prSub" type="text" value="GaN"></div>
+      <div><label for="prTop">Top of the wafer (nm from the bottom)</label><input id="prTop" type="text" inputmode="decimal" value="300"></div>
+      <div><label for="prSrc">Where your process numbers come from</label><input id="prSrc" type="text" placeholder="for example: my etch-rate calibration"></div>
+    </div>
+    <label for="prRecipe">Steps, one per line <span class="help" title="deposit material=SiN thickness=50 mode=conformal (or mode=directional; from=… to=… limits it to a window; donors=… or acceptors=… per cm³ for an epitaxial layer). etch SiN=1 GaN=0.2 time=60 mode=isotropic (each material's rate in nm/s; a material not listed is not etched, so it acts as a mask; from/to limits it). implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900 (dose per cm², range and straggle in nm, from your range calculation or SIMS). anneal time=60 temperature=1300 D0=1e-4 Ea=3 (diffusivity D0 exp(-Ea/kT) in cm²/s and eV). oxidize material=Si oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44 (Deal-Grove: B in nm²/s, B/A in nm/s; 'consumed' is the part of the oxide made from the material below).">?</span></label>
+    <textarea id="prRecipe" rows="7" style="width:100%;font-family:monospace">deposit material=SiN thickness=50 mode=conformal
+etch SiN=1 time=60 mode=directional from=100 to=900
+implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900
+anneal time=60 temperature=1300 D0=1e-4 Ea=3</textarea>
+    <p class="note">The example numbers are illustrative: put in rates, ranges and diffusivities measured or calculated for your own process, and say where they come from.</p>
+    <p><button class="primary" id="runProc">Build the cross-section</button></p>
+    <div id="outProc"></div>
+    <div class="grid2"><div><label for="prShow">Picture</label><select id="prShow"><option value="mat">Materials</option><option value="dop">Doping</option></select></div></div>
+    <canvas id="cvProc" class="hidden" style="height:320px" aria-label="Process cross-section"></canvas>
   </div>
 
   <div class="panel" id="p-code" role="tabpanel">
@@ -412,7 +449,11 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <dt>Breakdown</dt><dd>At a high enough voltage, fast carriers knock new electrons loose, which knock out more, and the current runs away.</dd>
       <dt>Hot electrons</dt><dd>In a strong field electrons gain energy faster than they can pass it to the crystal, so they get much hotter than the crystal itself.</dd>
       <dt>Passivation and field plate</dt><dd>A thin insulating film over the surface, and a metal strip on it joined to the gate that spreads out the strong field next to the gate.</dd>
-      <dt>What this app does not do</dt><dd>The app builds transistors from boxes. The Python package also does curved shapes on triangle meshes, implants and anneals, electrons hopping over band steps, tunneling through barriers inside the device and between bands, and thermal runaway; see the documentation for those and for the limits.</dd>
+      <dt>Thermal runaway</dt><dd>When a device's current grows as it warms (leakage does), more heat makes more current makes more heat, until no steady temperature is left.</dd>
+      <dt>Peltier and Thomson heat</dt><dd>Carriers carry heat with them. Where they cross a contact or a junction, it warms or cools (Peltier); where the current runs along a temperature difference, a little heat is added or taken (Thomson).</dd>
+      <dt>Band-to-band tunneling and tunnel diodes</dt><dd>In a heavily doped junction the bands bend so steeply that electrons can tunnel from the valence band on one side straight into the conduction band on the other. A tunnel (Esaki) diode uses this: its forward current rises, falls and rises again.</dd>
+      <dt>Process steps</dt><dd>How a device is made: films put down (deposition), material removed (etching), oxide grown, dopants shot in (implant) and spread by heating (anneal).</dd>
+      <dt>What this app does not do</dt><dd>The app builds transistors from boxes. The Python package also does curved shapes on triangle meshes, tunneling through barriers inside the device, and devices made from the process steps; see the documentation for those and for the limits.</dd>
     </dl>
     <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
   </div>
@@ -424,7 +465,7 @@ const TOKEN = "__KPE_TOKEN__";
 let OPT = null, LAST = null;
 const $ = id => document.getElementById(id);
 const COLORS = {GaN:"var(--gan)",AlGaN:"var(--algan)",InGaN:"var(--ingan)",InAlN:"var(--inaln)",ScAlN:"var(--scaln)"};
-const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["fit","Fit my data"],["design","Design finder"],["cross","2D cross-section"],["fet","Transistor"],["code","Save and share"],["help","Help and words"]];
+const TABS = [["charges","Charges"],["electrons","Electrons"],["errors","How sure?"],["device","Voltage sweep"],["lines","Defect lines"],["fit","Fit my data"],["design","Design finder"],["cross","2D cross-section"],["fet","Transistor"],["process","Process steps"],["code","Save and share"],["help","Help and words"]];
 
 let state = {parameter_set:"pbesol-mahim2026", temperature:300, layers:[
   {material:"GaN",x:0,thickness:1000,relaxation:0,doping:"none",doping_cm3:1e16},
@@ -631,7 +672,7 @@ $("runErrors").onclick=()=>busy($("runErrors"),$("outErrors"),async()=>{
 
 $("devContact").onchange=()=>$("barrierBox").classList.toggle("hidden",$("devContact").value!=="metal");
 function devView(){ const mode=$("devMode").value, iv=mode==="iv", leak=mode==="leak", pdoped=state.layers.some(L=>L.doping==="p");
-  $("leakNote").classList.toggle("hidden",!leak); $("teBox").classList.toggle("hidden",!iv);
+  $("leakNote").classList.toggle("hidden",!leak); $("teBox").classList.toggle("hidden",!iv); $("btBox").classList.toggle("hidden",!iv);
   $("bottomBox").classList.toggle("hidden",iv||leak); $("cvNote").classList.toggle("hidden",iv||leak); $("qBox").classList.toggle("hidden",iv||leak);
   $("trBox").classList.toggle("hidden",!iv&&!(pdoped&&!leak));
   document.querySelectorAll(".ivOnly").forEach(e=>e.classList.toggle("hidden",!iv));
@@ -639,7 +680,7 @@ function devView(){ const mode=$("devMode").value, iv=mode==="iv", leak=mode==="
   if(iv&&$("vStart").value==="-6"){ $("vStart").value="-2"; $("vStop").value="2"; $("vStep").value="0.1"; } }
 $("devMode").onchange=devView;
 $("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
-  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,quantum:$("devQuantum").checked,thermionic:$("devTE").checked,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
+  const r=await call("device",{device:{mode:$("devMode").value,contact:$("devContact").value,bottom:$("devBottom").value,quantum:$("devQuantum").checked,thermionic:$("devTE").checked,btbt:$("devBT").checked,barrier:$("devBarrier").value,v_start:$("vStart").value,v_stop:$("vStop").value,v_step:$("vStep").value},
     transport:{mobility_n:$("muN").value,mobility_p:$("muP").value,hole_mass:$("mH").value,lifetime:$("tau").value,source:$("trSrc").value}}); const out=$("outDevice");
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
   out.innerHTML=warnings(r);
@@ -659,7 +700,7 @@ $("runDevice").onclick=()=>busy($("runDevice"),$("outDevice"),async()=>{
     plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"Gate current size (A/cm²)",dots:true}],{xlabel:"Gate voltage (V)",ylabel:"A per cm²",logy:true});
     $("roDev").dataset.v=JSON.stringify(LAST.rows); }
   else { LAST={name:"iv",cols:["voltage_V","current_A_per_cm2"],rows:r.v.map((v,i)=>[v,r.j_A_cm2[i]])};
-    const jl=r.j_A_cm2[r.j_A_cm2.length-1]; $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> at ${fmt(r.v[r.v.length-1])} V about ${sci(Math.abs(jl))} A flows through each cm². The plot uses a log scale, so each grid line is ten times more current.</div>`;
+    const jl=r.j_A_cm2[r.j_A_cm2.length-1]; $("outDevice").innerHTML+=`<div class="summary"><b>In short:</b> at ${fmt(r.v[r.v.length-1])} V about ${sci(Math.abs(jl))} A flows through each cm². The plot uses a log scale, so each grid line is ten times more current.${r.btbt?" Tunneling from band to band is included.":""}</div>`+(r.sources?`<details><summary class="small">Sources</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`:"");
     plot($("cvDev"),[{x:r.v,y:r.j_A_cm2.map(Math.abs),color:"#1f6feb",label:"Current size (A/cm²)",dots:true}],{xlabel:"Top contact voltage (V)",ylabel:"A per cm²",logy:true});
     $("roDev").dataset.v=JSON.stringify(LAST.rows); } });
 hover($("cvDev"),$("roDev"),i=>{ const a=JSON.parse($("roDev").dataset.v||"[]")[i]; return a?a.map((v,k)=>(k?sci(v):fmt(v))).join("   "):""; });
@@ -745,7 +786,7 @@ function drawMap(cv,mp,ax){
   A.forEach((a,i)=>g.fillText(fmt(a),L+(i+0.5)*cw,H-Bm+16)); g.textAlign="right"; B.forEach((b,j)=>g.fillText(fmt(b),L-6,T+(B.length-0.5-j)*ch+4));
   g.fillStyle=ink; g.textAlign="center"; g.fillText(ax[0]==="x"?"Fraction":"Thickness (nm)",L+(W-L-R)/2,H-8);
   g.save(); g.translate(14,T+(H-T-Bm)/2); g.rotate(-Math.PI/2); g.fillText(ax[1]==="t"?"Thickness (nm)":"Fraction",0,0); g.restore();
-  g.textAlign="left"; g.fillText("Stronger blue = closer to what you want (grey: no electrons)",L,18);
+  g.textAlign="left"; g.fillText("Stronger blue = closer to what you want (gray: no electrons)",L,18);
 }
 
 /* ---------------- 2D cross-section ---------------- */
@@ -792,7 +833,7 @@ function fetSpec(){ return {gate_length:$("fetLg").value,gap_sg:$("fetSG").value
   heating:$("fetHeat").checked,substrate:$("fetSub").value,substrate_um:$("fetSubT").value,pitch_um:$("fetPitch").value,boundary:$("fetTbr").value,
   substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value,
   contact_res:$("fetRc").value,passivation:$("fetPas").value,passivation_eps:$("fetPasEps").value,plate:$("fetPlate").value,tau_e:$("fetTau").value,
-  hot_coupled:$("fetHotC").checked}; }
+  hot_coupled:$("fetHotC").checked,thermionic:$("fetTE").checked,full_temp:$("fetFullT").checked,peltier:$("fetPelt").checked}; }
 $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   const r=await call("transistor",{device:{barrier:$("devBarrier").value},transistor:fetSpec()}); const out=$("outFet");
   if(r.error){ out.innerHTML=msg("err",r.error); ["cvFet","cvFetMap"].forEach(c=>$(c).classList.add("hidden")); return; }
@@ -883,6 +924,56 @@ $("runPulse").onclick=()=>busy($("runPulse"),$("outPulse"),async()=>{
   const lt=r.times.map(t=>Math.log10(t));
   plot($("cvPulse"),[{x:lt,y:r.drain,color:"#1f6feb",label:"Drain current (A/mm)",dots:true},{x:lt,y:r.tmax,color:"#e5534b",label:"Hottest point (K)",right:true}],{xlabel:"Time after switching on: power of ten of seconds (-9 = 1 ns, -6 = 1 µs)",ylabel:"Drain current (A per mm)",y2:true,y2label:"Temperature (K)"});
 });
+$("runRu").onclick=()=>busy($("runRu"),$("outRu"),async()=>{
+  const r=await call("runaway",Object.assign(fetBase(),{runaway:{gate:$("ruG").value,to:$("ruTo").value,step:$("ruStep").value,stop_K:$("ruStop").value}})); const out=$("outRu");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvRu").classList.add("hidden"); return; }
+  const n=r.voltages.length;
+  const sum=r.too_hot!==null?`at ${fmt(r.too_hot)} V on the drain the hottest point already reaches ${fmt(r.hottest[n-1])} K, past the ${fmt(r.stop_K)} K you set, so the app stopped there. No runaway up to that voltage.`
+    :r.runaway!==null?`the device holds a steady temperature up to ${fmt(r.stable)} V on the drain (hottest point ${fmt(r.hottest[n-1])} K), but at ${fmt(r.runaway)} V there is none left: the heat feeds itself (thermal runaway).`
+    :`no runaway up to ${fmt(r.stable)} V on the drain; the hottest point reaches ${fmt(r.hottest[n-1])} K there.`;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+srcList(r);
+  LAST={name:"thermal_runaway",cols:["drain_V","hottest_K","power_W_per_mm"],rows:r.voltages.map((v,i)=>[v,r.hottest[i],r.power[i]])};
+  $("cvRu").classList.remove("hidden");
+  plot($("cvRu"),[{x:r.voltages,y:r.hottest,color:"#e5534b",label:"Hottest point (K)",dots:true}],{xlabel:"Drain voltage (V)",ylabel:"Temperature (K)",vlines:r.runaway!==null?[r.runaway]:[]});
+});
+/* ---------------- process steps ---------------- */
+let PROC=null;
+const PCOL=["#8b6f47","#4c9be8","#e0a33a","#7fbf7f","#c76fd8","#e5534b","#5ac8c8","#a0a0a0"];
+$("runProc").onclick=()=>busy($("runProc"),$("outProc"),async()=>{
+  const r=await call("process",{process:{width:$("prW").value,height:$("prH").value,cell:$("prCell").value,substrate:$("prSub").value,substrate_top:$("prTop").value,source:$("prSrc").value,recipe:$("prRecipe").value}});
+  const out=$("outProc");
+  if(r.error){ out.innerHTML=msg("err",r.error); $("cvProc").classList.add("hidden"); return; }
+  PROC=r;
+  const th=Object.entries(r.thickness_center).filter(a=>a[1]>0).map(a=>`${esc(a[0])} ${fmt(a[1])} nm`).join(", ");
+  let sum=`after ${r.steps} step${r.steps>1?"s":""}, the middle of the cross-section holds ${th||"nothing"}.`;
+  if(r.donor_dose>0) sum+=` Donors: ${sci(r.donor_dose)} per cm² on average over the width.`;
+  if(r.acceptor_dose>0) sum+=` Acceptors: ${sci(r.acceptor_dose)} per cm² on average.`;
+  if(r.oxide_exact!=null) sum+=` The thickest oxide grown is ${fmt(r.oxide_exact)} nm (the cells round it to the cell size).`;
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
+    `<p class="small">Areas: ${Object.entries(r.areas).map(a=>`${esc(a[0])} ${sci(a[1])} nm²`).join(", ")}</p>`+srcList(r);
+  LAST={name:"process_thickness",cols:["material","thickness_at_center_nm","area_nm2"],rows:r.materials.map(m=>[m,r.thickness_center[m],r.areas[m]])};
+  $("cvProc").classList.remove("hidden"); drawProc();
+});
+$("prShow").onchange=()=>{ if(PROC) drawProc(); };
+function drawProc(){
+  const r=PROC, cv=$("cvProc"), show=$("prShow").value;
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.body), ink=css.getPropertyValue("--ink"), muted=css.getPropertyValue("--muted");
+  const L=64,R=130,T=24,B=44, nx=r.picture.length, nz=r.picture[0].length, cw=(W-L-R)/nx, ch=(H-T-B)/nz;
+  let lo=Infinity,hi=-Infinity; if(show==="dop"){ r.doping_log10.forEach(row=>row.forEach(v=>{ if(v>0.5){ if(v<lo) lo=v; if(v>hi) hi=v; } })); if(!isFinite(lo)){lo=0;hi=1;} lo=Math.max(lo,hi-6); }
+  const col=t=>{ t=Math.min(1,Math.max(0,t)); const a=[[13,8,135],[126,3,168],[204,71,120],[248,149,64],[240,249,33]]; const k=Math.min(3,Math.floor(t*4)), f=t*4-k; const c=a[k].map((v,i)=>Math.round(v+(a[k+1][i]-v)*f)); return `rgb(${c})`; };
+  for(let i=0;i<nx;i++) for(let j=0;j<nz;j++){ const m=r.picture[i][j]; if(m<0) continue;
+    g.fillStyle=show==="mat"?PCOL[m%PCOL.length]:(r.doping_log10[i][j]>0.5&&r.doping_log10[i][j]>=lo?col((r.doping_log10[i][j]-lo)/(hi-lo||1)):"#cccccc");
+    g.fillRect(L+i*cw,T+(nz-1-j)*ch,cw+0.6,ch+0.6); }
+  g.font="12px system-ui,sans-serif"; g.fillStyle=muted; g.textAlign="center"; niceTicks(0,r.width).forEach(t=>g.fillText(fmt(t),L+t/r.width*(W-L-R),H-B+16));
+  g.textAlign="right"; niceTicks(0,r.height).forEach(t=>g.fillText(fmt(t),L-6,T+(1-t/r.height)*(H-T-B)+4));
+  g.fillStyle=ink; g.textAlign="center"; g.fillText("Position (nm)",L+(W-L-R)/2,H-8);
+  g.save(); g.translate(14,T+(H-T-B)/2); g.rotate(-Math.PI/2); g.fillText("Height (nm)",0,0); g.restore();
+  g.textAlign="left";
+  if(show==="mat"){ r.materials.forEach((m,k)=>{ g.fillStyle=PCOL[k%PCOL.length]; g.fillRect(W-R+16,T+k*20,14,14); g.fillStyle=ink; g.fillText(m,W-R+36,T+k*20+11); }); }
+  else { g.fillStyle=muted; g.fillText("gray: below the scale",L,T-8); for(let k=0;k<=40;k++){ g.fillStyle=col(k/40); g.fillRect(W-R+16,T+(1-k/40)*(H-T-B)-((H-T-B)/40),14,(H-T-B)/40+1); }
+    g.fillStyle=muted; g.fillText(sci(Math.pow(10,hi),1),W-R+34,T+8); g.fillText(sci(Math.pow(10,lo),1),W-R+34,H-B); g.fillStyle=ink; g.fillText("dopants per cm³",W-R+16,H-B+30); }
+}
 $("runLag").onclick=()=>busy($("runLag"),$("outLag"),async()=>{
   const r=await call("lag",{device:{barrier:$("devBarrier").value},transistor:fetSpec(),lag:{stress_drain:$("lagSD").value,stress_gate:$("lagSG").value,drain:$("lagD").value,gate:$("lagG").value,density:$("lagN").value,clean:$("lagClean").value}});
   const out=$("outLag");
