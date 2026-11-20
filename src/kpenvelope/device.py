@@ -607,7 +607,11 @@ class QuantumChannel:
     is updated from the new bands, and the two are repeated until Lambda
     changes by less than `tol` eV wherever the electrons are. Outside the
     window, and at electrode and surface nodes, Lambda = 0 (classical
-    electrons). Holes are classical. x_range=None takes every column
+    electrons). holes=(m_z, m_inplane, reference) (new in 0.25.0) treats
+    the holes the same way, with one band of mass m_z across the layers
+    and the 2D density-of-states mass m_inplane, both yours with their
+    source (electrons=False leaves the electrons classical); their quantum
+    potential lowers the holes' band edge. x_range=None takes every column
     except those under an ohmic contact on the top face (the implanted,
     three-dimensional electron gas there needs no confinement). Lambda
     changes from one column to the next as the bands do; where the window
@@ -628,6 +632,8 @@ class QuantumChannel:
     tol: float = 1e-5
     max_outer: int = 200
     max_shift: float = 1.0
+    electrons: bool = True
+    holes: tuple = None
 
     def __post_init__(self):
         w = tuple(float(v) for v in self.window)
@@ -643,6 +649,15 @@ class QuantumChannel:
             raise ValueError("QuantumChannel.n_states must be an integer >= 1")
         if not (self.tol > 0 and self.max_shift > 0 and int(self.max_outer) >= 1):
             raise ValueError("QuantumChannel: tol, max_shift and max_outer must be > 0")
+        if self.holes is not None:
+            h = tuple(self.holes)
+            if not (len(h) == 3 and h[0] > 0 and h[1] > 0 and isinstance(h[2], str)
+                    and h[2].strip()):
+                raise ValueError("QuantumChannel.holes must be (mass along z, in-plane "
+                                 "mass, reference), masses in m0")
+            object.__setattr__(self, "holes", (float(h[0]), float(h[1]), h[2]))
+        if not (self.electrons or self.holes is not None):
+            raise ValueError("QuantumChannel needs electrons=True or holes=(...)")
 
 
 _H2M = HBAR ** 2 / (2.0 * M0 * QE) * 1e18            # hbar^2 / 2 m0, eV nm^2
@@ -915,6 +930,7 @@ class Device:
 
     _qc = None
     _qL = None
+    _qLp = None
     _q_inner = False
 
     def __init__(self, layers, width: float, electrodes, mobility, surface,
@@ -1848,8 +1864,9 @@ class Device:
         nodes each (a tensor column's points are its nodes)."""
         bt = self._bt
         psi, fn, fp, _ = self._unpack(x)
-        Ec = self.Ec0 - psi
-        Ev = Ec - self.Eg
+        Egr = self._eg_real()
+        Ec = self._ec0_real() - psi
+        Ev = Ec - Egr
         kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
         Gn = np.zeros(self.N)
         Gp = np.zeros(self.N)
@@ -1864,7 +1881,7 @@ class Device:
 
             def at(v):
                 return wa * v[a_] + wb * v[b_]
-            ev, eg, mr = at(Ev), at(self.Eg), at(bt["mr"])
+            ev, eg, mr = at(Ev), at(Egr), at(bt["mr"])
             z = line["s"] * 1e-9                               # m
             lo = float(np.min((ev + eg)[ok]))
             hi = float(np.max(ev[ok]))
@@ -2014,7 +2031,7 @@ class Device:
         bt = self._bt
         Ecomp = self._node_field(psi)
         F = np.sqrt(np.sum(Ecomp ** 2, axis=1))
-        G, _ = BandToBand.rate(F, self.Eg, bt["mr"])
+        G, _ = BandToBand.rate(F, self._eg_real(), bt["mr"])
         phi = 1.0 if spread is None else -np.expm1(-abs(spread) / self.kT)
         return G * self.vol * 1e-21 * bt["mask"] * phi
     def _map_edge_cells(self, cshape, cell_semi, cell_prod):
@@ -3475,10 +3492,9 @@ class Device:
             return
         if not isinstance(qc, QuantumChannel):
             raise ValueError("quantum must be a QuantumChannel")
-        if self._bt is not None:
-            raise ValueError("QuantumChannel does not run together with band_to_band "
-                             "(the tunneling uses the band gap, which the quantum "
-                             "correction shifts)")
+        if qc.holes is not None and not self.holes:
+            raise ValueError("QuantumChannel(holes=...) needs holes in the device "
+                             "(hole_mass and hole_mobility)")
         nz = self.axes[-1].size
         z = self.axes[-1]
         excl = np.zeros(self.N, bool)
@@ -3537,26 +3553,46 @@ class Device:
                 raise ValueError("a tunnel barrier lies inside the QuantumChannel window")
         self._qc, self._qcols, self._qmask = qc, cols, qn
         self._qL = np.zeros(self.N)
+        self._qLp = np.zeros(self.N)
         self._qbase = dict(Ec0=self.Ec0.copy(), Eg=self.Eg.copy(),
-                           en=[tr["en"] for tr in self._traps])
+                           en=[tr["en"] for tr in self._traps],
+                           ep=[tr["ep"] for tr in self._traps])
 
     def _add_q(self):
         """Add the quantum potential to freshly set band arrays (the
         electrons' band edge moves by Lambda, the holes' does not, and a
         trap level keeps its place relative to the real bands)."""
         Lam = self._qL
-        if Lam is None or not np.any(Lam):
+        if Lam is None:
+            return
+        Lp = self._qLp if self._qLp is not None else np.zeros(self.N)
+        if not (np.any(Lam) or np.any(Lp)):
             return
         self.Ec0 = self.Ec0 + Lam
-        self.Eg = self.Eg + Lam
+        self.Eg = self.Eg + Lam + Lp
         f = np.exp(-Lam / self.kT)
+        fp_ = np.exp(-Lp / self.kT)
         for tr in self._traps:
             tr["en"] = tr["en"] * f
+            tr["ep"] = tr["ep"] * fp_
 
-    def _apply_q(self, Lam):
-        """Set the quantum potential to Lam (eV per node)."""
+    def _ec0_real(self):
+        """E_c0 without the electrons' quantum potential."""
+        return self.Ec0 if self._qL is None else self.Ec0 - self._qL
+
+    def _eg_real(self):
+        """The band gap without the quantum potentials."""
+        if self._qL is None:
+            return self.Eg
+        return self.Eg - self._qL - (0.0 if self._qLp is None else self._qLp)
+
+    def _apply_q(self, Lam, Lamp=None):
+        """Set the quantum potentials to Lam (electrons) and Lamp (holes),
+        eV per node."""
         Lam = np.where(self._qmask, np.asarray(Lam, float).ravel(), 0.0)
         self._qL = Lam
+        self._qLp = (np.zeros(self.N) if Lamp is None else
+                     np.where(self._qmask, np.asarray(Lamp, float).ravel(), 0.0))
         self._x0 = None
         L = self._lat
         if L is not None:
@@ -3566,26 +3602,29 @@ class Device:
             return
         b = self._qbase
         self.Ec0, self.Eg = b["Ec0"].copy(), b["Eg"].copy()
-        for tr, en in zip(self._traps, b["en"]):
-            tr["en"] = en
+        for tr, en, ep in zip(self._traps, b["en"], b["ep"]):
+            tr["en"], tr["ep"] = en, ep
         self._add_q()
 
     def _use_q(self, state):
-        """Hold the quantum potential of `state` (small-signal and transient
-        analyses keep it fixed)."""
+        """Hold the quantum potentials of `state` (small-signal and
+        transient analyses keep them fixed)."""
         if self._qc is None:
             return
         if state.quantum_potential is None:
             raise ValueError("this state has no quantum potential; solve it with "
                              "this device first")
-        self._apply_q(state.quantum_potential.ravel())
+        hp = (state.quantum or {}).get("hole_potential")
+        self._apply_q(state.quantum_potential.ravel(), None if hp is None else hp.ravel())
 
-    def _q_target(self, x):
-        """The quantum potential that makes the classical density equal the
-        confined density of the bands of x, column by column."""
+    def _q_columns(self, x, carrier):
+        """Confined density along every column for the bands of x: the
+        quantum potential that makes the classical density equal it, the
+        nodes where it holds carriers, and the levels and sheets."""
         qc = self._qc
-        psi, fn, _, _ = self._unpack(x)
-        Ec = (self.Ec0 - self._qL) - psi                  # the real band edge
+        psi, fn, fp, _ = self._unpack(x)
+        Ec = self._ec0_real() - psi                        # the real band edges
+        Ev = Ec - self._eg_real()
         kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
         target = np.zeros(self.N)
         weight = np.zeros(self.N, bool)
@@ -3593,51 +3632,70 @@ class Device:
         for col in self._qcols:
             nd = col["nodes"]
             kt = kT[nd]
-            E, p2, w = column_states(col["z"], Ec[nd], col["mass"], qc.n_states,
-                                     col["zl"], col["zr"],
-                                     e_max=float(np.max(fn[nd]) + 40.0 * np.max(kt)))
-            mi = (w[:, None] * p2 * col["mass"][:, None]).sum(0)
-            occ = kt[:, None] * np.logaddexp(0.0, (fn[nd][:, None] - E[None, :]) / kt[:, None])
+            if carrier == "n":
+                mass, mass_xy, U, F = col["mass"], None, Ec[nd], fn[nd]
+                e_max = float(np.max(F) + 40.0 * np.max(kt))
+            else:
+                # holes: energies counted downward from the valence band
+                mass = np.full(nd.size, qc.holes[0])
+                mass_xy, U, F = qc.holes[1], -Ev[nd], -fp[nd]
+                e_max = float(np.max(F) + 40.0 * np.max(kt))
+            E, p2, w = column_states(col["z"], U, mass, qc.n_states, col["zl"], col["zr"],
+                                     e_max=e_max)
+            mi = ((w[:, None] * p2 * mass[:, None]).sum(0) if mass_xy is None
+                  else np.full(E.size, mass_xy))
+            occ = kt[:, None] * np.logaddexp(0.0, (F[:, None] - E[None, :]) / kt[:, None])
             parts = _G2D * mi[None, :] * occ * p2              # nm^-3 per state
             nq = parts.sum(1)
             if nq.max() > 0 and E.size == qc.n_states:
                 top_share = max(top_share, float((parts[:, -1] * w).sum() / (nq * w).sum()))
-            eta = self._inv_occ(nq / self.Nc[nd])
-            lam = fn[nd] - Ec[nd] - kt * eta
+            dos = self.Nc[nd] if carrier == "n" else self.Nv[nd]
+            eta = self._inv_occ(nq / dos)
+            # n = N_c F((F_n - E_c - L) / kT); p = N_v F((E_v - L_p - F_p) / kT)
+            lam = (F - U - kt * eta)
             lam = np.clip(lam, -qc.max_shift, qc.max_shift)
             target[nd] = lam
             weight[nd] = (nq > 1e-6 * max(nq.max(), 1e-30)) & (np.abs(lam) < qc.max_shift)
-            sub.append((col["x"], E))
+            sub.append((col["x"], E if carrier == "n" else -E))
             sheets.append(float((nq * w).sum() * 1e14))
         return target, weight, dict(subbands=sub, sheet_cm2=sheets, top_share=top_share)
 
+    def _q_target(self, x):
+        """Kept for the electrons alone (see `_q_columns`)."""
+        return self._q_columns(x, "n")
+
     def _solve_quantum(self, bias, guess, kw):
-        """Outer loop of the QuantumChannel: solve with Lambda fixed, update
-        Lambda from the new bands (Anderson-accelerated), until it settles."""
+        """Outer loop of the QuantumChannel: solve with the quantum
+        potentials fixed, update them from the new bands
+        (Anderson-accelerated), until they settle."""
         qc = self._qc
+        N = self.N
+        L = np.zeros(2 * N)
         if guess is not None and guess.quantum_potential is not None:
-            Lam = guess.quantum_potential.ravel().copy()
-        else:
-            Lam = np.zeros(self.N)
+            L[:N] = guess.quantum_potential.ravel()
+            hp = (guess.quantum or {}).get("hole_potential")
+            if hp is not None:
+                L[N:] = hp.ravel()
         acc = _Anderson(m=5, beta=0.6, positive=False)
         st = guess
         hist = []
-        info = None
-        good = (Lam.copy(), None)        # Lambda (and state) of the last inner solve
+        info_n = info_p = None
+        good = (L.copy(), None)          # potentials (and state) of the last inner solve
+        mask2 = np.concatenate([self._qmask & bool(qc.electrons),
+                                self._qmask & (qc.holes is not None)])
         for k in range(int(qc.max_outer)):
             for _try in range(12):
-                self._apply_q(Lam)
+                self._apply_q(L[:N], L[N:])
                 self._q_inner = True
                 try:
                     st_new = self.solve(bias, guess=st, **kw)
                     break
                 except RuntimeError:
                     base = good[0]
-                    if float(np.max(np.abs(Lam - base))) < 1e-9:
+                    if float(np.max(np.abs(L - base))) < 1e-9:
                         raise              # not the quantum potential's doing
-                    # too large a change of Lambda for Newton from here:
-                    # take half of it
-                    Lam = base + 0.5 * (Lam - base)
+                    # too large a change for Newton from here: take half of it
+                    L = base + 0.5 * (L - base)
                     acc = _Anderson(m=5, beta=0.6, positive=False)
                 finally:
                     self._q_inner = False
@@ -3646,26 +3704,99 @@ class Device:
                                    "changes of the quantum potential fail; approach "
                                    "this bias in smaller steps (sweep)")
             st = st_new
-            good = (Lam.copy(), st)
-            target, weight, info = self._q_target(st._x)
-            R = np.where(self._qmask, target - Lam, 0.0)
-            change = float(np.max(np.abs(R[weight]))) if np.any(weight) else 0.0
+            good = (L.copy(), st)
+            T = np.zeros(2 * N)
+            W = np.zeros(2 * N, bool)
+            if qc.electrons:
+                T[:N], W[:N], info_n = self._q_columns(st._x, "n")
+            if qc.holes is not None:
+                T[N:], W[N:], info_p = self._q_columns(st._x, "p")
+            R = np.where(mask2, T - L, 0.0)
+            change = float(np.max(np.abs(R[W]))) if np.any(W) else 0.0
             hist.append(change)
             if change < qc.tol:
                 break
-            plain = Lam + 0.6 * R
-            Lam = acc.step(Lam, R, plain, change)
+            plain = L + 0.6 * R
+            L = acc.step(L, R, plain, change)
         else:
             raise RuntimeError(f"the quantum channel did not settle in {qc.max_outer} "
                                f"outer iterations (last change {hist[-1]:.2e} eV)")
-        if info["top_share"] > 1e-4:
+        top = max(i_["top_share"] for i_ in (info_n, info_p) if i_ is not None)
+        if top > 1e-4:
             warnings.warn(f"QuantumChannel: the highest of the {qc.n_states} states "
-                          f"holds {100 * info['top_share']:.2g} percent of a column's "
-                          "electrons; raise n_states", RuntimeWarning, stacklevel=3)
-        st.quantum = dict(subbands=info["subbands"], sheet_cm2=info["sheet_cm2"],
-                          iterations=len(hist), last_change=hist[-1],
-                          top_state_share=info["top_share"])
+                          f"holds {100 * top:.2g} percent of a column's carriers; "
+                          "raise n_states", RuntimeWarning, stacklevel=3)
+        q = dict(iterations=len(hist), last_change=hist[-1], top_state_share=top)
+        if info_n is not None:
+            q.update(subbands=info_n["subbands"], sheet_cm2=info_n["sheet_cm2"])
+        if info_p is not None:
+            q.update(hole_subbands=info_p["subbands"], hole_sheet_cm2=info_p["sheet_cm2"],
+                     hole_potential=self._qLp.reshape(self.shape).copy())
+        st.quantum = q
         return st
+
+    def ballistic_current(self, state: DeviceState, source: str = "source",
+                          drain: str = "drain"):
+        """The ballistic limit of the drain current (new in 0.25.0): every
+        electron that passes over the top of the channel's energy barrier
+        reaches the other contact without scattering, as in the
+        top-of-the-barrier model (K. Natori, J. Appl. Phys. 76, 4879
+        (1994), doi:10.1063/1.357263; M. Lundstrom, IEEE Electron Device
+        Lett. 18, 361 (1997), doi:10.1109/55.596937).
+        Needs a state of a device with a QuantumChannel: subband i, with
+        energy E_i(x) in the columns between the two contacts and
+        state-averaged mass m_i, carries per unit width
+
+            J_i = q sqrt(2 m_i) (kT)^(3/2) / (2 pi^(3/2) hbar^2)
+                  [F_1/2((F_S - E_top) / kT) - F_1/2((F_D - E_top) / kT)],
+
+        E_top = max over x of E_i(x), F_S and F_D the electrons' Fermi
+        levels at the contacts (F_1/2 normalized, `fermi_dirac_half`). This
+        is the flux of a 2D Fermi gas over the top, each direction filled
+        from its own contact; electrons below the top do not tunnel through
+        it. The bands are those of `state` (not solved again with ballistic
+        electrons). Returns (current into the drain, A/mm in 2D, and the
+        list of (E_top, current) per subband)."""
+        if self._qc is None or not self._qc.electrons or state.quantum is None \
+                or "subbands" not in state.quantum:
+            raise ValueError("ballistic_current needs a state solved with a "
+                             "QuantumChannel for electrons")
+        if self.dim != 2:
+            raise ValueError("ballistic_current is for 2D devices")
+        es, ed = self.edict.get(source), self.edict.get(drain)
+        if es is None or ed is None:
+            raise ValueError("unknown source or drain electrode")
+        lo, hi = sorted([0.5 * (es.x0 + es.x1), 0.5 * (ed.x0 + ed.x1)])
+        psi, fn, _, _ = self._unpack(state._x)
+        self._use_q(state)
+        Ec = self._ec0_real() - psi
+        kT = KB * self.T
+        bias = dict(state.internal or state.bias)
+        FS, FD = -bias.get(source, 0.0), -bias.get(drain, 0.0)
+        cols = [c for c in self._qcols if lo < c["x"] < hi]
+        if not cols:
+            raise ValueError("no quantum columns between the source and the drain")
+        levels, masses = [], []
+        for col in cols:
+            nd = col["nodes"]
+            E, p2, w = column_states(col["z"], Ec[nd], col["mass"], self._qc.n_states,
+                                     col["zl"], col["zr"],
+                                     e_max=float(max(FS, FD) + 40.0 * kT))
+            levels.append(E)
+            masses.append((w[:, None] * p2 * col["mass"][:, None]).sum(0))
+        nsub = min(len(E) for E in levels)
+        pre = QE * math.sqrt(2.0 * M0) * (kT * QE) ** 1.5 / (2.0 * math.pi ** 1.5 * HBAR ** 2)
+        total, per = 0.0, []
+        for i in range(nsub):
+            Ei = np.array([E[i] for E in levels])
+            k = int(np.argmax(Ei))
+            Et, m = float(Ei[k]), float(masses[k][i])
+            fS = float(fermi_dirac_half((FS - Et) / kT)[0])
+            fD = float(fermi_dirac_half((FD - Et) / kT)[0])
+            J = pre * math.sqrt(m) * (fS - fD) * 1e-3                    # A/mm
+            per.append((Et, J))
+            total += J
+        return total, per
 
     def _solve_band_to_band(self, bias, guess, thermal, max_bias_step, tol, thermal_tol,
                             max_thermal_iter, energy_relaxation, rtol=1e-6, max_outer=80):

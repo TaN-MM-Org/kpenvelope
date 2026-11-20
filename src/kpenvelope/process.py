@@ -378,7 +378,7 @@ class Structure:
     # ---------------------------------------------------------- steps
     def deposit(self, material: str, thickness: float, mode: str = "conformal",
                 window=None, semiconductor: bool = False, donors: float = 0.0,
-                acceptors: float = 0.0, exponent: float = 1.0):
+                acceptors: float = 0.0, exponent: float = 1.0, sticking: float = 1.0):
         """Grow `material` by `thickness` nm on the exposed surface:
         conformal (every gas cell connected to the top whose center lies
         within thickness + h/2 of a solid cell center, the Euclidean
@@ -388,7 +388,9 @@ class Structure:
         particles from above land, see `fluxes`, with the in-plane angular
         distribution cos^exponent; thickness is what grows on a flat, open
         surface, so a trench bottom or wall that sees less of the sky gets
-        less, and overhangs shadow what lies below them). Epitaxial growth
+        less, and overhangs shadow what lies below them; sticking < 1 (new
+        in 0.25.0) re-emits the rest by the cosine law, which makes films in
+        narrow openings more even). Epitaxial growth
         of a semiconductor: give semiconductor=True and its doping as grown
         (donors, acceptors in cm^-3)."""
         if not thickness > 0:
@@ -417,8 +419,10 @@ class Structure:
         elif mode == "flux":
             if window is not None:
                 raise ValueError("mode='flux' covers the whole surface (no window)")
+            if not 0.0 < sticking <= 1.0:
+                raise ValueError("sticking must be in (0, 1]")
             self._flux_step([(float(exponent), 1.0)], float(thickness),
-                            deposit_material=material)
+                            deposit_material=material, sticking=float(sticking))
         else:
             raise ValueError("mode must be 'conformal', 'directional' or 'flux'")
         new = self.solid & ~before
@@ -427,7 +431,7 @@ class Structure:
         self.log.append(("deposit", material, thickness, mode))
 
     def etch(self, rates: dict, time: float, mode: str = "isotropic", window=None,
-             exponent: float = 1.0, beams=None):
+             exponent: float = 1.0, beams=None, sticking: float = 1.0):
         """Remove material: rates {label: nm/s} (a label not listed, or a
         rate of 0, is not etched: a mask), for `time` seconds. isotropic:
         the front starts on every surface the gas touches (within window if
@@ -443,7 +447,11 @@ class Structure:
         it sees. beams: several kinds of particle at once, a list of
         (exponent, rates), for example a neutral gas (exponent 1) and an ion
         beam (exponent 100), whose rates add. Masks are the materials with
-        no rate."""
+        no rate. sticking (new in 0.25.0): the share of the particles that
+        react where they land; the rest leave again by the cosine law
+        (`view_factors`) and land elsewhere, so with low sticking narrow
+        openings etch more evenly. The rates are those of a flat, open
+        surface."""
         if not time > 0:
             raise ValueError("time must be > 0")
         if mode == "flux":
@@ -455,7 +463,9 @@ class Structure:
                 for v in r.values():
                     if not (math.isfinite(v) and v >= 0):
                         raise ValueError("etch rates must be >= 0 (nm/s)")
-            self._flux_step(bl, float(time))
+            if not 0.0 < sticking <= 1.0:
+                raise ValueError("sticking must be in (0, 1]")
+            self._flux_step(bl, float(time), sticking=float(sticking))
             self.log.append(("etch", dict(rates), time, mode))
             return
         rate = np.zeros(self.mat.shape)
@@ -645,7 +655,155 @@ class Structure:
             out.append((int(i), int(k), int(side), max(f, 0.0)))
         return out
 
-    def _flux_step(self, beams, time, deposit_material=None):
+    def _all_faces(self):
+        """Every face between a solid cell and the open gas: (i, k, side),
+        side 0 = up, 1 = +x, 2 = -x, 3 = down, with its center and normal."""
+        sol = self.solid
+        gas = self._gas_open()
+        nx, nz = sol.shape
+        out = []
+        for side, (di, dk) in enumerate(((0, 1), (1, 0), (-1, 0), (0, -1))):
+            nb = np.zeros_like(sol)
+            if di == 1:
+                nb[:-1] = gas[1:]
+            elif di == -1:
+                nb[1:] = gas[:-1]
+            elif dk == 1:
+                nb[:, :-1] = gas[:, 1:]
+                nb[:, -1] = True                        # above the domain
+            else:
+                nb[:, 1:] = gas[:, :-1]
+            for i, k in zip(*np.nonzero(sol & nb)):
+                cx = self.xc[i] + 0.5 * di * self.h
+                cz = self.zc[k] + 0.5 * dk * self.h
+                out.append((int(i), int(k), side, cx, cz, di, dk))
+        return out
+
+    def view_factors(self, n_bins: int = 1440, points: int = 4):
+        """Diffuse (cosine-law) view factors between the exposed faces (new in
+        0.25.0): F[a, b] is the share of what face a re-emits that reaches
+        face b first, the rest leaving through the top. In the plane of the
+        cross-section a cosine emitter sends (1/2) cos(alpha) d alpha into
+        the angle alpha from its normal (the 2D crossed-strings law). Each
+        face's half-plane is cut into n_bins directions; along each, the
+        nearest solid cell (by its center) takes the bin, and the ray enters
+        it through the face it meets first. The cross-section repeats as its
+        mirror image at both sides. F is averaged over `points` points along
+        each emitting face, which makes it reciprocal (F[a, b] = F[b, a] for
+        faces of equal length) to the accuracy of that average. Returns
+        (faces, F)."""
+        faces = self._all_faces()
+        nf = len(faces)
+        index = {(f[0], f[1], f[2]): q for q, f in enumerate(faces)}
+        sol = self.solid
+        gas = self._gas_open()
+        nb = np.zeros_like(sol)
+        nb[:-1] |= gas[1:]
+        nb[1:] |= gas[:-1]
+        nb[:, :-1] |= gas[:, 1:]
+        nb[:, 1:] |= gas[:, :-1]
+        nb[:, -1] |= sol[:, -1]
+        ii, kk = np.nonzero(sol & nb)
+        x0c, x1c, z0c, z1c = self.x[ii], self.x[ii + 1], self.z[kk], self.z[kk + 1]
+        X0 = np.concatenate([x0c, 2 * self.x[0] - x1c, 2 * self.x[-1] - x1c])
+        X1 = np.concatenate([x1c, 2 * self.x[0] - x0c, 2 * self.x[-1] - x0c])
+        Z0, Z1 = np.tile(z0c, 3), np.tile(z1c, 3)
+        img = np.repeat([0, 1, 2], ii.size)                # 1, 2: mirror images
+        ci, ck = np.tile(ii, 3), np.tile(kk, 3)
+        edges = np.linspace(-0.5 * math.pi, 0.5 * math.pi, n_bins + 1)
+        wbin = 0.5 * (np.sin(edges[1:]) - np.sin(edges[:-1]))      # cosine law
+        mid = 0.5 * (edges[1:] + edges[:-1])
+        F = np.zeros((nf, nf))
+        offs = ((np.arange(points) + 0.5) / points - 0.5) * self.h
+        samples = [(a, f, o) for a, f in enumerate(faces) for o in offs]
+        for (a, (i, k, side, px0, pz0, nxn, nzn), o) in samples:
+            tx, tz = nzn, -nxn                               # tangent
+            px, pz = px0 + o * tx, pz0 + o * tz             # a point along the face
+            own = (img == 0) & (ci == i) & (ck == k)
+            dx = np.stack([X0 - px, X1 - px, X0 - px, X1 - px], 1)
+            dz = np.stack([Z0 - pz, Z0 - pz, Z1 - pz, Z1 - pz], 1)
+            dn = dx * nxn + dz * nzn
+            dt = dx * tx + dz * tz
+            front = (dn.max(1) > 1e-9 * self.h) & ~own
+            if not front.any():
+                continue
+            al = np.arctan2(dt[front], np.maximum(dn[front], 0.0))
+            lo = np.clip(al.min(1), -0.5 * math.pi, 0.5 * math.pi)
+            hi = np.clip(al.max(1), -0.5 * math.pi, 0.5 * math.pi)
+            b0 = np.clip(np.searchsorted(edges, lo, side="right") - 1, 0, n_bins - 1)
+            b1 = np.clip(np.searchsorted(edges, hi, side="left") - 1, 0, n_bins - 1)
+            cnt = np.maximum(b1 - b0 + 1, 0)
+            cell = np.repeat(np.arange(lo.size), cnt)
+            if cell.size == 0:
+                continue
+            bins = np.repeat(b0, cnt) + (np.arange(cell.size) - np.repeat(np.cumsum(cnt) - cnt, cnt))
+            fidx = np.flatnonzero(front)[cell]
+            # the ray of each bin's center direction, and where it enters the
+            # cell (slab method); pairs it misses are dropped
+            ang = mid[bins]
+            ux = np.cos(ang) * nxn + np.sin(ang) * tx
+            uz = np.cos(ang) * nzn + np.sin(ang) * tz
+            with np.errstate(divide="ignore", invalid="ignore"):
+                txa = (X0[fidx] - px) / ux
+                txb = (X1[fidx] - px) / ux
+                tza = (Z0[fidx] - pz) / uz
+                tzb = (Z1[fidx] - pz) / uz
+            tx_in = np.where(np.abs(ux) > 1e-15, np.minimum(txa, txb), -np.inf)
+            tx_out = np.where(np.abs(ux) > 1e-15, np.maximum(txa, txb), np.inf)
+            tz_in = np.where(np.abs(uz) > 1e-15, np.minimum(tza, tzb), -np.inf)
+            tz_out = np.where(np.abs(uz) > 1e-15, np.maximum(tza, tzb), np.inf)
+            # a ray parallel to a slab must lie inside it
+            okx = (np.abs(ux) > 1e-15) | ((px > X0[fidx]) & (px < X1[fidx]))
+            okz = (np.abs(uz) > 1e-15) | ((pz > Z0[fidx]) & (pz < Z1[fidx]))
+            t_in = np.maximum(tx_in, tz_in)
+            t_out = np.minimum(tx_out, tz_out)
+            hit = okx & okz & (t_out > t_in) & (t_out > 1e-12 * self.h)
+            cell, bins, fidx = cell[hit], bins[hit], fidx[hit]
+            t_in, ux, uz = t_in[hit], ux[hit], uz[hit]
+            tx_in, tz_in = tx_in[hit], tz_in[hit]
+            if cell.size == 0:
+                continue
+            order = np.lexsort((t_in, bins))
+            first = order[np.r_[True, bins[order][1:] != bins[order][:-1]]]
+            bins, fidx = bins[first], fidx[first]
+            ux, uz, tx_in, tz_in = ux[first], uz[first], tx_in[first], tz_in[first]
+            # the entered face: the slab crossed last on the way in
+            sx = np.where(ux > 0, 2, 1)                     # moving +x enters the -x face
+            sz = np.where(uz > 0, 3, 0)                     # moving up enters the down face
+            first_side = np.where(tx_in > tz_in, sx, sz)
+            other_side = np.where(tx_in > tz_in, sz, sx)
+            mirror = img[fidx] > 0
+            swap = {1: 2, 2: 1, 0: 0, 3: 3}
+            hi_, hk_ = ci[fidx], ck[fidx]
+            for q in range(bins.size):
+                for sd in (int(first_side[q]), int(other_side[q])):
+                    if mirror[q]:
+                        sd = swap[sd]
+                    b = index.get((int(hi_[q]), int(hk_[q]), sd))
+                    if b is not None:
+                        F[a, b] += wbin[bins[q]] / points
+                        break
+        return faces, F
+
+    def _radiosity(self, faces, F, direct, sticking):
+        """Total arriving flux on every face when a share 1 - s of what
+        arrives is re-emitted by the cosine law: Gamma = direct + F^T ((1 - s)
+        Gamma)."""
+        A = np.eye(len(faces)) - (1.0 - sticking) * F.T
+        return np.linalg.solve(A, direct)
+
+    def _face_fluxes(self, n, sticking):
+        """(i, k, side, flux) for every exposed face: the direct flux of
+        `fluxes`, and with sticking < 1 also what the faces re-emit."""
+        if sticking >= 1.0:
+            return self.fluxes(n)
+        faces, F = self.view_factors()
+        direct = {(i, k, sd): f for (i, k, sd, f) in self.fluxes(n)}
+        d = np.array([direct.get((f[0], f[1], f[2]), 0.0) for f in faces])
+        G = self._radiosity(faces, F, d, sticking)
+        return [(f[0], f[1], f[2], max(float(g), 0.0)) for f, g in zip(faces, G)]
+
+    def _flux_step(self, beams, time, deposit_material=None, sticking=1.0):
         """Advance etching (deposit_material None) or deposition for `time`
         with the face fluxes of `beams` [(exponent, {material: rate})] or,
         for deposition, [(exponent, rate)]. Each cell collects removed (or
@@ -655,7 +813,7 @@ class Structure:
         h = self.h
         nx, nz = self.mat.shape
         acc = np.zeros((nx, nz))
-        normal = {0: (0, 1), 1: (1, 0), 2: (-1, 0)}
+        normal = {0: (0, 1), 1: (1, 0), 2: (-1, 0), 3: (0, -1)}
         etchable = set() if deposit_material is not None else {
             m for (_, r) in beams for m, v in r.items() if v > 0}
         t = 0.0
@@ -665,7 +823,7 @@ class Structure:
             best = np.zeros((nx, nz))
             bdir = np.zeros((nx, nz), int)
             for (n, rates) in beams:
-                for (i, k, side, f) in self.fluxes(n):
+                for (i, k, side, f) in self._face_fluxes(n, sticking):
                     if f <= 0:
                         continue
                     if deposit_material is None:
