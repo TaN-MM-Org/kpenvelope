@@ -4,6 +4,63 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.25.0 (2026-11-20)
+
+Holes can be quantum states too, the quantum channel runs with
+band-to-band tunneling, the ballistic limit of a transistor's current is
+available, and particles in the flux process steps can bounce. The
+hot-electron model's behavior with velocity saturation at small
+relaxation times is now documented with numbers. The examples print what
+they printed before; examples 55 and 56 are new.
+
+### Added
+
+- `QuantumChannel(..., holes=(m_z, m_inplane, reference), electrons=)`:
+  holes as quantum states (one band, your masses), with their own quantum
+  potential on the valence band; trap emission keeps detailed balance.
+  `DeviceState.quantum` adds `hole_subbands`, `hole_sheet_cm2` and
+  `hole_potential`.
+- `Device.ballistic_current(state, source, drain)`: the ballistic limit
+  of the current through the channel's subbands, the flux of each
+  subband's 2D Fermi gas over the top of its barrier from either contact
+  (K. Natori, J. Appl. Phys. 76, 4879 (1994); M. Lundstrom, IEEE Electron
+  Device Lett. 18, 361 (1997)).
+- `Structure.view_factors(n_bins, points)`: diffuse view factors between
+  all exposed faces (exact ray entry into the nearest cell, averaged over
+  points along each face); `deposit` and `etch` with `mode="flux"` take
+  `sticking`, and what does not stick is re-emitted by the cosine law
+  (radiosity).
+- The app: `sticking=` in flux steps.
+
+### Changed
+
+- The quantum channel now runs together with band-to-band tunneling: the
+  tunneling uses the real bands, without the quantum potentials.
+
+### Documented (docs/limits.md)
+
+- With velocity saturation, the hydrodynamic model does not reduce to
+  drift-diffusion as the relaxation time goes to zero (its mobility
+  follows the local heating, not the field): 1 to 2 percent in the tests'
+  transistor, up to 46 percent in a short, heavily driven bar.
+
+### Not included (see docs/limits.md)
+
+- Non-equilibrium Green's function transport; the quantum channel on
+  triangle meshes; gas-phase or plasma chemistry and saturating surface
+  kinetics; stress and viscous flow of growing oxide; implant ranges
+  computed by the package.
+
+### Checks (tests)
+
+5 new tests (344 in all; docs/checks.md has the tolerances): quantum holes
+against the mirror image of quantum electrons (1e-9); the quantum channel
+with band-to-band tunneling (detailed balance, real-band rates, 1e-8);
+the ballistic formula against a direct integral (1e-9); view factors
+against the sky flux and reciprocity, and re-emission against an
+independent Monte Carlo simulation; conformal films at low sticking. All
+56 documented examples were rerun.
+
 ## 0.24.0 (2026-11-20)
 
 The device solver can treat the electrons of a transistor channel as

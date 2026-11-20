@@ -38,15 +38,16 @@ only looks right.
 - Breakdown (avalanche, a current limit, or thermal runaway), tunneling
   through barriers and between bands (including tunnel diodes), hot
   electrons, and electrons hopping over band steps.
-- Electrons in the transistor channel as quantum states (their allowed
-  energies and where they sit), solved together with the current.
+- Electrons and holes in a channel as quantum states (their allowed
+  energies and where they sit), solved together with the current, and
+  the ballistic limit of a transistor's current.
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
   shapes on triangle meshes.
 - Process steps that build the shape and the doping: deposition and
-  etching (also with the shadowing of narrow openings), oxidation (also
-  under mask edges), implants and anneals.
+  etching (also with the shadowing of narrow openings and particles that
+  bounce), oxidation (also under mask edges), implants and anneals.
 
 **An app** that runs many of these calculations in your web browser,
 with no code: charges, electrons, error bars, data fits, transistors with
@@ -163,7 +164,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  54 worked examples, each with the output it prints, and three
+  56 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -192,13 +193,16 @@ The full list is in [How it is checked](https://github.com/TaN-MM-Org/kpenvelope
 
 The main gaps, in plain terms:
 
-- No ballistic transport. The quantum channel is one band, along the
-  grid's vertical lines, for electrons only; holes and the rest of the
-  device stay classical.
+- No full quantum transport: the package gives the ballistic limit of a
+  channel's current, not a non-equilibrium Green's function simulation.
+  The quantum channel is one band per carrier, along the grid's vertical
+  lines, on rectangular grids only.
+- With velocity saturation, the hot-electron model does not turn into
+  drift-diffusion as its relaxation time goes to zero (the limits page
+  gives the numbers).
 - Process steps stay simple. There is no plasma or gas chemistry and no
-  stress in growing oxide, particles stick where they land, implant
-  ranges and diffusion constants come from you, and the shapes are built
-  from square cells.
+  stress or flow in growing oxide, implant ranges and diffusion constants
+  come from you, and the shapes are built from square cells.
 - The built-in meshes are simple. For complex shapes, bring a mesh from
   a mesh generator.
 - Tunneling between bands follows straight paths in one direction, not
