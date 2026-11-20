@@ -371,7 +371,7 @@ def fill_subbands_kgrid(solve_at_k, ps: float, n_states: int, kmax: float,
     the occupation factor exactly on each segment, so a parabolic
     branch is integrated exactly at any nk (asserted against the
     closed-form filler to 1e-9 nm^-2 in the tests). Branches are
-    labelled by energy order at each k.
+    labeled by energy order at each k.
 
     The six-band subbands of a structure without in-plane anisotropic
     strain depend only on |k_t| (asserted in the tests), so ntheta=1 is

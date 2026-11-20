@@ -14,7 +14,7 @@ lies below z. Units: eV, nm, densities nm^-2 (sheet) and nm^-3
 (volume).
 
 z_s is the position of the fixed sheet. By default it is the first grid
-point z_0, the historical behaviour, which is right when the grid
+point z_0, the historical behavior, which is right when the grid
 starts at the interface (hard-wall solver). For a finite-barrier stack
 whose grid starts inside a barrier, pass the interface position as
 ``sheet_z`` (new in v0.12.0): otherwise the whole left barrier carries
@@ -81,7 +81,7 @@ def hole_potential(z, p_density, ps, eps_r, sheet_z=None):
     eps_r : static relative permittivity, one number or one value per
         grid point (new in v0.12.0).
     sheet_z : position of the fixed sheet (nm); None (default) puts it
-        at z[0], the historical behaviour (new in v0.12.0).
+        at z[0], the historical behavior (new in v0.12.0).
 
     V_h(z[0]) = 0. With a scalar eps_r and sheet_z=None the arithmetic
     is exactly that of earlier versions.

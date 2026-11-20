@@ -2,7 +2,7 @@
 v0.11) -- with YOUR measured coefficient, never a shipped default.
 
 Wurtzite crystals lack inversion symmetry along the c axis, so even
-without any interface field the carriers near the zone centre feel a
+without any interface field the carriers near the zone center feel a
 k-linear spin-orbit term of the universal form
 
     H_so = alpha * c_hat . (sigma x k)  =  alpha (sigma_x k_y - sigma_y k_x)

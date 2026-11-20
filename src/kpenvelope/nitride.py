@@ -94,11 +94,13 @@ from __future__ import annotations
 import dataclasses
 import math
 
+import numpy as np
+
 __all__ = ["NitrideMaterial", "algan", "ingan", "inaln", "scaln", "gan",
            "with_numbers", "POLARIZATION_SETS", "VURGAFTMAN2003",
            "AMBACHER2021_SCALN",
            "polarization_quantum", "zinc_blende_formal_polarization",
-           "QE", "E_PER_NM2_PER_C_M2"]
+           "QE", "E_PER_NM2_PER_C_M2", "gap_shift", "AlloyGapShift"]
 
 #: elementary charge (C), exact in the 2019 SI
 QE = 1.602176634e-19
@@ -635,3 +637,53 @@ def zinc_blende_formal_polarization(a_nm: float) -> float:
     """
     a = a_nm * 1e-9
     return QE * math.sqrt(3.0) / (2.0 * a * a)
+
+
+@dataclasses.dataclass(frozen=True)
+class AlloyGapShift:
+    """How the gap of a nitride layer follows the temperature, with the
+    package's cited numbers (new in 0.23.0): the change of x E_g(end 1) +
+    (1 - x) E_g(end 0) - b x (1 - x) between two temperatures, each end on
+    its own Varshni curve (Vurgaftman and Meyer 2003, as in `algan`,
+    `ingan`, `inaln`; the bowing b does not change with temperature), so
+    that it equals what those functions give at the two temperatures.
+    conduction_share: the part of the change that moves the conduction
+    band (yours; Varshni's form does not say)."""
+
+    alloy: str
+    x: float
+    conduction_share: float
+    reference: str = _BAND_REF
+
+    def __post_init__(self):
+        if self.alloy not in _GAP_ENDS:
+            raise ValueError(f"no cited gap-temperature numbers for {self.alloy!r}; "
+                             f"available: {sorted(_GAP_ENDS)}")
+        _check_x(self.x)
+        if not (0.0 <= self.conduction_share <= 1.0):
+            raise ValueError("conduction_share must be between 0 and 1")
+
+    def shift(self, T, T0):
+        """E_g(T) - E_g(T0) in eV (T may be an array)."""
+        m1, m0 = _GAP_ENDS[self.alloy]
+        T = np.asarray(T, float)
+
+        def g(n, t):
+            a, b = _VARSHNI[n]
+            return -a * t * t / (t + b)
+        x = 1.0 if m1 == m0 else float(self.x)
+        return x * (g(m1, T) - g(m1, T0)) + (1 - x) * (g(m0, T) - g(m0, T0))
+
+
+_GAP_ENDS = {"GaN": ("GaN", "GaN"), "AlN": ("AlN", "AlN"), "InN": ("InN", "InN"),
+             "AlGaN": ("AlN", "GaN"), "InGaN": ("InN", "GaN"), "InAlN": ("InN", "AlN")}
+
+
+def gap_shift(alloy: str, x: float = 0.0, conduction_share: float = 0.5) -> AlloyGapShift:
+    """The temperature dependence of a nitride layer's gap from the cited
+    Varshni numbers (see `AlloyGapShift`), for `Device(band_gap_temperature=)`.
+    alloy: "GaN", "AlN", "InN", "AlGaN", "InGaN" or "InAlN" (no cited band
+    numbers exist here for ScAlN); x: the fraction of the first-named metal.
+    conduction_share 0.5 splits the change evenly between the bands, an
+    assumption: give your own if you have one."""
+    return AlloyGapShift(alloy, float(x), float(conduction_share))

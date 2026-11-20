@@ -5,10 +5,10 @@ slanted shapes in two dimensions.
 every triangle. `MeshDevice` discretizes the same drift-diffusion
 equations as `Device` with the box (Voronoi) finite-volume method: each
 triangle gives every one of its edges the part of the dual face that runs
-from the edge's midpoint to the triangle's circumcentre, and every node the
+from the edge's midpoint to the triangle's circumcenter, and every node the
 matching part of its dual cell. A triangle with an obtuse angle gives a
 negative part to the edge across from it; on a Delaunay mesh the
-neighbouring triangle makes it up on an interior edge, but not on the
+neighboring triangle makes it up on an interior edge, but not on the
 boundary (the constructor warns where an edge's total is negative). A rectangular
 grid split into right triangles gives exactly the coefficients of the
 tensor-grid `Device`, which the tests use as a check.
@@ -87,7 +87,7 @@ def mesh_from_points(points, region_of):
 
 def mesh_from_grid(x, z, region_of):
     """A rectangular grid (node arrays x, z in nm) with every rectangle cut
-    into two right triangles; region_of(x, z) at the rectangle's centre."""
+    into two right triangles; region_of(x, z) at the rectangle's center."""
     x = np.asarray(x, float)
     z = np.asarray(z, float)
     X, Z = np.meshgrid(x, z, indexing="ij")
@@ -154,7 +154,8 @@ class MeshDevice(Device):
                  heterojunctions: str = "drift-diffusion", band_to_band=None,
                  doping=None, density_floor_cm3: float = 1.0,
                  driving_force: str = "field", tunnel_barriers=(),
-                 temperature_model: str = "mobility", band_gap_temperature=None):
+                 temperature_model: str = "mobility", band_gap_temperature=None,
+                 heat_model: str = "joule"):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover
@@ -190,12 +191,13 @@ class MeshDevice(Device):
         labels = sorted(set(mesh.regions.tolist()))
         self._region_labels = labels
         semi_t = np.array([regions[r].semiconductor for r in mesh.regions])
+        self._regions_semi = {r: regions[r].semiconductor for r in regions}
         eps_t = np.array([(regions[r].material.eps_r if regions[r].semiconductor
                            else regions[r].dielectric.eps_r) for r in mesh.regions], float)
         # ---- box method, triangle by triangle
         T_ = mesh.triangles
         A, B, C = P[T_[:, 0]], P[T_[:, 1]], P[T_[:, 2]]
-        cc = _circumcentres(A, B, C)
+        cc = _circumcenters(A, B, C)
         edges_t = []                   # (n1, n2, triangle, signed dual length)
         sub_t = []                     # (node, triangle, dual-cell area)
         for (u, v, w) in ((0, 1, 2), (1, 2, 0), (2, 0, 1)):
@@ -204,7 +206,7 @@ class MeshDevice(Device):
             ev = pv - pu
             h = np.hypot(ev[:, 0], ev[:, 1])
             nrm = np.column_stack([-ev[:, 1], ev[:, 0]]) / h[:, None]
-            # signed distance from the edge midpoint to the circumcentre,
+            # signed distance from the edge midpoint to the circumcenter,
             # positive on the side of the third vertex
             side = np.sign(np.sum((pw - mid) * nrm, axis=1))
             d = np.sum((cc - mid) * nrm, axis=1) * side
@@ -256,7 +258,7 @@ class MeshDevice(Device):
         order = sorted(semi_labels, key=lambda r: cz[labels.index(r)])
         for r in order:                       # later (higher) wins ties
             v = share[r]
-            # (a tie within rounding of the circumcentres counts as a tie)
+            # (a tie within rounding of the circumcenters counts as a tie)
             better = v >= bestv - 1e-9 * np.abs(self.vol_all)
             best = np.where(better & (v > 0), r, best)
             bestv = np.where(better & (v > 0), v, bestv)
@@ -387,6 +389,7 @@ class MeshDevice(Device):
         self._setup_heterojunctions()
         self._setup_band_to_band()
         self._setup_tunnel_barriers(tunnel_barriers)
+        self._set_heat_model(heat_model)
         self._setup_lattice(temperature_model, band_gap_temperature, self.node_region)
 
     # ------------------------------------------------------------ geometry
@@ -467,9 +470,6 @@ class MeshDevice(Device):
         self._bt = None
         if bt is None:
             return
-        if bt.model == "nonlocal":
-            raise ValueError("the nonlocal band-to-band model runs along the columns of "
-                             "a tensor grid; on a mesh use model='local'")
         mask = self.node_semi.copy()
         if bt.where is not None:
             mask &= np.isin(self.node_region.astype(str), bt.where)
@@ -488,7 +488,102 @@ class MeshDevice(Device):
         for nd in (self.ei, self.ej):
             np.add.at(M, nd, w[:, None, None] * dv[:, :, None] * dv[:, None, :])
         M += 1e-30 * np.eye(2)[None]
-        self._bt = dict(mask=mask, mr=mr, dv=dv, w=w, Minv=np.linalg.inv(M))
+        self._bt = dict(mask=mask, mr=mr, dv=dv, w=w, Minv=np.linalg.inv(M),
+                        nonlocal_=bt.model == "nonlocal")
+        if bt.model == "nonlocal":
+            self._bt["lines"] = self._mesh_lines(bt, mask)
+            self._bt["area"] = np.array([L_["area"] for L_ in self._bt["lines"]])
+
+    def _mesh_lines(self, bt, mask):
+        """Straight, parallel tunneling paths through the mesh (new in
+        0.23.0): lines along `direction` (default +z) at a spacing of
+        `path_spacing` nm (default the median edge length), evenly across
+        the semiconductor, each standing for the width between its
+        neighbors (half a spacing at the two outer ones). Along a line the
+        bands are linear inside every triangle, so the line is sampled where
+        it crosses the triangle edges and the profile between is exact.
+        Each sample carries the interpolation weights of its edge's two
+        nodes. A stretch of the line counts if a triangle of a
+        semiconductor region (and of `where`) covers it; anything else
+        (a dielectric, a hole, outside) ends the paths there."""
+        P = self.mesh.points
+        T_ = self.mesh.triangles
+        d = np.array(bt.direction if bt.direction is not None else (0.0, 1.0), float)
+        d /= np.hypot(*d)
+        e = np.array([d[1], -d[0]])                      # across the lines
+        sP = P @ d
+        tP = P @ e
+        semi_tri = np.array([self._regions_semi[r] for r in self.mesh.regions])
+        ok_tri = semi_tri & np.all(mask[T_], axis=1)
+        if not ok_tri.any():
+            return []
+        tn = tP[np.unique(T_[ok_tri])]
+        tmin, tmax = float(tn.min()), float(tn.max())
+        h = bt.path_spacing
+        if h is None:
+            h = float(np.median(self.eh))
+        K = max(1, int(round((tmax - tmin) / h)))
+        tk = np.linspace(tmin, tmax, K + 1)
+        dt = (tmax - tmin) / K
+        width = np.full(K + 1, dt)
+        width[0] = width[-1] = 0.5 * dt
+        scale = max(1.0, float(np.ptp(sP)), float(np.ptp(tP)))
+        eps = 1e-9 * scale
+        tv = tP[T_]
+        sv = sP[T_]
+        lines = []
+        for k, t0 in enumerate(tk):
+            cand = np.flatnonzero((tv.min(axis=1) <= t0 + eps) & (tv.max(axis=1) >= t0 - eps))
+            if cand.size == 0:
+                continue
+            pts_s, pts_a, pts_b, pts_w, tri_lo = [], [], [], [], []
+            for c in cand:
+                vs = []
+                for (u, v) in ((0, 1), (1, 2), (2, 0)):
+                    ta, tb = tv[c, u], tv[c, v]
+                    na, nb = T_[c, u], T_[c, v]
+                    if abs(ta - t0) <= eps:
+                        vs.append((sv[c, u], na, na, 0.0))
+                    if abs(tb - t0) <= eps:
+                        vs.append((sv[c, v], nb, nb, 0.0))
+                    if (ta - t0) * (tb - t0) < 0 and abs(ta - t0) > eps and abs(tb - t0) > eps:
+                        lam = (t0 - ta) / (tb - ta)
+                        vs.append((sv[c, u] + lam * (sv[c, v] - sv[c, u]), na, nb, lam))
+                if not vs:
+                    continue
+                ss = [q[0] for q in vs]
+                tri_lo.append((min(ss), max(ss), bool(ok_tri[c])))
+                for q in vs:
+                    pts_s.append(q[0])
+                    pts_a.append(q[1])
+                    pts_b.append(q[2])
+                    pts_w.append(q[3])
+            if not pts_s:
+                continue
+            order = np.argsort(pts_s, kind="stable")
+            ps = np.asarray(pts_s)[order]
+            keep = np.concatenate([[True], np.diff(ps) > eps])
+            idx = order[keep]
+            s_u = np.asarray(pts_s)[idx]
+            a_u = np.asarray(pts_a, int)[idx]
+            b_u = np.asarray(pts_b, int)[idx]
+            lam = np.asarray(pts_w, float)[idx]
+            n_s = s_u.size
+            if n_s < 2:
+                continue
+            edge_ok = np.zeros(n_s - 1, bool)
+            for lo, hi, good in tri_lo:
+                if not good or hi - lo <= eps:
+                    continue
+                i0 = int(np.searchsorted(s_u, lo - eps))
+                i1 = int(np.searchsorted(s_u, hi - eps))
+                edge_ok[i0:i1] = True
+            ok_s = np.zeros(n_s, bool)
+            ok_s[:-1] |= edge_ok
+            ok_s[1:] |= edge_ok
+            lines.append(dict(a=a_u, b=b_u, wa=1.0 - lam, wb=lam, s=s_u - 0.0, ok_s=ok_s,
+                              edge_ok=edge_ok, area=float(width[k])))
+        return lines
 
     def _node_field(self, psi):
         bt = self._bt
@@ -737,7 +832,7 @@ class _MeshHeat:
         return Tn
 
 
-def _circumcentres(A, B, C):
+def _circumcenters(A, B, C):
     ax, ay = A[:, 0], A[:, 1]
     bx, by = B[:, 0], B[:, 1]
     cx, cy = C[:, 0], C[:, 1]
