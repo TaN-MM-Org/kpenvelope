@@ -906,6 +906,10 @@ TRANSISTOR_SOURCES = {
     "thermionic": "electrons cross the barrier step by thermionic emission (the form "
                   "of K. Yang, J. R. East and G. I. Haddad, Solid-State Electron. 36, "
                   "321 (1993))",
+    "quantum": "electrons in the channel as quantum states: the one-band Schroedinger "
+               "equation with each layer's electron mass along every grid column "
+               "(kpenvelope's QuantumChannel, checked against its own 1D "
+               "Schroedinger-Poisson solver)",
     "btbt": "band-to-band tunneling: Kane's two-band rate (as written in Eq. 13 of "
             "arXiv:2108.09328) on straight paths through the band profile, with the "
             "reduced mass from the electron mass of each layer and your hole mass",
@@ -1039,9 +1043,22 @@ def _transistor_device(spec, with_traps=False):
     if t.get("thermionic"):
         extra["heterojunctions"] = "thermionic"
         extra_src.append(TRANSISTOR_SOURCES["thermionic"])
+    dz_fine = 1.0
+    if t.get("quantum"):
+        if t.get("thermionic"):
+            raise SpecError("Choose either thermionic emission over the barrier step or "
+                            "quantum electrons in the channel: the quantum treatment "
+                            "already covers the electrons at that step.")
+        from ..device import QuantumChannel
+        above = sum(L.thickness for L in layers[1:])
+        z_int = top - above
+        extra["quantum"] = QuantumChannel((max(z_int - 40.0, 1.0), top - 0.5))
+        extra_src.append(TRANSISTOR_SOURCES["quantum"])
+        dz_fine = 0.5
     dev = Device(layers, width, el, mob, surf, cap=cap,
                  traps=traps, temperature_K=T, interfaces=ic, dx_fine=10.0,
-                 dx_max=150.0, dz_fine=1.0, dz_max=100.0, fine_depth=min(60.0, top), **extra)
+                 dx_max=150.0, dz_fine=dz_fine, dz_max=100.0, fine_depth=min(60.0, top),
+                 **extra)
     return dev, dict(layers=layers, warn=warn, width=width, gate=[x_g0, x_g0 + lg],
                      contacts=[[0.0, ls], [width - ls, width]], ns=ns, vsat=vs,
                      mobility=mu, gamma=gamma, sources=[mob.reference] + extra_src,
@@ -1409,10 +1426,20 @@ def _vertical_device(spec, layers, ic, T, dz, top, btbt):
 
 
 _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thickness=50 "
-                 "mode=conformal', 'etch SiN=1 time=60 mode=directional from=100 to=900', "
+                 "mode=conformal' (or mode=directional, or mode=flux exponent=1), "
+                 "'etch SiN=1 time=60 mode=directional from=100 to=900' (or mode=isotropic, "
+                 "or mode=flux exponent=1), "
                  "'implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900', "
                  "'anneal time=60 temperature=1300 D0=1e-4 Ea=3', 'oxidize material=Si "
-                 "oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44'")
+                 "oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44' (add mode=2d for "
+                 "oxidation that reaches under mask edges)")
+
+
+def _flux_size(st, k):
+    """Line-of-sight fluxes cost the square of the number of surface cells."""
+    if st.xc.size > 400 or st.zc.size > 400:
+        raise SpecError(f"Step {k}: mode=flux needs at most 400 cells along a side; "
+                        "use larger cells.")
 
 
 def run_process(spec):
@@ -1476,15 +1503,21 @@ def run_process(spec):
                 mode = args.get("mode", "conformal")
                 nd = num("donors", 0.0, 0.0)
                 na = num("acceptors", 0.0, 0.0)
+                if mode == "flux":
+                    _flux_size(st, k)
                 st.deposit(mat, num("thickness", lo=1e-6), mode=mode, window=win,
                            semiconductor=args.get("semiconductor", "no") == "yes",
-                           donors=nd, acceptors=na)
+                           donors=nd, acceptors=na,
+                           exponent=num("exponent", 1.0, 1.0, 1e4))
             elif kind == "etch":
-                rates = {a: num(a, lo=0.0) for a in args if a not in ("time", "mode", "from", "to")}
+                rates = {a: num(a, lo=0.0) for a in args
+                         if a not in ("time", "mode", "from", "to", "exponent")}
                 if not rates:
                     raise SpecError(f"Step {k}: give each material's rate, like SiN=1 (nm/s).")
+                if args.get("mode") == "flux":
+                    _flux_size(st, k)
                 st.etch(rates, num("time", lo=1e-12), mode=args.get("mode", "isotropic"),
-                        window=win)
+                        window=win, exponent=num("exponent", 1.0, 1.0, 1e4))
             elif kind == "implant":
                 sp = args.get("species", "donor")
                 st.implant(Implant(sp, num("dose", lo=1e-30), num("range", lo=0.0),
@@ -1497,9 +1530,12 @@ def run_process(spec):
                                  species=args.get("species", "both")))
             elif kind == "oxidize":
                 mat, ox = args.get("material", "Si"), args.get("oxide", "SiO2")
+                omode = args.get("mode", "column")
                 oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
                                      num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
-                                     src)
+                                     src, mode=omode)
+                if omode == "2d":
+                    oxide_x = None           # cell counts, not the closed form
             else:
                 raise SpecError(f"Step {k}: unknown step '{kind}' ({_PROCESS_HELP}).")
         except SpecError:
