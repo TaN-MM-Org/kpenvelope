@@ -141,8 +141,8 @@ The limits of each part of the package, in detail. The
   along the channel, classical electrons, holes only if asked, the free
   surface pinned at one barrier, and SciPy for speed (the NumPy fallback
   is slower). For current, use `Device`.
-- Devices in 2D and 3D (`Device`, `MeshDevice`): classical carriers (no
-  quantum confinement of the channel, no ballistic transport). The
+- Devices in 2D and 3D (`Device`, `MeshDevice`): carriers are classical
+  unless a `QuantumChannel` is given, and transport is never ballistic. The
   hydrodynamic model uses one energy relaxation time (yours); models of
   this kind are known to be able to overstate velocity overshoot.
   Thermionic emission at band steps uses the non-degenerate form on the
@@ -199,18 +199,45 @@ The limits of each part of the package, in detail. The
   meshed in vertical columns, the field-line breakdown tools are not
   available, and interface polarization charges are given by you as
   sheets.
+- Quantum channel (`QuantumChannel`, since 0.24.0): one band with the
+  layer masses (no nonparabolicity, no valley or band mixing), along
+  vertical grid columns only, each column on its own (no tunneling from
+  one column to the next), on tensor grids only (not `MeshDevice`). Each
+  node is filled with its own electron quasi-Fermi level, which is the
+  Schroedinger-Poisson density wherever that level does not change along
+  the column, as in equilibrium and along a channel; where it does (a
+  current flowing up through the barrier) it is an approximation. The
+  quantum potential is held fixed in `small_signal`, `transient` and
+  `pulse` (the quasi-static capacitance from charges at two voltages
+  includes it; the small-signal one does not). It does not run with
+  band-to-band tunneling, or with tunnel barriers or thermionic band
+  steps inside its window. Where `x_range` ends inside a channel, the
+  quantum potential drops to 0 from one column to the next; put the ends
+  in the ungated access regions, or keep the default. Holes stay
+  classical. The outer iteration costs typically 5 to 30 device solves
+  per voltage.
 - Process (`Implant`, `Anneal`, `Process`, `Structure`): Gaussian implant
   profiles from ranges you supply (the same range in every material),
   constant diffusivity in the semiconductor only, no segregation, damage
-  or activation kinetics. Deposition and etching move surfaces at fixed
-  rates (no gas transport, shadowing or plasma chemistry); the isotropic
-  etch front comes from a fast-marching solution whose error shrinks
-  with the cell size (about 1 percent of the etched area at 60 cells per
-  etch depth in the tests). Oxidation follows Deal and Grove column by
-  column: no oxidation under a mask edge (bird's beak), no stress, and no
-  fast initial growth of thin dry oxides beyond what you give as a
-  starting oxide. Shapes are made of square cells, so surfaces are
-  staircases at the cell size.
+  or activation kinetics. The fixed-rate modes move surfaces at given
+  rates; the isotropic etch front comes from a fast-marching solution
+  whose error shrinks with the cell size (about 1 percent of the etched
+  area at 60 cells per etch depth in the tests). The flux modes (since
+  0.24.0) add shadowing by the geometry, but particles stick where they
+  land (no re-emission, so no surface diffusion or conformal coverage
+  from low sticking), the angular distribution is one cos^n law that you
+  choose, there is no plasma or gas-phase chemistry and no
+  ion-enhanced or saturating surface kinetics (rates of several beams
+  simply add), and the cross-section repeats as its mirror image at both
+  sides. Their cost grows as the square of the number of surface cells.
+  Oxidation follows Deal and Grove, column by column or (mode="2d") with
+  the oxidant diffusing in two dimensions; mode="2d" has no stress, no
+  viscous flow of the oxide (the new volume moves cells up or into the
+  nearest gas), no dependence of the rates on crystal orientation or on
+  stress, and is accurate to about a cell. Neither mode has the fast
+  initial growth of thin dry oxides beyond what you give as a starting
+  oxide. Shapes are made of square cells, so surfaces are staircases at
+  the cell size.
 - Support: there is no paid support. Questions and bug reports go to the
   GitHub issues of the repository.
 - The mobility's field is rounded near zero (0.1 percent of its

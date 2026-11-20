@@ -5,7 +5,7 @@ the corrections made in earlier versions.
 
 ## How the results are checked
 
-329 automated tests run on every push and pull request, on Python 3.9,
+339 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -342,6 +342,47 @@ the tests use:
 - Meshes: a rectangular grid cut into right triangles reproduces the
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
+
+**Quantum channel, line-of-sight process steps, 2D oxidation (new in 0.24.0)**
+
+- The column eigenproblem on uneven grids: an infinite well against
+  hbar^2 pi^2 n^2 / 2 m L^2 and a triangular well against the Airy
+  zeros, with second-order convergence (the error falls fourfold when
+  the step halves).
+- The device solver with a `QuantumChannel` against the package's
+  separate 1D Schroedinger-Poisson solver (`solve_electrons`), on the
+  same grid, for an Al0.25Ga0.75N/GaN stack: band edge within 6e-5 eV,
+  levels within 3e-6 eV, confined sheet density within 1e-5; the
+  differences come from how the two codes put the material step on the
+  grid and halve when the step halves, while the quantum effect itself
+  is over 100 times larger. The same under a gate at -1 V (2e-4 eV,
+  5e-5) and with the full temperature model at 360 K (1.2e-4 eV, 3e-5).
+- A transistor with a quantum channel, traps and holes: zero current in
+  equilibrium (detailed balance), terminal currents that add up to zero
+  (1e-9), heat that equals the power with self-heating (1e-9), hot
+  electrons that relax at once (constant mobility) changing the current
+  by the same fraction with and without the quantum channel (1e-4), the
+  same current reached directly or through a sweep (1e-5), and about one
+  percent less current than the classical model near switch-off.
+- Line-of-sight fluxes: at the bottom of trenches of three aspect ratios
+  and for three angular distributions, equal to the exact integral over
+  the visible directions (2e-6); on the walls, equal to the closed form
+  (1/2)(1 - cos(atan(w / depth))) (1e-6); all particles entering an
+  opening land inside it (1e-3, the faces sample the flux at their
+  centers).
+- Flux etching and deposition: a flat surface at the full rate, a narrow
+  trench etching more slowly than a wide one, an ion beam etching
+  straight down through a mask, a film whose volume is what fell in
+  (1 percent).
+- 2D oxidation: the oxidant at the interface of a flat oxide equal to
+  A / (A + 2x) (1e-12); far from any edge, the Deal-Grove thickness and
+  consumed silicon within one cell, also from a pad oxide; oxide volume
+  equal to the consumed silicon over 0.44 (2 percent, partial cells);
+  LOCOS with a pad oxide reaching further under the mask than without
+  one, and lifting the mask.
+- The app: a transistor with quantum electrons, the refusal of quantum
+  electrons together with thermionic emission, and process recipes with
+  mode=flux and mode=2d.
 
 **Peltier heat, tunneling with heat and on meshes, the app (new in 0.23.0)**
 

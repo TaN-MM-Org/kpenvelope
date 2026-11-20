@@ -228,11 +228,14 @@ read the results on the right:
   follow the temperature too), include Peltier heat, and run together
   with the hot electrons; electrons can cross the barrier step by
   thermionic emission; and a thermal runaway button raises the drain
-  voltage until no steady temperature is left.
+  voltage until no steady temperature is left. Since 0.24.0 the channel electrons can be
+  treated as quantum states.
 - **Process steps** (new in 0.23.0): write a short recipe, one step per
   line (deposit, etch, implant, anneal, oxidize), and see the
   cross-section it builds, with its materials or its doping, the
-  thickness in the middle and the doses.
+  thickness in the middle and the doses. Since 0.24.0 deposit and etch also
+  take mode=flux (narrow openings fill and etch more slowly) and oxidize
+  takes mode=2d (oxide under mask edges).
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -614,6 +617,38 @@ example) gives its inputs, units and conventions.
   tunneling in the I-V sweep, and in the Transistor tab the full
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
+
+**Quantum channel, line-of-sight process steps, 2D oxidation (new in 0.24.0)**
+
+- `QuantumChannel(window, x_range=None, n_states=400, tol=1e-5,
+  max_outer=200, max_shift=1.0)` in `Device(quantum=...)` -- electrons
+  inside the window (z_min, z_max in nm) as quantum states: along every
+  grid column the one-band Schroedinger equation with the layer masses,
+  filled with the local electron quasi-Fermi level, fed back into the
+  current and the charge as a quantum potential until both agree.
+  `DeviceState.quantum_potential` holds it and `DeviceState.quantum` the
+  levels and the confined sheet density of every column; `ec` stays the
+  real band edge. It runs with traps, holes, self-heating, the full
+  temperature model and hot electrons; `small_signal`, `transient` and
+  `pulse` keep the quantum potential of their starting state. Tensor
+  grids only; not together with `band_to_band`, with tunnel barriers or
+  thermionic band steps inside the window.
+- `device.column_states(z, ec, mass, n_states, z_left, z_right)` -- the
+  eigenstates of one column on any grid.
+- `Structure.fluxes(exponent)` -- the flux of particles from above onto
+  every exposed face, relative to a flat open surface, with the in-plane
+  angular distribution cos^exponent (1: a gas at rest; large: an ion
+  beam) and exact shadowing by the cells.
+- `Structure.etch(rates, time, mode="flux", exponent=, beams=)` and
+  `Structure.deposit(material, thickness, mode="flux", exponent=)` --
+  etching and deposition at those fluxes (narrow openings etch and fill
+  more slowly; `beams` combines a gas and a beam).
+- `Structure.oxidize(..., mode="2d")` -- the oxidant diffuses through
+  the oxide in two dimensions, so oxide grows under mask edges (LOCOS)
+  and on trench walls.
+- The app: in the Transistor tab, "treat the channel electrons as
+  quantum states"; in Process steps, mode=flux (with exponent=) for
+  deposit and etch, and mode=2d for oxidize.
 
 **Phonons (new in 0.18.0)**
 

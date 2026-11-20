@@ -7,7 +7,7 @@ describes every function used here.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-prints with kpenvelope 0.23.0 (all of them were rerun for this release).
+prints with kpenvelope 0.24.0 (all of them were rerun for this release).
 Numbers labeled illustrative are chosen for the example, not taken from
 a source.
 
@@ -22,7 +22,9 @@ band-to-band tunneling, breakdown by current and thermal runaway,
 implants and a curved mesh; 43 to 47 leakage and runaway with
 temperature, hot electrons with heating, a tunnel diode, oxidation, and
 a process flow into a device; 48 to 50 Peltier heat, a tunnel diode that
-heats itself, and tunneling on a turned mesh.
+heats itself, and tunneling on a turned mesh; 51 to 54 quantum electrons
+in the device solver and a transistor, line-of-sight etching and
+deposition, and LOCOS oxidation.
 
 ### 1. Energy levels and what they are made of
 
@@ -2298,6 +2300,188 @@ apart. Here the diode of example 45 is turned by 30 degrees and the
 paths run across the junction, and the currents are those of example
 45. Point the paths along the junction instead and they find no
 tunneling. Pick the direction in which the field points.
+
+### 51. Quantum electrons in the device solver (new in 0.24.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan, solve_electrons
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# an Al0.25Ga0.75N/GaN stack (cited polarization and band numbers); the
+# buffer doping and the mobility are illustrative
+layers = [StackLayer(algan(0.0), 300.0, donors=1e-4), StackLayer(algan(0.25), 25.0)]
+window = (280.0, 324.0)                 # nm, from inside the GaN to below the surface
+one_d = solve_electrons(layers, 1.0, dz=0.1, quantum_window=window,
+                        classical_outside=True, n_states=40)
+for q in (None, QuantumChannel(window)):
+    dev = Device(layers, 20.0, [Electrode("bottom", "ohmic", 0, 20, face="bottom")],
+                 Mobility(1000.0, "illustrative"), Surface("pinned", barrier=1.0),
+                 grid=dict(x=np.array([0.0, 10.0, 20.0]), z=one_d.z), quantum=q)
+    st = dev.equilibrium()
+    z, n = one_d.z, st.n[1]
+    m = (z > 280) & (z < 300)
+    depth = (n[m] * (300 - z[m])).sum() / n[m].sum()
+    name = "quantum  " if q else "classical"
+    print(f"{name}: electrons {depth:.2f} nm below the interface on average", end="")
+    if q:
+        E = st.quantum["subbands"][1][1]
+        print(f", lowest levels {E[0]:+.4f} {E[1]:+.4f} eV")
+    else:
+        print()
+m = (one_d.z > 280) & (one_d.z < 300)
+depth = (one_d.n[m] * (300 - one_d.z[m])).sum() / one_d.n[m].sum()
+print(f"1D Schroedinger-Poisson: {depth:.2f} nm, lowest levels "
+      f"{one_d.subband_energies[0]:+.4f} {one_d.subband_energies[1]:+.4f} eV")
+```
+
+```
+classical: electrons 1.95 nm below the interface on average
+quantum  : electrons 2.15 nm below the interface on average, lowest levels -0.1385 -0.0037 eV
+1D Schroedinger-Poisson: 2.15 nm, lowest levels -0.1385 -0.0037 eV
+```
+
+`QuantumChannel(window)` makes the device solver treat the electrons
+inside the window as waves: along every vertical line of the grid it
+finds their allowed energies (the levels are given relative to the
+Fermi level), fills them, and feeds the result back into the current
+and the charge until both agree. The electrons then sit a little
+further from the interface than the classical model puts them, which
+lowers the capacitance of the channel. Solved on the same grid, the
+device solver and the package's separate 1D Schroedinger-Poisson
+solver give the same levels and the same electron profile; the tests
+check that their small differences, which come from how the material
+step sits on the grid, halve when the grid step halves.
+
+### 52. A transistor with a quantum channel
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# a short transistor: cited polarization and band numbers; mobility, speed
+# and contacts illustrative
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+mob = Mobility(1500.0, "illustrative", saturation_velocity=1.0e7)
+contacts = [Electrode("source", "ohmic", 0, 100, implant_depth=30, implant_donors=1e20),
+            Electrode("gate", "schottky", 300, 400, barrier=1.0),
+            Electrode("drain", "ohmic", 600, 700, implant_depth=30, implant_donors=1e20)]
+devs = {}
+for name, q in (("classical", None), ("quantum", QuantumChannel((270.0, 319.5)))):
+    devs[name] = Device(layers, 700.0, contacts, mob, Surface("pinned", barrier=1.0),
+                        dx_fine=10, dx_max=50, dz_fine=0.5, dz_max=50, quantum=q)
+prev = {}
+for vg in (0.0, -1.0, -2.0, -3.0):
+    I = {}
+    for name, dev in devs.items():
+        prev[name] = dev.solve({"gate": vg, "drain": 1.0}, guess=prev.get(name))
+        I[name] = prev[name].current["drain"]
+    print(f"gate {vg:+.0f} V: classical {I['classical']:.4f}, quantum {I['quantum']:.4f} A/mm "
+          f"({100 * (I['quantum'] / I['classical'] - 1):+.1f} %)")
+```
+
+```
+gate +0 V: classical 1.3889, quantum 1.3929 A/mm (+0.3 %)
+gate -1 V: classical 1.2799, quantum 1.2846 A/mm (+0.4 %)
+gate -2 V: classical 1.0542, quantum 1.0532 A/mm (-0.1 %)
+gate -3 V: classical 0.7554, quantum 0.7466 A/mm (-1.2 %)
+```
+
+The quantum treatment runs with the current, the traps, self-heating
+and hot electrons. By default it covers every column except those
+under the ohmic contacts, whose implanted electrons need no
+confinement. In this transistor the two models differ by less than
+half a percent while the channel is open; near switch-off the energy of
+the lowest level costs electrons, and the current falls by about one
+percent at -3 V. Every number except the cited material numbers is
+illustrative.
+
+### 53. Etching and filling trenches with line-of-sight fluxes
+
+```python
+import math
+from kpenvelope.process import Structure
+
+# trenches etched by a gas at rest (exponent 1) and by a narrow ion beam
+# (exponent 1000); the rate of 1 nm/s on an open surface is illustrative
+for name, n in (("gas", 1.0), ("beam", 1000.0)):
+    depths = []
+    for w in (20.0, 100.0):
+        s = Structure(400.0, 0.0, 300.0, 2.0, "Si", 200.0)
+        s.deposit("mask", 10.0, mode="directional")
+        s.etch({"mask": 1.0}, 10.0, mode="directional", window=(200 - w / 2, 200 + w / 2))
+        s.etch({"Si": 1.0}, 60.0, mode="flux", exponent=n)
+        depths.append(200 - s.top_surface()[100])
+    print(f"{name}: 60 s etch, depth {depths[0]:.0f} nm in a 20 nm opening, "
+          f"{depths[1]:.0f} nm in a 100 nm one")
+
+# a film from a gas at rest on a 100 nm wide, 100 nm deep trench
+s = Structure(400.0, 0.0, 300.0, 2.0, "Si", 200.0)
+s.etch({"Si": 1.0}, 100.0, mode="directional", window=(150, 250))
+s.deposit("oxide", 20.0, mode="flux")
+print(f"film: {s.thickness('oxide', 20):.0f} nm on top, "
+      f"{s.thickness('oxide', 200):.0f} nm at the trench bottom "
+      f"(view factor {math.sin(math.atan(50 / 100)):.3f} of the top at first)")
+```
+
+```
+gas: 60 s etch, depth 26 nm in a 20 nm opening, 50 nm in a 100 nm one
+beam: 60 s etch, depth 60 nm in a 20 nm opening, 60 nm in a 100 nm one
+film: 20 nm on top, 8 nm at the trench bottom (view factor 0.447 of the top at first)
+```
+
+With `mode="flux"` every exposed spot etches (or grows) in proportion
+to the particles that reach it in a straight line from above. A gas at
+rest arrives from all directions, so the bottom of a narrow opening
+sees little of it and etches slowly (aspect-ratio dependent etching); a
+narrow ion beam etches both openings at the full rate, straight down.
+A film from a gas at rest is thinner at the bottom of a trench than on
+top. The fluxes are the exact view factors of the cell geometry (the
+tests compare them with the closed forms), and particles stick where
+they land. The rates are illustrative.
+
+### 54. LOCOS oxidation: the bird's beak
+
+```python
+import math
+from kpenvelope.process import Structure
+
+# LOCOS: a nitride mask on a thin pad oxide, then oxidation at 1000 C with
+# the Deal-Grove constants of example 46
+kT = 8.617333262e-5 * (1000 + 273.15)
+B = 7.72e2 * math.exp(-1.23 / kT) * 1e6 / 3600          # nm^2/s
+BA = 6.23e6 * math.exp(-2.0 / kT) * 1e3 / 3600          # nm/s
+w = Structure(600.0, 0.0, 700.0, 2.0, "Si", 400.0)
+w.deposit("SiO2", 10.0, mode="directional")                        # pad oxide
+w.deposit("Si3N4", 40.0, mode="directional", window=(0, 300))      # mask on the left
+w.oxidize("Si", "SiO2", B, BA, 4 * 3600.0, 0.44,
+          "Deal-Grove constants of example 46; 0.44 of the oxide from consumed silicon",
+          mode="2d")
+for x in (50, 150, 200, 250, 300, 350, 500):
+    print(f"x = {x:3d} nm: oxide {w.thickness('SiO2', x):5.0f} nm, "
+          f"top of the stack at {w.top_surface()[int(x / 2)]:.0f} nm")
+```
+
+```
+x =  50 nm: oxide    10 nm, top of the stack at 450 nm
+x = 150 nm: oxide    14 nm, top of the stack at 452 nm
+x = 200 nm: oxide    32 nm, top of the stack at 464 nm
+x = 250 nm: oxide    70 nm, top of the stack at 480 nm
+x = 300 nm: oxide    96 nm, top of the stack at 488 nm
+x = 350 nm: oxide   144 nm, top of the stack at 484 nm
+x = 500 nm: oxide   150 nm, top of the stack at 490 nm
+```
+
+With `mode="2d"` the oxygen diffuses through the oxide in two
+dimensions. Under the edge of the nitride mask it reaches the silicon
+through the pad oxide, so oxide grows there too, thinning out under the
+mask (the bird's beak), and the swelling oxide lifts the mask's edge.
+Far from the mask the thickness is Deal and Grove's, 150 nm against
+149.9 nm from the closed form for a 10 nm start. The new oxide's extra
+volume moves cells up or out; the stress and flow of real oxide are not
+modeled.
 
 ## Tutorials
 
