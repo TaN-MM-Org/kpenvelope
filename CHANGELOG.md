@@ -4,6 +4,66 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.26.0 (2026-11-20)
+
+The channel electrons can be solved as waves by non-equilibrium Green's
+functions, with or without scattering; the quantum channel runs on
+triangle meshes; implant ranges come from a Monte Carlo simulation of
+the ions; etching can be driven by ions and a reactive gas together; and
+growing oxide flows, with its stress slowing the reaction. The examples
+print what they printed before; examples 57 to 61 are new.
+
+### Added
+
+- `Device.negf(bias, ...)`: quantum transport of the channel electrons by
+  non-equilibrium Green's functions in uncoupled mode space (each subband
+  of the QuantumChannel between the contacts a 1D chain along x, the
+  width free), self-consistent with the potential, with the Landauer
+  current per subband; `scattering_time=` adds Buttiker probes (momentum
+  and energy relaxation at one rate) whose Fermi levels keep every probe
+  current-free. The module `kpenvelope.negf` holds the chain, the lead
+  self-energies and the adaptive energy grid.
+- `MeshDevice(..., quantum=QuantumChannel(..., line_spacing=))`: the
+  quantum channel on triangle meshes, along vertical lines through the
+  mesh.
+- `kpenvelope.bca`: implant ranges by binary-collision Monte Carlo (ZBL
+  universal potential, scattering angle by quadrature, Lindhard-Scharff
+  electronic stopping), with the moments, the depth histogram and
+  `RangeResult.implant`; `Implant(depth_profile=)` takes a tabulated
+  profile.
+- `EtchKinetics`, `Structure.kinetic_rates` and `Structure.plasma_etch`:
+  ion-enhanced etching with a first-order site balance on every face,
+  the neutrals re-emitted with the coverage-dependent sticking.
+- `Structure.stokes`: slow viscous flow and stress of the cross-section;
+  `Structure.oxidize(mode="2d", viscosity=, stress_volume_nm3=,
+  temperature_K=)`: oxidation with the oxide's flow and a reaction rate
+  that follows the stress normal to the interface.
+
+### Not included (see docs/limits.md)
+
+- The hot-electron model with velocity saturation still does not end on
+  field-driven drift-diffusion as the relaxation time goes to zero: five
+  ways of changing that were tried and none was robust (the limits page
+  gives the numbers). Coupling between subbands in NEGF; holes in NEGF;
+  phonon scattering; the plasma's own chemistry; oxide shapes that follow
+  the flow and elasticity; a mesh generator with quality refinement;
+  tunneling paths that bend with the field; Peltier heat in the
+  Fermi-Dirac form. The app does not have the new features yet.
+
+### Checks (tests)
+
+13 new tests (357 in all; docs/checks.md has the tolerances): the NEGF
+chain against the rectangular barrier, the 2D gas and the
+top-of-the-barrier formula; the probes against the Drude resistance and
+current conservation; the device NEGF against the QuantumChannel at
+equilibrium, the top-of-the-barrier formula and drift-diffusion with
+mu = q tau / m; the mesh quantum channel against the tensor grid; the
+Monte Carlo against the Coulomb scattering and stopping, the universal
+stopping fit, the electronic-only path and the continuous-slowing-down
+path; the etching kinetics against the site balance, neutral
+conservation and aspect-ratio dependence; the viscous flow against a
+flat layer and a cylinder. All 61 documented examples were rerun.
+
 ## 0.25.0 (2026-11-20)
 
 Holes can be quantum states too, the quantum channel runs with
