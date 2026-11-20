@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("scipy")
 
 from kpenvelope import StackLayer, algan, solve_electrons  # noqa: E402
-from kpenvelope.device import (BandToBand, Device, Electrode, Mobility,  # noqa: E402
+from kpenvelope.device import (Device, Electrode, Mobility,  # noqa: E402
                                QuantumChannel, Surface, Trap, column_states, _H2M)
 from kpenvelope.thermal import ThermalLayer, ThermalMaterial, ThermalModel  # noqa: E402
 
@@ -169,11 +169,7 @@ def test_quantum_channel_near_pinch_off_and_what_it_refuses():
     layers = [StackLayer(algan(0.0), 300.0, donors=1e-4), StackLayer(algan(0.25), 20.0)]
     el = [Electrode("s", "ohmic", 0, 20, face="bottom")]
     base = dict(grid=dict(x=np.array([0., 10., 20.]), z=np.linspace(0, 320, 641)))
-    with pytest.raises(ValueError, match="band_to_band"):
-        Device(layers, 20.0, el, Mobility(1000.0, "t"), Surface("pinned", barrier=1.0),
-               hole_mass=1.0, hole_mobility=Mobility(10.0, "t"),
-               band_to_band=BandToBand("t", reduced_mass_m0=0.1),
-               quantum=QuantumChannel((280.0, 319.0)), **base)
+    # (band-to-band tunneling with a quantum channel is allowed since 0.25.0)
     with pytest.raises(ValueError, match="thermionic"):
         Device(layers, 20.0, el, Mobility(1000.0, "t"), Surface("pinned", barrier=1.0),
                heterojunctions="thermionic", quantum=QuantumChannel((280.0, 319.0)), **base)
