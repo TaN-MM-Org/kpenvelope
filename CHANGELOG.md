@@ -4,6 +4,76 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.22.0 (2026-11-20)
+
+The lattice temperature now reaches the carrier statistics, so leakage
+grows with temperature and can drive a device into thermal runaway. Hot
+electrons run together with self-heating, triangle meshes get
+self-heating and tunnel barriers, band-to-band tunneling can run in
+both directions (tunnel diodes), and a new `Structure` builds a device's
+shape from deposition, etching and oxidation steps. The README is now
+short; the examples, the full reference, the checks and the limits
+moved to the `docs` folder. The examples print what they printed
+before, except the sum of the terminal currents in example 28, which is
+at the rounding level (now -9.1e-12 A/mm, was -4.7e-11); examples 43 to
+47 are new.
+
+### Added
+
+- `Device(..., temperature_model="full", band_gap_temperature=Varshni(...))`:
+  the lattice temperature sets kT, N_c and N_v (as T^(3/2)), the band gap
+  (Varshni's form, your split between the bands), trap emission, the
+  Richardson velocity and the ohmic contacts. The fluxes are the exact
+  edge solution of Gamma = -mu [n grad E_c + grad(n k T)] for a
+  temperature that changes linearly along the edge, written so that at
+  one temperature they are the isothermal fluxes exactly; they carry
+  thermoelectric currents. `"mobility"` (the default) is the earlier
+  model.
+- `Device.solve(..., lattice_temperature=T)`: a lattice temperature you
+  set.
+- `Device.solve(..., energy_relaxation=tau, thermal=model)`: hot electrons
+  and self-heating together; the lattice gets the electrons' heat where
+  they relax (`DeviceState.lattice_heat`).
+- `BandToBand(..., model="nonlocal")`: tunneling from the valence band at
+  one point to the conduction band at another along the grid columns,
+  with the two-band WKB transmission integrated exactly on each edge and
+  the supply f_v - f_c, so it generates in reverse bias and recombines in
+  forward bias (Esaki diodes); separate electron and hole rates
+  (`DeviceState.band_to_band_rates`). In a uniform field with full supply
+  it is Kane's local formula.
+- `MeshDevice`: `thermal=` and `pulse` (the heat equation on the mesh by
+  the box method), `tunnel_barriers=` (barrier meshed in vertical
+  columns), `temperature_model`, `band_gap_temperature`.
+- `process.Structure`: a cross-section on square cells with conformal and
+  directional deposition (also epitaxy with in-situ doping), isotropic
+  (fast marching) and directional etching at material rates, Deal-Grove
+  oxidation, implants measured from the local surface, anneals inside the
+  semiconductor, and `mesh`, `doping` and `surface_nodes` to build a
+  `MeshDevice`.
+
+### Changed
+
+- With Fermi-Dirac statistics, trap emission is multiplied by the
+  degeneracy factor of its band, so traps keep detailed balance where a
+  band is degenerate. Before, they recombined slightly in equilibrium,
+  and a degenerate InN p-n diode with traps found no equilibrium at all.
+  Results with Boltzmann statistics, or with traps only where the bands
+  are not degenerate, do not change.
+- Self-heating iterations use Anderson acceleration, which converges
+  faster near thermal runaway, and runaway is recognized after 40
+  iterations that keep heating without settling instead of running to
+  `max_thermal_iter`.
+- `thermal_runaway` now also bisects for negative sweeps.
+- On meshes, a node shared equally by two regions within rounding goes to
+  the higher region, as intended (a tie of 1e-11 was missed before).
+
+### Not included (see docs/limits.md)
+
+- Paid support; process simulation beyond fixed-rate deposition and
+  etching, column-by-column oxidation and Gaussian implants; the nonlocal
+  band-to-band model on meshes or together with heating; Peltier and
+  Thomson heat.
+
 ## 0.21.0 (2026-11-20)
 
 The remaining gaps of the device solver are closed as far as an open
