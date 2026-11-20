@@ -1086,12 +1086,20 @@ def run_transistor(spec):
     thermal, heat_src = (None, [])
     if t.get("heating"):
         thermal, heat_src = _fet_thermal(spec, info)
-    V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal)
+    coupled = bool(t.get("hot_coupled")) and tau is not None
+    if coupled and thermal is not None:
+        raise SpecError("Hot electrons that change the current and self-heating cannot "
+                        "be combined yet; switch one of them off.")
+    if coupled:
+        V, I, S = dev.sweep(sweep, vals, bias=fixed, energy_relaxation=tau * 1e-12)
+    else:
+        V, I, S = dev.sweep(sweep, vals, bias=fixed, thermal=thermal)
     last = S[-1]
     te = None
     hot = None
     if tau is not None:
-        te = dev.electron_temperature(last, tau * 1e-12)
+        te = (last.electron_temperature if coupled
+              else dev.electron_temperature(last, tau * 1e-12))
         # the hottest place where electrons actually are (at least 1e-3 of
         # the densest point; in nearly empty regions the energy balance
         # gives a few stray electrons huge temperatures that carry nothing)
@@ -1102,7 +1110,8 @@ def run_transistor(spec):
         where = where & layer
         k = np.unravel_index(int(np.argmax(np.where(where, te, -np.inf))), te.shape)
         hot = {"peak": float(te[k]), "x": float(dev.axes[0][k[0]]),
-               "depth": float(dev.top - dev.axes[-1][k[1]]), "tau_ps": tau}
+               "depth": float(dev.top - dev.axes[-1][k[1]]), "tau_ps": tau,
+               "coupled": coupled}
     leak = None
     try:
         Ig, Jc = dev.gate_tunneling(last)
@@ -1179,6 +1188,20 @@ def run_breakdown(spec):
     if n > 120:
         raise SpecError("That is more than 120 steps; use a larger step.")
     vals = step * np.arange(1, n + 1)
+    if b.get("criterion", "avalanche") == "current":
+        ic = _num(b, "current_mA", 1.0, 1e-6, 1e4, "the breakdown current (mA/mm)")
+        try:
+            r = dev.breakdown_by_current("drain", vals, bias={"gate": vg}, current=ic * 1e-3)
+        except RuntimeError:
+            raise SpecError("The calculation stopped converging before the current "
+                            "was reached; try a smaller step.")
+        share = r["share"]
+        return {"criterion": "current", "current_mA": ic, "vbr": r["voltage"],
+                "first_step": r["first_step"],
+                "voltages": r["voltages"].tolist(),
+                "drain": r["current"]["drain"].tolist(),
+                "gate_share": share.get("gate", 0.0), "source_share": share.get("source", 0.0),
+                "sources": info["sources"], "warnings": info["warn"]}
     try:
         vbr, V, I, S = dev.breakdown_voltage("drain", vals, bias={"gate": vg},
                                              ionization=ion)
@@ -1197,7 +1220,7 @@ def run_breakdown(spec):
                     "still flows at the last step (under the gate or through the base). "
                     "Use a more negative gate voltage; in a real device this leakage, "
                     "not avalanche, may set the breakdown.")
-    return {"voltages": V.tolist(), "integral": I.tolist(), "vbr": vbr,
+    return {"criterion": "avalanche", "voltages": V.tolist(), "integral": I.tolist(), "vbr": vbr,
             "peak_field": r["peak_field"], "where_x": float(start[0]),
             "where_depth": float(dev.top - start[-1]),
             "off_current": last.current["drain"],

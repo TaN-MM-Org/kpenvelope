@@ -322,6 +322,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="fetGamma">How fast it falls when hot (power of temperature)</label><input id="fetGamma" type="text" inputmode="decimal" value="2.35"></div>
       <div><label for="fetVs">Top speed (cm/s) <span class="help" title="Leave it at auto to take it from the electron density, with the formula of Bajaj et al. (2015), which their pulsed measurements bore out: denser electron layers saturate at a lower speed.">?</span></label><input id="fetVs" type="text" inputmode="decimal" value="auto"></div>
       <div><label for="fetMuSrc">Where these come from (optional)</label><input id="fetMuSrc" type="text" placeholder="built-in sources if empty"></div>
+      <div><label for="fetHotC"><input type="checkbox" id="fetHotC"> Let hot electrons change the current <span class="help" title="With this ticked (and an energy loss time), the app solves the electrons' energy together with the current (the hydrodynamic model): hot electrons diffuse and keep their speed for a moment where the field jumps, so the current can be a little higher than without. Takes several times longer. Not together with self-heating.">?</span></label></div>
       <div><label for="fetTau">Energy loss time for hot electrons (ps, optional) <span class="help" title="Fill this in to see how hot the electrons get (their temperature can be far above the crystal's). It is how fast hot electrons hand their energy to the crystal. E. Tiras et al. (2012) measured 0.47 ps at 250 K in AlGaN/AlN/GaN. Use a value for your own material if you have one.">?</span></label><input id="fetTau" type="text" inputmode="decimal" placeholder="for example 0.47"></div>
     </div>
     <label style="color:var(--ink)"><input type="checkbox" id="fetHeat"> Include self-heating (the current warms the device, which slows the electrons) <span class="help" title="The heat made by the current flows down through the base and the substrate to a heat sink at the room temperature you set. The sides are treated as the middle between identical fingers, so the finger pitch sets how far the heat can spread.">?</span></label>
@@ -352,6 +353,8 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="bdG">Gate voltage, switched off (V)</label><input id="bdG" type="text" inputmode="decimal" value="-10"></div>
       <div><label for="bdTo">Highest drain voltage to try (V)</label><input id="bdTo" type="text" inputmode="decimal" value="300"></div>
       <div><label for="bdStep">Step (V)</label><input id="bdStep" type="text" inputmode="decimal" value="15"></div>
+      <div><label for="bdCrit">When is it broken down? <span class="help" title="Avalanche: carriers knock new electron-hole pairs loose until the current runs away. Current: the drain voltage where the off-state current reaches a set value (1 mA per mm is common), whatever lets it through: leakage under the gate or through the base.">?</span></label><select id="bdCrit"><option value="avalanche">Avalanche (impact ionization)</option><option value="current">The drain current reaches a set value</option></select></div>
+      <div><label for="bdCur">That current (mA per mm)</label><input id="bdCur" type="text" inputmode="decimal" value="1"></div>
     </div>
     <p><button id="runBd">Find the breakdown voltage</button> <span class="note">A few minutes.</span></p>
     <div id="outBd"></div>
@@ -409,7 +412,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <dt>Breakdown</dt><dd>At a high enough voltage, fast carriers knock new electrons loose, which knock out more, and the current runs away.</dd>
       <dt>Hot electrons</dt><dd>In a strong field electrons gain energy faster than they can pass it to the crystal, so they get much hotter than the crystal itself.</dd>
       <dt>Passivation and field plate</dt><dd>A thin insulating film over the surface, and a metal strip on it joined to the gate that spreads out the strong field next to the gate.</dd>
-      <dt>What this app does not do</dt><dd>It does not simulate how a device is made (etching, growth, annealing), shapes other than boxes, or electrons hopping over a band step as a separate process. Hot electrons change only their temperature here, not their speed. These limits are listed in the documentation.</dd>
+      <dt>What this app does not do</dt><dd>The app builds transistors from boxes. The Python package also does curved shapes on triangle meshes, implants and anneals, electrons hopping over band steps, tunneling through barriers inside the device and between bands, and thermal runaway; see the documentation for those and for the limits.</dd>
     </dl>
     <p class="note">Every built-in number names its source; see the "Charges" tab, and the documentation of kpenvelope.</p>
   </div>
@@ -788,7 +791,8 @@ function fetSpec(){ return {gate_length:$("fetLg").value,gap_sg:$("fetSG").value
   sweep:$("fetSweep").value,fixed:$("fetFixed").value,from:$("fetFrom").value,to:$("fetTo").value,step:$("fetStep").value,
   heating:$("fetHeat").checked,substrate:$("fetSub").value,substrate_um:$("fetSubT").value,pitch_um:$("fetPitch").value,boundary:$("fetTbr").value,
   substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value,
-  contact_res:$("fetRc").value,passivation:$("fetPas").value,passivation_eps:$("fetPasEps").value,plate:$("fetPlate").value,tau_e:$("fetTau").value}; }
+  contact_res:$("fetRc").value,passivation:$("fetPas").value,passivation_eps:$("fetPasEps").value,plate:$("fetPlate").value,tau_e:$("fetTau").value,
+  hot_coupled:$("fetHotC").checked}; }
 $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   const r=await call("transistor",{device:{barrier:$("devBarrier").value},transistor:fetSpec()}); const out=$("outFet");
   if(r.error){ out.innerHTML=msg("err",r.error); ["cvFet","cvFetMap"].forEach(c=>$(c).classList.add("hidden")); return; }
@@ -797,7 +801,7 @@ $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
           :`with ${fmt(r.fixed)} V on the drain, the current goes from <b>${fmt(I[0])}</b> to <b>${fmt(I[k])} A per mm</b> as the gate goes from ${fmt(V[0])} to ${fmt(V[k])} V.`;
   if(r.heating){ const P=r.power[k], dT=r.tmax[k]-r.tmax[0]; sum+=` It dissipates ${fmt(P)} W per mm and its hottest point reaches ${fmt(r.tmax[k])} K${P>0.01?` (${fmt(dT/P)} K per W/mm)`:""}.`; }
   if(r.leak) sum+=` Electrons tunneling through the barrier under the gate carry ${sci(Math.abs(r.leak.current),2)} A per mm ${r.leak.current<0?"into":"out of"} the device through the gate.`;
-  if(r.hot) sum+=` The hottest electrons in the electron layer reach ${fmt(r.hot.peak)} K, ${fmt(r.hot.x)} nm along and ${fmt(r.hot.depth)} nm below the surface.`;
+  if(r.hot) sum+=` The hottest electrons in the electron layer reach ${fmt(r.hot.peak)} K, ${fmt(r.hot.x)} nm along and ${fmt(r.hot.depth)} nm below the surface${r.hot.coupled?" (their energy was solved together with the current)":" (worked out from the current, without changing it)"}.`;
   out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
     `<p class="note">Electron layer of the bare channel: ${sci(r.ns)} per cm²; top speed used: ${sci(r.vsat)} cm/s.</p>`+
     `<details><summary class="small">Sources of the built-in numbers</summary><ul class="small">${r.sources.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></details>`;
@@ -848,8 +852,19 @@ $("runRf").onclick=()=>busy($("runRf"),$("outRf"),async()=>{
   plot($("cvRf"),ser,{xlabel:"Frequency: power of ten of Hz (9 = 1 GHz, 12 = 1 THz)",ylabel:"Gain (dB)",hline:0});
 });
 $("runBd").onclick=()=>busy($("runBd"),$("outBd"),async()=>{
-  const r=await call("breakdown",Object.assign(fetBase(),{breakdown:{gate:$("bdG").value,to:$("bdTo").value,step:$("bdStep").value}})); const out=$("outBd");
+  const r=await call("breakdown",Object.assign(fetBase(),{breakdown:{gate:$("bdG").value,to:$("bdTo").value,step:$("bdStep").value,criterion:$("bdCrit").value,current_mA:$("bdCur").value}})); const out=$("outBd");
   if(r.error){ out.innerHTML=msg("err",r.error); $("cvBd").classList.add("hidden"); return; }
+  if(r.criterion==="current"){
+    const V=r.voltages, last=V[V.length-1];
+    const where=r.gate_share>0.5?"most of it flows into the gate":"most of it returns through the source (under the gate or through the base)";
+    const sum=r.first_step?`the drain current is already above ${fmt(r.current_mA)} mA per mm at the first step (${fmt(r.vbr)} V); ${where}. Use a smaller step or a more negative gate voltage.`
+      :r.vbr!=null?`the drain current reaches ${fmt(r.current_mA)} mA per mm at about <b>${fmt(r.vbr)} V</b>; ${where}.`:`the drain current stays below ${fmt(r.current_mA)} mA per mm up to ${fmt(last)} V.`;
+    out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+srcList(r);
+    LAST={name:"breakdown_current",cols:["drain_V","drain_A_per_mm"],rows:V.map((v,i)=>[v,r.drain[i]])};
+    $("cvBd").classList.remove("hidden");
+    plot($("cvBd"),[{x:V,y:r.drain.map(v=>Math.log10(Math.max(Math.abs(v),1e-15))),color:"#e5534b",label:"Drain current, power of ten of A per mm",dots:true}],{xlabel:"Drain voltage (V)",ylabel:"Drain current (log10 A/mm)",hline:Math.log10(r.current_mA*1e-3)});
+    return;
+  }
   const V=r.voltages, last=V[V.length-1];
   const sum=r.vbr!=null?`avalanche breakdown at about <b>${fmt(r.vbr)} V</b> on the drain. It starts ${fmt(r.where_x)} nm along and ${fmt(r.where_depth)} nm below the surface, where the field is ${fmt(r.peak_field/1e6)} MV/cm.`
     :`no avalanche breakdown up to ${fmt(last)} V (the count reaches ${fmt(r.integral[r.integral.length-1])} of the 1 needed). The strongest field in the GaN is ${fmt(r.peak_field/1e6)} MV/cm, ${fmt(r.where_x)} nm along and ${fmt(r.where_depth)} nm below the surface.`;
