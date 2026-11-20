@@ -4,6 +4,77 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.23.0 (2026-11-20)
+
+Heat can now include the Peltier and Thomson heat, band-to-band
+tunneling runs together with self-heating, hot electrons and a set
+lattice temperature, the nonlocal tunneling model works on triangle
+meshes, and the browser app offers the features of the last two
+releases. The examples print what they printed before; examples 48 to
+50 are new.
+
+### Added
+
+- `Device(..., heat_model="thermoelectric")` and the same for
+  `MeshDevice`: the heat adds -div(Pi_n Gamma_n + Pi_p Gamma_p) to the
+  Joule and recombination heat, with Pi = kT (5/2 - ln(n / N_c)) for
+  electrons (and the same for holes) taken from the package's own
+  thermoelectric current, so heat and current agree (the thermodynamic
+  heat of G. K. Wachutka, IEEE Trans. Comput.-Aided Des. 9, 1141 (1990);
+  Eq. 21 of M. Kantner, arXiv:1911.00377). It gives the Peltier heat at
+  contacts and junctions and the Thomson heat along a temperature
+  difference; it sums to zero over the device. With hot electrons it
+  adds the holes' share (the electrons' is in their energy balance).
+  `"joule"` (the default) is the earlier model.
+- Band-to-band tunneling (local and nonlocal) with `thermal=`,
+  `energy_relaxation=` and `lattice_temperature=`: the tunneling rates
+  and the heated (or hot-electron) solve take turns until both settle.
+- `BandToBand(..., model="nonlocal")` on `MeshDevice`: straight,
+  parallel paths in `direction` (default vertical), `path_spacing` nm
+  apart (default the median edge length), with the bands sampled where
+  the paths cross the triangles' edges, so the profile along a path is
+  the mesh's own.
+- `nitride.gap_shift(alloy, x, conduction_share)` (`AlloyGapShift`): the
+  change of the gap with temperature for GaN, AlN, InN, AlGaN, InGaN and
+  InAlN from the cited Varshni numbers of I. Vurgaftman and J. R. Meyer,
+  J. Appl. Phys. 94, 3675 (2003), as used by `algan`, `ingan` and
+  `inaln`. Use it as `band_gap_temperature`.
+- `Device.thermal_runaway(..., stop_above=T)`: ends the sweep at the
+  first voltage whose hottest point passes T (`too_hot` in the result).
+- The app: a Process steps tab (a recipe of deposit, etch, implant,
+  anneal and oxidize lines, drawn as materials or doping); a thermal
+  runaway search in the Transistor tab; and in that tab the full
+  temperature model (cited gap numbers of each layer), Peltier heat,
+  thermionic emission over the barrier step, and hot electrons together
+  with self-heating; band-to-band tunneling in the I-V sweep (the stack
+  as a vertical device), for tunnel junctions and tunnel diodes. Results
+  hotter than 1000 K carry a warning.
+
+### Changed
+
+- The docstring of `thermal_runaway` now describes the full temperature
+  model (it said that only the mobility follows the temperature).
+
+### Not included (see docs/limits.md)
+
+- Tunneling paths that bend with the field; Pi in the Fermi-Dirac form
+  for a degenerate electron gas (the non-degenerate form used comes out
+  too small there); the change of the band edges with temperature in Pi.
+
+### Checks (tests)
+
+11 new tests (see docs/checks.md for the tolerances): Peltier heat at
+the contacts of a bar against Pi I / q, none inside, total heat equal
+to the power; Thomson heat along a linear temperature profile against a
+hand calculation; band-to-band tunneling at a set temperature against
+the device built for it; with self-heating a fixed point of both the
+current and the heat equation; with fast-relaxing hot electrons equal
+to drift-diffusion; mesh tunneling equal to the tensor grid and to
+Kane's formula on an unstructured mesh in three directions;
+`gap_shift` against the alloy records; `stop_above`; and the app's new
+actions, including the vertical device against the 1D diode solver.
+All 50 documented examples were rerun.
+
 ## 0.22.0 (2026-11-20)
 
 The lattice temperature now reaches the carrier statistics, so leakage
@@ -1140,7 +1211,7 @@ for layered stacks (permittivity profile, position of the fixed sheet).
   law is applied to the displacement field, so each layer carries its
   own electric field.
 
-### Behaviour changes
+### Behavior changes
 
 Results with ky = 0 and eps_yz = 0 are unchanged bit for bit. This
 covers README examples 1 to 7, every self-consistent result with the

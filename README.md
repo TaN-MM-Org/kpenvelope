@@ -32,8 +32,9 @@ only looks right.
 **Whole devices, in 2D and 3D**
 
 - Current in transistors and diodes, traps that fill and empty over
-  time, self-heating down to the heat sink, and the speed limits f_T and
-  f_max.
+  time, self-heating down to the heat sink (with the heat that carriers
+  carry across contacts and junctions, if you want it), and the speed
+  limits f_T and f_max.
 - Breakdown (avalanche, a current limit, or thermal runaway), tunneling
   through barriers and between bands (including tunnel diodes), hot
   electrons, and electrons hopping over band steps.
@@ -45,7 +46,8 @@ only looks right.
   etching, oxidation, implants and anneals.
 
 **An app** that runs many of these calculations in your web browser,
-with no code.
+with no code: charges, electrons, error bars, data fits, transistors with
+heat and runaway, tunnel diodes, and process steps.
 
 ## Install
 
@@ -158,7 +160,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  47 worked examples, each with the output it prints, and three
+  50 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -197,9 +199,12 @@ The main gaps, in plain terms:
   constants come from you, and the shapes are built from square cells.
 - The built-in meshes are simple. For complex shapes, bring a mesh from
   a mesh generator.
-- Some models cannot be combined yet: band-to-band tunneling does not
-  run together with self-heating or hot electrons, and the tunneling
-  paths of the nonlocal model run along the grid's vertical lines only.
+- Tunneling between bands follows straight paths in one direction, not
+  paths that bend with the field. Models that depend on each other, such
+  as tunneling and heat, are solved by taking turns, which is slower than
+  solving them together.
+- The heat carried by electrons uses a simple form that comes out too
+  small where the electrons are very dense, as in a transistor channel.
 - No scattering lifetimes, and no material numbers without a source:
   where a number is missing, you supply it with its source.
 - There is no paid support. Questions and bug reports go to the

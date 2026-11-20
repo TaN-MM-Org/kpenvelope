@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kpenvelope"
-version = "0.22.0"
+version = "0.23.0"
 description = "Polarization charge, misfit-dislocation charge, 2D electron and hole gases and device curves of GaN, AlGaN, InGaN, InAlN and ScAlN stacks, with error bars and a browser app: six-band k.p holes, Schroedinger-Poisson electrons, drift-diffusion in 1D, 2D and 3D with traps and self-heating, interface phonons, fits to measured data"
 readme = "README.md"
 license = "Apache-2.0"
