@@ -1426,7 +1426,7 @@ def _vertical_device(spec, layers, ic, T, dz, top, btbt):
 
 
 _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thickness=50 "
-                 "mode=conformal' (or mode=directional, or mode=flux exponent=1), "
+                 "mode=conformal' (or mode=directional, or mode=flux exponent=1 sticking=1), "
                  "'etch SiN=1 time=60 mode=directional from=100 to=900' (or mode=isotropic, "
                  "or mode=flux exponent=1), "
                  "'implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900', "
@@ -1508,16 +1508,18 @@ def run_process(spec):
                 st.deposit(mat, num("thickness", lo=1e-6), mode=mode, window=win,
                            semiconductor=args.get("semiconductor", "no") == "yes",
                            donors=nd, acceptors=na,
-                           exponent=num("exponent", 1.0, 1.0, 1e4))
+                           exponent=num("exponent", 1.0, 1.0, 1e4),
+                           sticking=num("sticking", 1.0, 1e-6, 1.0))
             elif kind == "etch":
                 rates = {a: num(a, lo=0.0) for a in args
-                         if a not in ("time", "mode", "from", "to", "exponent")}
+                         if a not in ("time", "mode", "from", "to", "exponent", "sticking")}
                 if not rates:
                     raise SpecError(f"Step {k}: give each material's rate, like SiN=1 (nm/s).")
                 if args.get("mode") == "flux":
                     _flux_size(st, k)
                 st.etch(rates, num("time", lo=1e-12), mode=args.get("mode", "isotropic"),
-                        window=win, exponent=num("exponent", 1.0, 1.0, 1e4))
+                        window=win, exponent=num("exponent", 1.0, 1.0, 1e4),
+                        sticking=num("sticking", 1.0, 1e-6, 1.0))
             elif kind == "implant":
                 sp = args.get("species", "donor")
                 st.implant(Implant(sp, num("dose", lo=1e-30), num("range", lo=0.0),
