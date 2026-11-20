@@ -5,7 +5,7 @@ the corrections made in earlier versions.
 
 ## How the results are checked
 
-344 automated tests run on every push and pull request, on Python 3.9,
+357 automated tests run on every push and pull request, on Python 3.9,
 3.10, 3.11, 3.12, 3.13 and 3.14, and once more on Python 3.10 with the
 oldest NumPy (1.22.0) and SciPy (1.8.0) the package allows. Most
 numerical checks compare against an exact formula, a symmetry, or a
@@ -342,6 +342,68 @@ the tests use:
 - Meshes: a rectangular grid cut into right triangles reproduces the
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
+
+**Quantum transport, meshes, implants, etching kinetics, oxide flow (new in 0.26.0)**
+
+- NEGF chain: the transmission of a rectangular barrier (0.3 eV, 2 nm,
+  0.2 m0) against the textbook formula, second order in the step (error
+  below 1e-3 at 0.05 nm, falling more than 3.5-fold when the step
+  halves); a uniform chain at equilibrium holds the 2D gas density
+  m kT / (pi hbar^2) ln(1 + exp(F / kT)) to second order (2.5e-3 at 0.5
+  nm, 6e-4 at 0.25 nm) with exactly zero current; the current over a
+  smooth barrier 0.15 eV high tends to the top-of-the-barrier formula as
+  the barrier widens (21, 4.9 and 1.2 percent above it at 20, 40 and 80
+  nm, the excess being tunneling through the top).
+- Buttiker probes: the current leaving the source equals the current
+  entering the drain (1e-8); the probes leave the equilibrium density
+  unchanged (5e-3); and the resistance grows with length at the Drude
+  rate q^2 n tau / m, nondegenerate and degenerate (1.2 percent at 0.25
+  nm; 1.3 and 2.0 percent at 0.5 nm, 0.7 and 0.6 percent at 0.25 nm).
+- `Device.negf`: at equilibrium, zero current and the confined sheet of
+  the QuantumChannel solution away from the leads (2.5e-3; next to the
+  leads the two differ by 2 to 4.5 percent, where the electrons' motion
+  along x, which the QuantumChannel leaves out, shows); the
+  self-consistent ballistic current against the top-of-the-barrier
+  formula on the same potential (0.1 to 1.5 percent above it); with
+  probes, a 2DEG resistor's resistance per length against
+  drift-diffusion with mu = q tau / m (6 percent at 0.5 nm, 14 percent at
+  1 nm).
+- Quantum channel on meshes: a mesh made from the tensor grid, with lines
+  on the grid's columns, gives the tensor grid's current (1e-10, measured
+  5e-14) and potential and quantum potential (1e-10 V) with electrons and
+  holes; on a mesh of nearly equilateral triangles the confined sheet
+  approaches the tensor grid's at second order (1.9, 0.5 and 0.07 percent
+  at steps of 1, 0.5 and 0.25 nm).
+- Monte Carlo implants: the scattering angle of the Coulomb potential
+  against 2 atan(1 / (2 eps b)) (1e-9; measured 3e-12); the Coulomb
+  stopping up to a largest impact parameter against its closed form
+  (1e-5); the ZBL nuclear stopping against the universal fit for eps <= 1
+  (1 percent; 0.1 percent at 1 and 10 keV for B and As in Si); the
+  interpolation table against direct quadrature (2e-3 in the stopping it
+  gives); the path with electronic stopping alone against 2 (sqrt(E0) -
+  sqrt(E_cut)) / (N k) (2e-3); the mean path of heavy ions against the
+  continuous-slowing-down path (3 percent; Sb and As at 100 keV in Si:
+  1.7 and 1.8 percent short); two runs agreeing within their statistics;
+  the implant step holding the dose of the ions that stayed in (2e-3).
+  The ranges are not compared with measured data.
+- Etching kinetics: the coverage and speed on a flat surface against the
+  site balance (1e-12) and its ion-limited and neutral-limited limits;
+  with every face bare, the neutral fluxes in a trench equal the
+  fixed-sticking re-emission of 0.25.0 (1e-6); the neutrals that enter a
+  trench equal those that stick plus those that leave (3e-3, the
+  difference between the two ways the fluxes are computed); the trench
+  bottom etches at 0.65 of the open rate when the neutrals limit it and
+  above 0.95 when the ions do.
+- Viscous flow: a flat oxide on a rigid substrate rising at q h with
+  sigma_zz = 0 and sigma_xx = -2 eta q in its growing layer (1e-9); a
+  rigid cylinder in a ring of oxide fed at its surface against the exact
+  radial flow v_r = Q / (2 pi r) and sigma_tt - sigma_rr = 4 eta (Q /
+  2 pi) / r^2 (2e-3 at a 1 nm step; measured 6e-4 and 6e-5); a flat
+  oxidation with the stress coupled grows exactly as without; at the
+  corners of a step the compressive stress slows it.
+- Hot electrons with velocity saturation as the relaxation time goes to
+  zero: five ways of making the model end exactly on field-driven
+  drift-diffusion were tried and none released (see the limits page).
 
 **Quantum holes, ballistic limit, bouncing particles (new in 0.25.0)**
 

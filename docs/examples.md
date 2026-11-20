@@ -7,7 +7,7 @@ describes every function used here.
 ## Examples
 
 Each example below runs as written, and the output shown is what it
-prints with kpenvelope 0.25.0 (all of them were rerun for this release).
+prints with kpenvelope 0.26.0 (all of them were rerun for this release).
 Numbers labeled illustrative are chosen for the example, not taken from
 a source.
 
@@ -25,7 +25,9 @@ a process flow into a device; 48 to 50 Peltier heat, a tunnel diode that
 heats itself, and tunneling on a turned mesh; 51 to 54 quantum electrons
 in the device solver and a transistor, line-of-sight etching and
 deposition, and LOCOS oxidation; 55 and 56 the ballistic limit of a
-transistor and particles that bounce.
+transistor and particles that bounce; 57 to 61 quantum transport, a
+quantum channel on a mesh, implant ranges by Monte Carlo, etching with
+ions and a gas, and oxide stress.
 
 ### 1. Energy levels and what they are made of
 
@@ -2555,6 +2557,218 @@ inside of a trench, which is why slow-reacting gases give conformal
 films. The package works this out from the view factors between all
 exposed faces (the tests compare it with an independent Monte Carlo
 simulation of bouncing particles). The cells round each film to 2 nm.
+
+### 57. Quantum transport through a short transistor (new in 0.26.0)
+
+```python
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# a short transistor (30 nm gate, 100 nm between the contacts) whose
+# channel electrons are solved by non-equilibrium Green's functions
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+contacts = [Electrode("source", "ohmic", 0, 50, implant_depth=30, implant_donors=1e20),
+            Electrode("gate", "schottky", 85, 115, barrier=1.0),
+            Electrode("drain", "ohmic", 150, 200, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 200.0, contacts, Mobility(1500.0, "illustrative"),
+             Surface("pinned", barrier=1.0), dx_fine=5, dx_max=50, dz_fine=0.5, dz_max=50,
+             quantum=QuantumChannel((270.0, 319.5), x_range=(55, 145)))
+for vg in (-1.0, -2.0):
+    bias = {"gate": vg, "drain": 0.05}
+    dd = dev.solve(bias)
+    ball = dev.negf(bias, guess=dd)                         # no scattering
+    top, _ = dev.ballistic_current(ball)
+    scat = dev.negf(bias, guess=dd, scattering_time=1e-13)  # Buttiker probes
+    print(f"gate {vg:+.0f} V: NEGF {ball.negf['current']:.3f} A/mm "
+          f"(top of the barrier {top:.3f}), with scattering {scat.negf['current']:.3f}, "
+          f"drift-diffusion {dd.current['drain']:.3f} A/mm")
+```
+
+```
+gate -1 V: NEGF 1.181 A/mm (top of the barrier 1.180), with scattering 0.512, drift-diffusion 1.631 A/mm
+gate -2 V: NEGF 1.009 A/mm (top of the barrier 1.002), with scattering 0.458, drift-diffusion 1.465 A/mm
+```
+
+`negf` solves the channel electrons as waves: each subband of the
+channel is a chain along x between the source and the drain, filled from
+both at their Fermi levels, with the potential solved again from the
+electrons it gives until the two agree. Without scattering, the current
+is a little above the top-of-the-barrier formula on the same potential
+(the electrons that tunnel through the top of the gate's barrier). With
+`scattering_time`, every site is joined to a Buttiker probe that takes
+in electrons and gives them back with random momentum, so the channel
+resists like a metal with the Drude mobility q tau / m (about 880 cm^2/Vs
+for a mass of 0.2 m0), which is why that current is the lowest.
+Drift-diffusion with 1500 cm^2/Vs has no such limit and no resistance of
+the ends of a ballistic channel. Numbers illustrative.
+
+### 58. A quantum channel on a triangle mesh
+
+```python
+import dataclasses
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+from kpenvelope.mesh import MeshDevice, MeshRegion, mesh_from_points
+
+# a 20 nm GaN well between barriers 0.3 eV higher (illustrative), doped;
+# its confined electrons on a tensor grid and on a mesh of nearly
+# equilateral triangles (rows shifted by half a spacing)
+g = algan(0.0)
+bar = dataclasses.replace(g, name="bar", ec=g.ec + 0.3)
+mob, W = Mobility(500.0, "illustrative"), 20.0
+layers = [StackLayer(bar, 100.0, donors=1e-4), StackLayer(g, 20.0, donors=1e-3),
+          StackLayer(bar, 80.0, donors=1e-4)]
+el = [Electrode("top", "ohmic", 0, W)]
+region = lambda x, z: "b1" if z < 100 else ("w" if z < 120 else "b2")
+R = {k: MeshRegion(material=m, mobility=mob, donors=d)
+     for k, m, d in (("b1", bar, 1e-4), ("w", g, 1e-3), ("b2", bar, 1e-4))}
+for dz in (1.0, 0.5):
+    z = np.unique(np.r_[np.linspace(0, 90, 10), np.arange(90, 130 + 1e-9, dz),
+                        np.linspace(130, 200, 8)])
+    T = Device(layers, W, el, mob, Surface("states", fixed_charge=0.0),
+               grid=dict(x=np.linspace(0, W, 3), z=z),
+               quantum=QuantumChannel((95.0, 125.0), x_range=(0, W)))
+    ref = np.mean(T.solve({}).quantum["sheet_cm2"])
+    pts = []
+    for j, zz in enumerate(z):
+        xs = np.linspace(0, W, int(round(W / (1.15 * dz if 90 <= zz <= 130 else 10.0))) + 1)
+        if j % 2 and 90 < zz < 130:
+            xs = np.r_[0.0, 0.5 * (xs[1:] + xs[:-1]), W]
+        pts += [(x, zz) for x in xs]
+    m = mesh_from_points(np.array(pts), region)
+    top = np.flatnonzero(np.isclose(m.points[:, 1], 200))
+    M = MeshDevice(m, R, el, {"top": top},
+                   quantum=QuantumChannel((95.0, 125.0), x_range=(0, W), line_spacing=W / 4))
+    sh = np.array(M.solve({}).quantum["sheet_cm2"])
+    print(f"step {dz} nm: tensor grid {ref:.4e} cm^-2, mesh {sh.min():.4e} to "
+          f"{sh.max():.4e} cm^-2 ({len(m.points)} nodes)")
+```
+
+```
+step 1.0 nm: tensor grid 2.8845e+12 cm^-2, mesh 2.8307e+12 to 2.9365e+12 cm^-2 (805 nodes)
+step 0.5 nm: tensor grid 2.8805e+12 cm^-2, mesh 2.8680e+12 to 2.8954e+12 cm^-2 (3003 nodes)
+```
+
+On a `MeshDevice` the quantum channel solves the Schroedinger equation
+along vertical lines through the mesh, sampled where they cross the
+triangles' edges, and carries the quantum potential back to the nodes.
+The confined sheet density on the mesh approaches the tensor grid's as
+the step shrinks (2 percent at 1 nm, 0.5 percent at 0.5 nm here); a mesh
+made from the tensor grid itself gives the tensor grid's result to
+machine precision (see the checks).
+
+### 59. Implant ranges by Monte Carlo
+
+```python
+from kpenvelope import bca
+
+# boron, arsenic and antimony ions into amorphous silicon (5.0e22 atoms/cm^3)
+si = bca.Target((bca.Element(14, 28.0855),), 4.994e22, "Si atom density")
+for name, Z, M, E in (("B", 5, 11.009, 30e3), ("As", 33, 74.92, 100e3),
+                      ("Sb", 51, 121.76, 100e3)):
+    r = bca.simulate(Z, M, E, si, n_ions=2000, seed=1)
+    print(f"{name:2s} {E / 1e3:4.0f} keV: Rp {r.projected_range:5.1f} nm, "
+          f"dRp {r.straggle:4.1f} nm, lateral {r.lateral_straggle:4.1f} nm, "
+          f"skewness {r.skewness:+.2f}, back out {100 * r.backscattered / r.n_ions:.1f} %")
+```
+
+```
+B    30 keV: Rp 131.1 nm, dRp 51.9 nm, lateral 56.9 nm, skewness -0.18, back out 1.4 %
+As  100 keV: Rp  68.8 nm, dRp 23.6 nm, lateral 17.6 nm, skewness +0.19, back out 0.0 %
+Sb  100 keV: Rp  53.2 nm, dRp 15.5 nm, lateral 11.4 nm, skewness +0.31, back out 0.0 %
+```
+
+`bca.simulate` follows each ion through a sequence of collisions with the
+target atoms (the ZBL universal potential, the scattering angle by
+quadrature) and the electronic stopping of Lindhard and Scharff between
+them. The projected range Rp, its straggle dRp, the lateral straggle and
+the skewness come from the final positions; `RangeResult.implant` turns
+the result into an implant step with the simulated depth profile. The
+electronic stopping of this textbook model can be off by tens of percent
+for light ions such as boron, so compare with measured ranges or SRIM
+before relying on the numbers (they are not checked against measured
+data here).
+
+### 60. Etching with ions and a reactive gas together
+
+```python
+from kpenvelope.process import Structure, EtchKinetics
+
+# a 40 nm wide, 60 nm deep trench in silicon under a reactive gas and an
+# ion beam: how fast its bottom etches compared with an open surface, when
+# the neutrals limit the rate and when the ions do (all numbers illustrative)
+st = Structure(200.0, 0.0, 200.0, 2.0, "Si", 150.0)
+st.etch({"Si": 1.0}, 60.0, mode="directional", window=(80, 120))
+kb = 44                                       # the cell row at the trench bottom
+for label, Gn, Gi in (("neutral-limited", 1e18, 1e19), ("ion-limited", 1e21, 1e16)):
+    kin = EtchKinetics(neutral_flux=Gn, ion_flux=Gi, site_density=1e15,
+                       sticking={"Si": 0.2}, ion_yield={"Si": 5.0},
+                       atoms_cm3={"Si": 5e22}, reference="illustrative")
+    q = st.kinetic_rates(kin)
+    bot = [r for r in q if r["face"][2] == 0 and r["face"][1] == kb
+           and abs(st.xc[r["face"][0]] - 100) < 4]
+    th, v = kin.flat("Si")
+    vb = sum(r["speed"] for r in bot) / len(bot)
+    cb = sum(r["coverage"] for r in bot) / len(bot)
+    print(f"{label:15s}: open surface {v:6.2f} nm/s (coverage {th:.2f}), "
+          f"trench bottom {vb:6.2f} nm/s (coverage {cb:.2f}), ratio {vb / v:.2f}")
+```
+
+```
+neutral-limited: open surface  39.84 nm/s (coverage 0.00), trench bottom  25.82 nm/s (coverage 0.00), ratio 0.65
+ion-limited    : open surface  10.00 nm/s (coverage 1.00), trench bottom   9.98 nm/s (coverage 1.00), ratio 1.00
+```
+
+Each exposed face has a share of its sites covered by the reactive gas;
+ions remove covered sites, and the gas covers free ones. When the ions
+are plentiful, the gas reaching the face sets the rate, and the bottom of
+a trench, which sees less gas, etches more slowly (aspect-ratio dependent
+etching); when the gas is plentiful, the ions set it, and the nearly
+vertical beam reaches the bottom as well as the top. The gas that does
+not stick bounces on (the view factors of example 56). All fluxes,
+yields and sticking coefficients are yours.
+
+### 61. Oxide that flows: stress at the corners of a step
+
+```python
+import numpy as np
+from kpenvelope.process import Structure
+
+# oxidation of a silicon step, with the oxide's viscous flow and the stress
+# it makes slowing the reaction where the stress normal to the interface is
+# compressive (Kao et al.); B, B/A, viscosity and activation volume illustrative
+for coupled in (False, True):
+    st = Structure(80.0, 0.0, 140.0, 2.0, "Si", 100.0)
+    st.etch({"Si": 1.0}, 40.0, mode="directional", window=(40, 80))
+    kw = dict(viscosity={"O": 1e12}, stress_volume_nm3=0.025,
+              temperature_K=1273.0) if coupled else {}
+    st.oxidize("Si", "O", 0.5, 0.05, 2000.0, 0.44, "illustrative", mode="2d", **kw)
+    line = f"stress {'on ' if coupled else 'off'}: oxide area {st.area('O'):.0f} nm^2"
+    if coupled:
+        ox = st.mat == "O"
+        sxx, szz = st.oxide_stress["sxx"], st.oxide_stress["szz"]
+        flat = ox & (st.xc[:, None] < 20)
+        line += (f"; in the oxide on the flat top sigma_xx {np.mean(sxx[flat]) / 1e9:+.2f} GPa, "
+                 f"sigma_zz {np.mean(szz[flat]) / 1e9:+.2f} GPa; most compressive "
+                 f"{min(sxx[ox].min(), szz[ox].min()) / 1e9:+.1f} GPa")
+    print(line)
+```
+
+```
+stress off: oxide area 2952 nm^2
+stress on : oxide area 2892 nm^2; in the oxide on the flat top sigma_xx -0.24 GPa, sigma_zz -0.05 GPa; most compressive -11.1 GPa
+```
+
+With `viscosity`, each step of the oxidation also solves the slow flow
+of the oxide that the new volume drives (`stokes`) and keeps the stress.
+On the flat part the oxide is squeezed along the surface (it cannot
+spread sideways); at the corners of the step the stress is much larger.
+With `stress_volume_nm3` the reaction slows where the stress normal to
+the interface is compressive, so the corners grow less oxide, as Kao and
+co-workers found. The shape still follows the package's volume rule; the
+flow sets the stress.
 
 ## Tutorials
 

@@ -618,6 +618,64 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Quantum transport, quantum channels on meshes, Monte Carlo implants, plasma etching, oxide stress (new in 0.26.0)**
+
+- `Device.negf(bias, source="source", drain="drain", dx=0.5,
+  scattering_time=None, guess=None, energy_step=None, emax_kT=15,
+  energy_rtol=1e-3, tol=1e-4, max_outer=100)` -- the channel electrons
+  by non-equilibrium Green's functions, self-consistent with the
+  potential (uncoupled mode space: each subband of the QuantumChannel's
+  columns between the contacts is a 1D chain along x, `dx` nm apart, with
+  the source and drain as its leads; R. Venugopal, Z. Ren, S. Datta,
+  M. S. Lundstrom and D. Jovanovic, J. Appl. Phys. 92, 3730 (2002),
+  doi:10.1063/1.1503165). `scattering_time` (s) adds Buttiker probes
+  (M. Buttiker, Phys. Rev. B 33, 3020 (1986); used in mode space by
+  R. Venugopal et al., J. Appl. Phys. 93 (2003), doi:10.1063/1.1563298).
+  Returns a DeviceState whose `current` holds the source and drain
+  currents, `quantum` the subbands and sheets, and `negf` the current
+  per subband, the subband profiles, the transmissions, the iterations
+  and the probes' Fermi levels.
+- `kpenvelope.negf` -- the pieces: `Chain(U, mass, a, eta=None)` (a 1D
+  chain between two leads, `solve(E)` for the transmission and the
+  contacts' spectral functions), `lead_self_energy`, `energy_grid`,
+  `adaptive_energies` (Simpson against trapezoid refinement), and
+  `chain_transport(chain, FS, FD, kT, ...)` (density and current of one
+  subband, free along the width, with probes if the chain has them).
+- `QuantumChannel(..., line_spacing=None)` and `MeshDevice(...,
+  quantum=)` -- the quantum channel on a triangle mesh, along vertical
+  lines `line_spacing` nm apart through the mesh.
+- `kpenvelope.bca` -- implant ranges by binary-collision Monte Carlo:
+  `Target(elements, atoms_cm3, reference)` with `Element(Z, mass,
+  fraction)`; `simulate(Z1, M1, energy_eV, target, n_ions=2000,
+  tilt_deg=0, seed=0, electronic_scale=1, electronic=None)` returns a
+  `RangeResult` (final positions, `projected_range`, `straggle`,
+  `lateral_straggle`, `skewness`, `kurtosis`, `histogram()`, and
+  `implant(species, dose_cm2, surface_z, ...)`, an `Implant` with the
+  simulated depth profile). Also `reduced_angle`, `nuclear_stopping`,
+  `electronic_stopping` (Lindhard and Scharff, Phys. Rev. 124, 128
+  (1961)) and `nuclear_stopping_fit`. The potential and its screening
+  length are the ZBL universal ones (Ziegler, Biersack and Littmark,
+  1985); the method is that of TRIM (Nucl. Instrum. Methods 174, 257
+  (1980), doi:10.1016/0029-554x(80)90440-1).
+- `Implant(..., depth_profile=(depths_nm, density_per_nm))` -- a
+  tabulated depth profile in place of the Gaussian.
+- `EtchKinetics(neutral_flux, ion_flux, site_density, sticking,
+  ion_yield, atoms_cm3, reference, sputter_yield=None, thermal_rate=None,
+  neutral_exponent=1, ion_exponent=100)` with `Structure.kinetic_rates(kin)`
+  (fluxes, coverage and speed of every exposed face) and
+  `Structure.plasma_etch(kin, time)` -- etching by ions and a reactive gas
+  together, with aspect-ratio dependent etching from the neutrals' and
+  ions' transport (R. A. Gottscho, C. W. Jurgensen and D. J. Vitkavage,
+  J. Vac. Sci. Technol. B 10, 2133 (1992), doi:10.1116/1.586180).
+- `Structure.stokes(viscosity, source=None, gas_ratio=1e-4)` -- the slow
+  viscous flow of the cross-section and its stresses (Pa).
+  `Structure.oxidize(..., mode="2d", viscosity=, stress_volume_nm3=,
+  temperature_K=, flow_every=1)` -- oxidation with the oxide's flow
+  (`oxide_stress` keeps its state) and a reaction rate that follows the
+  stress normal to the interface (D.-B. Kao, J. P. McVittie, W. D. Nix
+  and K. C. Saraswat, IEEE Trans. Electron Devices 35, 25 (1988),
+  doi:10.1109/16.2412).
+
 **Quantum holes, ballistic limit, bouncing particles (new in 0.25.0)**
 
 - `QuantumChannel(..., holes=(m_z, m_inplane, reference), electrons=True)`
