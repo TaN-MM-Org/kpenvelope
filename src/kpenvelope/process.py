@@ -88,6 +88,9 @@ class Implant:
     surface_z : z of the surface the ions enter (nm, z up the stack, as in
         `Device`); the depth below it is surface_z - z.
     activation : the fraction that becomes electrically active (0..1).
+    depth_profile : (depths in nm, density per nm) to use instead of the
+        Gaussian (new in 0.26.0; `bca.RangeResult.implant` makes it from a
+        Monte Carlo run); normalized to the dose.
     """
 
     species: str
@@ -99,8 +102,17 @@ class Implant:
     lateral_straggle_nm: float = None
     window: tuple = None
     activation: float = 1.0
+    depth_profile: tuple = None
 
     def __post_init__(self):
+        if self.depth_profile is not None:
+            dz, f = (np.asarray(v, float) for v in self.depth_profile)
+            if not (dz.ndim == 1 and dz.shape == f.shape and dz.size >= 2
+                    and np.all(np.diff(dz) > 0) and np.all(f >= 0) and np.any(f > 0)):
+                raise ValueError("Implant.depth_profile must be (depths in nm, increasing; "
+                                 "density per nm >= 0)")
+            trap = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+            object.__setattr__(self, "depth_profile", (dz, f / trap(f, dz)))
         if self.species not in ("donor", "acceptor"):
             raise ValueError("Implant.species must be 'donor' or 'acceptor'")
         for f in ("dose_cm2", "straggle_nm"):
@@ -131,8 +143,12 @@ class Implant:
         z = np.asarray(z, float)
         depth = self.surface_z - z
         s = self.straggle_nm
-        vert = (self.dose_cm2 / (math.sqrt(2 * math.pi) * s * 1e-7)
-                * np.exp(-0.5 * ((depth - self.projected_range_nm) / s) ** 2))
+        if self.depth_profile is not None:
+            dz, f = self.depth_profile
+            vert = self.dose_cm2 * 1e7 * np.interp(depth, dz, f, left=0.0, right=0.0)
+        else:
+            vert = (self.dose_cm2 / (math.sqrt(2 * math.pi) * s * 1e-7)
+                    * np.exp(-0.5 * ((depth - self.projected_range_nm) / s) ** 2))
         vert = np.where(depth >= 0, vert, 0.0)
         if self.window is None:
             lat = np.ones_like(x)
@@ -303,6 +319,96 @@ def _gaps(lo, hi, a, b):
     if run[-1] < b:
         out.append((max(run[-1], a), b))
     return out
+
+
+@dataclasses.dataclass(frozen=True)
+class EtchKinetics:
+    """Ion-enhanced etching by a reactive gas and an ion flux (new in
+    0.26.0), for `Structure.plasma_etch`.
+
+    On every exposed face, a share theta of the adsorption sites is
+    covered by the reactive neutrals. Neutrals stick to free sites with
+    probability s0 (the rest leave by the cosine law and land elsewhere);
+    ions remove ion_yield atoms from covered sites, the covered sites also
+    leave thermally at thermal_rate, and ions sputter sputter_yield atoms
+    from bare ones. In steady state
+
+        s0 G_n (1 - theta) = (Y G_i + k n_s) theta,
+        etch flux = Y G_i theta + k n_s theta + Y_sp G_i (1 - theta),
+
+    with G_n and G_i the neutral and ion fluxes that reach the face (from
+    neutral_flux and ion_flux on a flat, open surface, through the
+    geometry: `fluxes` with the exponents, and for neutrals also what the
+    other faces re-emit, `view_factors`), n_s = site density, and the
+    recession speed the etch flux over the material's atom density. Every
+    number is yours, with its reference: neutral_flux, ion_flux (cm^-2
+    s^-1), site_density (cm^-2), and per material sticking (s0), ion_yield,
+    sputter_yield, thermal_rate (1/s) and atoms_cm3. A material without a
+    sticking entry takes no neutrals (they leave it again) and is not
+    etched. The gas-phase chemistry of the plasma that sets the fluxes is
+    not modeled.
+    """
+
+    neutral_flux: float
+    ion_flux: float
+    site_density: float
+    sticking: dict
+    ion_yield: dict
+    atoms_cm3: dict
+    reference: str
+    sputter_yield: dict = None
+    thermal_rate: dict = None
+    neutral_exponent: float = 1.0
+    ion_exponent: float = 100.0
+
+    def __post_init__(self):
+        for f in ("neutral_flux", "ion_flux"):
+            v = getattr(self, f)
+            if not (math.isfinite(v) and v >= 0):
+                raise ValueError(f"EtchKinetics.{f} must be >= 0")
+        if not (math.isfinite(self.site_density) and self.site_density > 0):
+            raise ValueError("EtchKinetics.site_density must be > 0")
+        if not (isinstance(self.reference, str) and self.reference.strip()):
+            raise ValueError("EtchKinetics needs a reference")
+        for f in ("sticking", "ion_yield", "atoms_cm3", "sputter_yield", "thermal_rate"):
+            d = getattr(self, f)
+            if d is None:
+                object.__setattr__(self, f, {})
+                continue
+            for k_, v in d.items():
+                if not (math.isfinite(v) and v >= 0):
+                    raise ValueError(f"EtchKinetics.{f}[{k_!r}] must be >= 0")
+        for k_, v in self.sticking.items():
+            if v > 1:
+                raise ValueError("sticking must be in [0, 1]")
+        for k_ in self.sticking:
+            if not self.atoms_cm3.get(k_, 0) > 0:
+                raise ValueError(f"EtchKinetics.atoms_cm3 needs {k_!r} (> 0)")
+        if not (self.neutral_exponent >= 1 and self.ion_exponent >= 1):
+            raise ValueError("exponents must be >= 1 (see Structure.fluxes)")
+
+    def flat(self, material):
+        """(coverage, recession speed in nm/s) on a flat, open surface."""
+        return self.rate(material, self.neutral_flux, self.ion_flux)
+
+    def rate(self, material, Gn, Gi):
+        """(coverage, recession speed nm/s) for neutral and ion fluxes
+        (cm^-2 s^-1) arriving at a face of `material` (arrays allowed)."""
+        s0 = self.sticking.get(material, 0.0)
+        if s0 <= 0:
+            z = np.zeros_like(np.asarray(Gn, float))
+            return z, z
+        Y = self.ion_yield.get(material, 0.0)
+        Ysp = self.sputter_yield.get(material, 0.0)
+        k = self.thermal_rate.get(material, 0.0)
+        Gn = np.asarray(Gn, float)
+        Gi = np.asarray(Gi, float)
+        a = s0 * Gn
+        b = Y * Gi + k * self.site_density
+        tot = a + b
+        th = np.where(tot > 0, a / np.where(tot > 0, tot, 1.0), 0.0)
+        R = Y * Gi * th + k * self.site_density * th + Ysp * Gi * (1.0 - th)
+        return th, R / self.atoms_cm3[material] * 1e7
 
 
 class Structure:
@@ -789,7 +895,8 @@ class Structure:
         """Total arriving flux on every face when a share 1 - s of what
         arrives is re-emitted by the cosine law: Gamma = direct + F^T ((1 - s)
         Gamma)."""
-        A = np.eye(len(faces)) - (1.0 - sticking) * F.T
+        keep = 1.0 - np.broadcast_to(np.asarray(sticking, float), (len(faces),))
+        A = np.eye(len(faces)) - F.T * keep[None, :]
         return np.linalg.solve(A, direct)
 
     def _face_fluxes(self, n, sticking):
@@ -803,7 +910,7 @@ class Structure:
         G = self._radiosity(faces, F, d, sticking)
         return [(f[0], f[1], f[2], max(float(g), 0.0)) for f, g in zip(faces, G)]
 
-    def _flux_step(self, beams, time, deposit_material=None, sticking=1.0):
+    def _flux_step(self, beams, time, deposit_material=None, sticking=1.0, face_rates=None):
         """Advance etching (deposit_material None) or deposition for `time`
         with the face fluxes of `beams` [(exponent, {material: rate})] or,
         for deposition, [(exponent, rate)]. Each cell collects removed (or
@@ -814,15 +921,26 @@ class Structure:
         nx, nz = self.mat.shape
         acc = np.zeros((nx, nz))
         normal = {0: (0, 1), 1: (1, 0), 2: (-1, 0), 3: (0, -1)}
-        etchable = set() if deposit_material is not None else {
-            m for (_, r) in beams for m, v in r.items() if v > 0}
+        if face_rates is not None:
+            etchable = set(face_rates.etchable)
+        else:
+            etchable = set() if deposit_material is not None else {
+                m for (_, r) in beams for m, v in r.items() if v > 0}
         t = 0.0
         steps = 0
         while t < time * (1 - 1e-12):
             rate = np.zeros((nx, nz))
             best = np.zeros((nx, nz))
             bdir = np.zeros((nx, nz), int)
-            for (n, rates) in beams:
+            if face_rates is not None:
+                for (i, k, side, v) in face_rates():
+                    r = v * h
+                    if r > 0:
+                        rate[i, k] += r
+                        if r > best[i, k]:
+                            best[i, k] = r
+                            bdir[i, k] = side
+            for (n, rates) in ([] if face_rates is not None else beams):
                 for (i, k, side, f) in self._face_fluxes(n, sticking):
                     if f <= 0:
                         continue
@@ -883,9 +1001,254 @@ class Structure:
             self.mat[half] = deposit_material
         return steps
 
+    def kinetic_rates(self, kin: "EtchKinetics", tol: float = 1e-10, max_iter: int = 500):
+        """For the present shape: every exposed face (i, k, side) with its
+        neutral and ion fluxes (cm^-2 s^-1), coverage and recession speed
+        (nm/s) under `kin`. The neutrals' coverage and their re-emission
+        depend on each other (a covered face re-emits more); they are
+        iterated until the fluxes change by less than tol (relative)."""
+        faces, F = self.view_factors()
+        if not faces:
+            return []
+        dn = {(i, k, sd): f for (i, k, sd, f) in self.fluxes(kin.neutral_exponent)}
+        di = {(i, k, sd): f for (i, k, sd, f) in self.fluxes(kin.ion_exponent)}
+        key = [(f[0], f[1], f[2]) for f in faces]
+        Dn = np.array([dn.get(q, 0.0) for q in key]) * kin.neutral_flux
+        Gi = np.array([di.get(q, 0.0) for q in key]) * kin.ion_flux
+        mats = [self.mat[f[0], f[1]] for f in faces]
+        s0 = np.array([kin.sticking.get(m, 0.0) for m in mats])
+        theta = np.zeros(len(faces))
+        Gn = Dn.copy()
+        for _ in range(max_iter):
+            Gn_new = self._radiosity(faces, F, Dn, s0 * (1.0 - theta))
+            th_new = np.zeros(len(faces))
+            for m in set(mats):
+                sel = np.array([q == m for q in mats])
+                th_new[sel] = kin.rate(m, Gn_new[sel], Gi[sel])[0]
+            ch = float(np.max(np.abs(Gn_new - Gn))) / max(float(np.max(np.abs(Gn_new))), 1e-300)
+            Gn, theta = Gn_new, th_new
+            if ch < tol:
+                break
+        else:
+            raise RuntimeError("the coverage and the re-emitted neutrals did not settle")
+        v = np.zeros(len(faces))
+        for m in set(mats):
+            sel = np.array([q == m for q in mats])
+            v[sel] = kin.rate(m, Gn[sel], Gi[sel])[1]
+        return [dict(face=f, neutral=float(a), ion=float(b), coverage=float(c),
+                     speed=float(d)) for f, a, b, c, d in zip(key, Gn, Gi, theta, v)]
+
+    def plasma_etch(self, kin: "EtchKinetics", time: float):
+        """Etch for `time` seconds with ion-enhanced surface kinetics (new in
+        0.26.0, see `EtchKinetics` and `kinetic_rates`): each exposed cell
+        moves in at the speed of its faces, recomputed as the shape
+        changes (as in the flux modes of `etch`)."""
+        if not isinstance(kin, EtchKinetics):
+            raise ValueError("plasma_etch needs an EtchKinetics")
+        if not time > 0:
+            raise ValueError("time must be > 0")
+
+        def face_rates():
+            return [(q["face"][0], q["face"][1], q["face"][2], q["speed"])
+                    for q in self.kinetic_rates(kin) if q["speed"] > 0]
+        face_rates.etchable = [m for m, v in kin.sticking.items() if v > 0]
+        self._flux_step([], float(time), face_rates=face_rates)
+        self.log.append(("plasma_etch", kin.reference, time, "kinetics"))
+
+    def stokes(self, viscosity: dict, source=None, gas_ratio: float = 1e-4):
+        """Slow viscous flow of the cross-section (new in 0.26.0), as of
+        oxide during oxidation: eta lap(u) - grad(p) = 0 and div(u) = q on a
+        staggered grid (velocities on the cell faces, pressure in the
+        cells). viscosity : {material: eta} (Pa s, yours with its source);
+        a material not in it is rigid (it does not move). The gas is a fluid
+        gas_ratio times the lowest viscosity given (a free surface in the
+        limit gas_ratio -> 0), open at the top of the domain; the sides are
+        mirror planes and the bottom holds still. source : q per cell (1/s),
+        the rate at which new volume appears there (default none).
+        Returns dict(u (nx+1, nz) and w (nx, nz+1) in nm/s, p (nx, nz) in Pa,
+        and the stresses sxx, szz, sxz at the cell centers, Pa: tension
+        positive)."""
+        import scipy.sparse as sp
+        import scipy.sparse.linalg as spl
+        nx, nz = self.mat.shape
+        h = self.h * 1e-9                           # m
+        if not viscosity or any(not (v > 0 and math.isfinite(v)) for v in viscosity.values()):
+            raise ValueError("viscosity must give each flowing material a value > 0 (Pa s)")
+        if not (0 < gas_ratio < 1):
+            raise ValueError("gas_ratio must be between 0 and 1")
+        eta = np.zeros((nx, nz))
+        rigid = np.zeros((nx, nz), bool)
+        etag = gas_ratio * min(viscosity.values())
+        for i in range(nx):
+            for k in range(nz):
+                m = self.mat[i, k]
+                if m is None:
+                    eta[i, k] = etag
+                elif m in viscosity:
+                    eta[i, k] = viscosity[m]
+                else:
+                    rigid[i, k] = True
+        q = np.zeros((nx, nz)) if source is None else np.asarray(source, float)
+        if q.shape != (nx, nz):
+            raise ValueError("source must have one value per cell")
+        if np.any(q[rigid] != 0):
+            raise ValueError("no source in a rigid cell")
+        nu, nw = (nx + 1) * nz, nx * (nz + 1)
+        n_all = nu + nw + nx * nz
+
+        def U(i, k):
+            return i * nz + k
+
+        def W(i, k):
+            return nu + i * (nz + 1) + k
+
+        def P(i, k):
+            return nu + nw + i * nz + k
+
+        def etac(i, k):                       # cell viscosity, mirrored at the sides
+            i = min(max(i, 0), nx - 1)
+            return eta[i, k]
+
+        def etan(i, k):
+            """viscosity at the corner (x_i, z_k): mean of the cells around"""
+            vals = []
+            for a in (i - 1, i):
+                for b in (k - 1, k):
+                    if 0 <= b < nz:
+                        aa = min(max(a, 0), nx - 1)
+                        vals.append(eta[aa, b])
+            return float(np.mean(vals)) if vals else 0.0
+        rows, cols, vals = [], [], []
+        rhs = np.zeros(n_all)
+
+        def add(r, c, v):
+            rows.append(r)
+            cols.append(c)
+            vals.append(v)
+        # fixed velocities: walls, and every face touching a rigid cell
+        ufix = np.zeros((nx + 1, nz), bool)
+        ufix[0, :] = ufix[nx, :] = True
+        ufix[:-1][rigid] = True
+        ufix[1:][rigid] = True
+        wfix = np.zeros((nx, nz + 1), bool)
+        wfix[:, 0] = True
+        wfix[:, :-1][rigid] = True
+        wfix[:, 1:][rigid] = True
+        inv = 1.0 / (h * h)
+        # x momentum
+        for i in range(nx + 1):
+            for k in range(nz):
+                r = U(i, k)
+                if ufix[i, k]:
+                    add(r, r, 1.0)
+                    continue
+                # normal stress 2 eta du/dx across the cells i-1, i
+                for (cc, sgn) in ((i, 1.0), (i - 1, -1.0)):
+                    e2 = 2.0 * eta[cc, k] * inv
+                    # d/dx of (u_{cc+1} - u_cc) for cc = i: +; cc = i-1: -
+                    if sgn > 0:
+                        add(r, U(i + 1, k), e2)
+                        add(r, U(i, k), -e2)
+                    else:
+                        add(r, U(i, k), -e2)
+                        add(r, U(i - 1, k), e2)
+                # shear at the corners above (k+1) and below (k)
+                for (kc, sgn) in ((k + 1, 1.0), (k, -1.0)):
+                    if kc == nz:                      # open top: no shear
+                        continue
+                    en = etan(i, kc) * inv
+                    if kc == 0:                       # still bottom: u = 0 there
+                        add(r, U(i, k), -2.0 * en)
+                        continue
+                    ka, kb = (k + 1, k) if sgn > 0 else (k, k - 1)
+                    add(r, U(i, ka), sgn * en)
+                    add(r, U(i, kb), -sgn * en)
+                    add(r, W(i, kc), sgn * en)
+                    add(r, W(i - 1, kc), -sgn * en)
+                # pressure
+                add(r, P(i, k), -1.0 / h)
+                add(r, P(i - 1, k), 1.0 / h)
+        # z momentum
+        for i in range(nx):
+            for k in range(nz + 1):
+                r = W(i, k)
+                if wfix[i, k]:
+                    add(r, r, 1.0)
+                    continue
+                if k == nz:
+                    # open top: -p + 2 eta dw/dz = 0 in the top cell
+                    e2 = 2.0 * eta[i, nz - 1] / h
+                    add(r, W(i, nz), e2)
+                    add(r, W(i, nz - 1), -e2)
+                    add(r, P(i, nz - 1), -1.0)
+                    continue
+                for (cc, sgn) in ((k, 1.0), (k - 1, -1.0)):
+                    e2 = 2.0 * eta[i, cc] * inv
+                    if sgn > 0:
+                        add(r, W(i, k + 1), e2)
+                        add(r, W(i, k), -e2)
+                    else:
+                        add(r, W(i, k), -e2)
+                        add(r, W(i, k - 1), e2)
+                for (ic, sgn) in ((i + 1, 1.0), (i, -1.0)):
+                    if ic == 0 or ic == nx:           # mirror sides: no shear
+                        continue
+                    en = etan(ic, k) * inv
+                    ia, ib = (i + 1, i) if sgn > 0 else (i, i - 1)
+                    add(r, W(ia, k), sgn * en)
+                    add(r, W(ib, k), -sgn * en)
+                    add(r, U(ic, k), sgn * en)
+                    add(r, U(ic, k - 1), -sgn * en)
+                add(r, P(i, k), -1.0 / h)
+                add(r, P(i, k - 1), 1.0 / h)
+        # continuity (scaled by eta / h to match the momentum rows)
+        for i in range(nx):
+            for k in range(nz):
+                r = P(i, k)
+                if rigid[i, k]:
+                    add(r, r, 1.0)
+                    continue
+                sc = eta[i, k] / h
+                add(r, U(i + 1, k), sc / h)
+                add(r, U(i, k), -sc / h)
+                add(r, W(i, k + 1), sc / h)
+                add(r, W(i, k), -sc / h)
+                rhs[r] = sc * q[i, k]
+        A = sp.csr_matrix((vals, (rows, cols)), shape=(n_all, n_all))
+        # scale: pressure unknowns by h / eta_ref, every row to order one
+        eref = max(viscosity.values())
+        cs = np.ones(n_all)
+        cs[nu + nw:] = eref / h
+        A = A @ sp.diags(cs)
+        rs = np.asarray(abs(A).max(axis=1).todense()).ravel()
+        rs[rs == 0] = 1.0
+        A = sp.diags(1.0 / rs) @ A
+        x = spl.spsolve(A.tocsc(), rhs / rs) * cs
+        if not np.all(np.isfinite(x)):
+            raise RuntimeError("the flow could not be solved")
+        u = x[:nu].reshape(nx + 1, nz)
+        w = x[nu:nu + nw].reshape(nx, nz + 1)
+        p = x[nu + nw:].reshape(nx, nz)
+        dudx = (u[1:] - u[:-1]) / h
+        dwdz = (w[:, 1:] - w[:, :-1]) / h
+        sxx = -p + 2.0 * eta * dudx
+        szz = -p + 2.0 * eta * dwdz
+        # shear at the corners, then the mean of the four around each cell
+        sc_ = np.zeros((nx + 1, nz + 1))
+        for i in range(1, nx):
+            for k in range(1, nz):
+                sc_[i, k] = etan(i, k) * ((u[i, k] - u[i, k - 1]) / h
+                                          + (w[i, k] - w[i - 1, k]) / h)
+        sxz = 0.25 * (sc_[:-1, :-1] + sc_[1:, :-1] + sc_[:-1, 1:] + sc_[1:, 1:])
+        p = np.where(rigid, np.nan, p)
+        nanr = np.where(rigid, np.nan, 1.0)
+        return dict(u=u * 1e9, w=w * 1e9, p=p, sxx=sxx * nanr, szz=szz * nanr,
+                    sxz=sxz * nanr, rigid=rigid)
+
     def oxidize(self, material: str, oxide: str, B_nm2_s: float, B_over_A_nm_s: float,
                 time: float, consumed_fraction: float, reference: str,
-                mode: str = "column"):
+                mode: str = "column", viscosity: dict = None, stress_volume_nm3: float = None,
+                temperature_K: float = None, flow_every: int = 1):
         """Thermal oxidation by the Deal-Grove law (see the module notes):
         in every column whose top is `material`, or `oxide` lying directly
         on `material`, the oxide grows from its present thickness x0 to x
@@ -899,16 +1262,33 @@ class Structure:
         mode="2d" (new in 0.24.0): the oxidant diffuses through the oxide in
         two dimensions, so oxide also grows sideways and under the edge of a
         mask that lies on oxide (see `_oxidize_2d`); then the returned
-        thicknesses are cell counts (nm)."""
+        thicknesses are cell counts (nm).
+
+        With mode="2d", viscosity={material: eta in Pa s} (new in 0.26.0)
+        solves the slow viscous flow that the new oxide volume drives
+        (`stokes`; materials not listed are rigid), every flow_every steps,
+        and keeps it as `oxide_stress` (velocities, pressure, stresses).
+        stress_volume_nm3 (with temperature_K) makes the reaction rate at
+        each face follow the stress normal to it, k = k0 exp(sigma_nn V / kT)
+        (compression slows it: D.-B. Kao, J. P. McVittie, W. D. Nix and
+        K. C. Saraswat, IEEE Trans. Electron Devices 35, 25 (1988)); V is
+        yours, with its source. The shape still follows the volume rule
+        above (column lift, nearest gas); the flow sets the stress."""
         if not (B_nm2_s > 0 and B_over_A_nm_s > 0 and time > 0):
             raise ValueError("B, B/A and time must be > 0")
         if not (0 < consumed_fraction < 1):
             raise ValueError("consumed_fraction must be between 0 and 1")
         if not (isinstance(reference, str) and reference.strip()):
             raise ValueError("oxidize needs a reference for B, B/A and the consumed fraction")
+        if stress_volume_nm3 is not None and (viscosity is None or temperature_K is None):
+            raise ValueError("stress_volume_nm3 needs viscosity and temperature_K")
         if mode == "2d":
             return self._oxidize_2d(material, oxide, B_nm2_s, B_over_A_nm_s, time,
-                                    consumed_fraction, reference)
+                                    consumed_fraction, reference, viscosity=viscosity,
+                                    stress_volume=stress_volume_nm3,
+                                    temperature=temperature_K, flow_every=int(flow_every))
+        if viscosity is not None:
+            raise ValueError("viscous flow and stress need mode='2d'")
         if mode != "column":
             raise ValueError("mode must be 'column' or '2d'")
         A = B_nm2_s / B_over_A_nm_s
@@ -956,7 +1336,7 @@ class Structure:
                          consumed_fraction, reference))
         return out
 
-    def _oxidant(self, material, oxide, A, with_dirs=False, extra_thick=None):
+    def _oxidant(self, material, oxide, A, with_dirs=False, extra_thick=None, kfac=None):
         """Steady oxidant in the oxide (new in 0.24.0), normalized to its
         value at the gas surface: div grad C = 0 in the oxide cells, C = 1
         on faces to the open gas (and the top of the domain), no flux into
@@ -966,7 +1346,8 @@ class Structure:
         reacting face and the normalized oxidant at that face (c = 1 where
         the material is bare under the gas). extra_thick (4, nx, nz): oxide
         not yet in whole cells in front of each face (nm), added to its
-        diffusion path."""
+        diffusion path. kfac (4, nx, nz): a factor on the reaction rate k of
+        each face (as ext; default 1), so A becomes A / kfac there."""
         import scipy.sparse as sp
         from scipy.sparse.linalg import spsolve
         h = self.h
@@ -989,7 +1370,7 @@ class Structure:
         diag = np.zeros(n)
         rhs = np.zeros(n)
         rows, cols = [], []
-        li, lk, lc_row, ld, lx = [], [], [], [], []   # cell, oxide row (-1: bare), side, extra
+        li, lk, lc_row, ld, lx, lA = [], [], [], [], [], []   # cell, oxide row, side, extra, A
         core = (slice(1, -1), slice(1, -1))
         for q, (di, dk) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
             nb = (slice(1 + di, nx + 1 + di), slice(1 + dk, nz + 1 + dk))
@@ -1004,14 +1385,16 @@ class Structure:
             # seen from the material cell, the oxide lies in direction -d
             qq = (1, 0, 3, 2)[q]
             dx_ = ext[qq, I + di, K + dk]
+            Af = A if kfac is None else A / kfac[qq, I + di, K + dk]
             # oxide cell center -> reacting face: half a cell and the oxide
             # not yet in cells by diffusion, then the reaction (D = 1, k = 2/A)
-            np.add.at(diag, idx[core][o_m], 2.0 * h / (A + h + 2.0 * dx_))
+            np.add.at(diag, idx[core][o_m], 2.0 * h / (Af + h + 2.0 * dx_))
             li.append(I + di)
             lk.append(K + dk)
             lc_row.append(idx[core][o_m])
             ld.append(np.full(I.size, qq))
             lx.append(dx_)
+            lA.append(np.broadcast_to(np.asarray(Af, float), (I.size,)))
             m_g = mtp[core] & gasp[nb]
             I, K = np.nonzero(m_g)
             li.append(I)
@@ -1019,6 +1402,8 @@ class Structure:
             lc_row.append(-np.ones(I.size, int))
             ld.append(np.full(I.size, q))
             lx.append(ext[q, I, K])
+            lA.append(np.broadcast_to(np.asarray(
+                A if kfac is None else A / kfac[q, I, K], float), (I.size,)))
         rows = np.concatenate(rows)
         cols = np.concatenate(cols)
         if n:
@@ -1031,15 +1416,17 @@ class Structure:
             C = np.zeros(0)
         li, lk, r = np.concatenate(li), np.concatenate(lk), np.concatenate(lc_row)
         x_ = np.concatenate(lx)
+        Aa = np.concatenate(lA)
         # interface value: the reaction flux k C_i equals the diffusive flux
         # from the oxide cell center (or from the gas, for bare material)
         Cr = C[np.maximum(r, 0)] if n else np.zeros(r.size)
-        c = np.where(r >= 0, Cr * A / (A + h + 2.0 * x_), A / (A + 2.0 * x_))
+        c = np.where(r >= 0, Cr * Aa / (Aa + h + 2.0 * x_), Aa / (Aa + 2.0 * x_))
         if with_dirs:
             return li, lk, c, np.concatenate(ld)
         return li, lk, c
 
-    def _oxidize_2d(self, material, oxide, B, BA, time, cf, reference):
+    def _oxidize_2d(self, material, oxide, B, BA, time, cf, reference, viscosity=None,
+                    stress_volume=None, temperature=None, flow_every=1):
         """Two-dimensional oxidation (new in 0.24.0): the oxidant diffuses
         through the oxide in two dimensions (`_oxidant`), each face where
         the material meets oxide or gas grows oxide at (B/A) c, c the
@@ -1060,17 +1447,67 @@ class Structure:
         t = 0.0
         steps = 0
         dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+        kfac = None
+        q_prev = None
+        kT = None if temperature is None else 1.380649e-23 * float(temperature)
         while t < time * (1 - 1e-12):
             # the oxide grown in front of each face but not yet in whole
             # cells: in place of the material consumed so far in the cell, and
             # the new volume still to be put in
             ext = (acc[None, :, :] / h) * np.ones((4, 1, 1)) + lift / h
             ext = np.where((self.mat == material)[None], ext, 0.0)
+            if viscosity is not None and q_prev is not None and steps % flow_every == 0:
+                # the viscous flow of the oxide that the new volume drives, and
+                # its stress normal to each reacting face (new in 0.26.0)
+                fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
+                self.oxide_stress = self.stokes(viscosity, source=np.where(fluid, q_prev, 0.0))
+                if stress_volume is not None:
+                    kfac = np.ones((4, nx, nz))
+                    S = self.oxide_stress
+                    for qd, (di, dk) in enumerate(dirs):
+                        # the normal stress in the oxide just beyond the
+                        # cell where the new volume appears (that cell's own
+                        # expansion is not a stress on the face: Kao et al.
+                        # take the oxide's stress at the interface, the new
+                        # oxide entering there as a velocity)
+                        sn = S["sxx"] if dk == 0 else S["szz"]
+                        fr = np.zeros((nx, nz))
+                        for step_ in (2, 1):
+                            sh_i, sh_k = step_ * di, step_ * dk
+                            a0, a1 = max(0, -sh_i), nx - max(0, sh_i)
+                            b0, b1 = max(0, -sh_k), nz - max(0, sh_k)
+                            cand = np.full((nx, nz), np.nan)
+                            cand[a0:a1, b0:b1] = sn[a0 + sh_i:a1 + sh_i, b0 + sh_k:b1 + sh_k]
+                            put = (fr == 0.0) & np.isfinite(cand)
+                            if step_ == 2:
+                                # only where both cells in front are oxide
+                                c1 = np.full((nx, nz), np.nan)
+                                a0b, a1b = max(0, -di), nx - max(0, di)
+                                b0b, b1b = max(0, -dk), nz - max(0, dk)
+                                c1[a0b:a1b, b0b:b1b] = sn[a0b + di:a1b + di, b0b + dk:b1b + dk]
+                                put &= np.isfinite(c1)
+                            fr = np.where(put, cand, fr)
+                        fr = np.where(np.isfinite(fr), fr, 0.0)
+                        # tension speeds the reaction, compression slows it
+                        kfac[qd] = np.exp(np.clip(fr * stress_volume * 1e-27 / kT, -50, 50))
             li, lk, c, dl = self._oxidant(material, oxide, A, with_dirs=True,
-                                          extra_thick=ext)
+                                          extra_thick=ext, kfac=kfac)
             if li.size == 0:
                 break
-            v = BA * c                      # oxide growth speed at each face, nm/s
+            kf = 1.0 if kfac is None else kfac[dl, li, lk]
+            v = BA * kf * c                 # oxide growth speed at each face, nm/s
+            if viscosity is not None:
+                # new volume per s in the oxide cell in front of each face
+                qn = np.zeros((nx, nz))
+                for qd, (di, dk) in enumerate(dirs):
+                    m = dl == qd
+                    fi, fk = li[m] + di, lk[m] + dk
+                    ok = (fi >= 0) & (fi < nx) & (fk >= 0) & (fk < nz)
+                    fi, fk, vv = fi[ok], fk[ok], v[m][ok]
+                    isox = np.array([self.mat[a_, b_] == oxide for a_, b_ in zip(fi, fk)],
+                                    bool)
+                    np.add.at(qn, (fi[isox], fk[isox]), (1.0 - cf) * vv[isox] / h)
+                q_prev = qn
             rate = np.zeros((nx, nz))       # material area consumed per s
             np.add.at(rate, (li, lk), cf * v * h)
             extra = np.zeros((4, nx, nz))   # oxide area to put in front, per s
@@ -1123,6 +1560,10 @@ class Structure:
         self.donors[half] = self.acceptors[half] = 0.0
         for q, i, k in zip(*np.nonzero(lift >= 0.5 * h * h)):
             self._push_oxide(i, k, dirs[q], oxide)
+        if viscosity is not None and q_prev is not None:
+            # the flow and stress of the final shape (with the last growth)
+            fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
+            self.oxide_stress = self.stokes(viscosity, source=np.where(fluid, q_prev, 0.0))
         self.log.append(("oxidize", material, oxide, B, BA, time, cf, reference, "2d"))
         top = np.zeros(nx)
         for i in range(nx):

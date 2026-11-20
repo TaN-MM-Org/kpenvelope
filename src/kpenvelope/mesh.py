@@ -155,7 +155,7 @@ class MeshDevice(Device):
                  doping=None, density_floor_cm3: float = 1.0,
                  driving_force: str = "field", tunnel_barriers=(),
                  temperature_model: str = "mobility", band_gap_temperature=None,
-                 heat_model: str = "joule"):
+                 heat_model: str = "joule", quantum=None):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover
@@ -391,6 +391,7 @@ class MeshDevice(Device):
         self._setup_tunnel_barriers(tunnel_barriers)
         self._set_heat_model(heat_model)
         self._setup_lattice(temperature_model, band_gap_temperature, self.node_region)
+        self._setup_quantum(quantum)
 
     # ------------------------------------------------------------ geometry
     def _mesh_mobility(self, regions, inv, tt, dd, semi_t, what):
@@ -584,6 +585,186 @@ class MeshDevice(Device):
             lines.append(dict(a=a_u, b=b_u, wa=1.0 - lam, wb=lam, s=s_u - 0.0, ok_s=ok_s,
                               edge_ok=edge_ok, area=float(width[k])))
         return lines
+
+    # ------------------------------------- quantum channel (0.26.0)
+    def _setup_quantum(self, qc):
+        """A QuantumChannel on a mesh: straight vertical lines through the
+        mesh (as for nonlocal tunneling, `_mesh_lines`), `line_spacing` nm
+        apart (default the median edge length), sampled where they cross the
+        triangles' edges (the bands are linear along a line inside each
+        triangle, so the samples carry the mesh's own profile). Each run of
+        samples inside the window (semiconductor, no electrode node) is a
+        column for the Schroedinger equation, with its walls at the samples
+        just outside it; the quantum potential found on the lines is
+        carried to the mesh nodes in the window, linearly along each line
+        and between the two lines on either side of a node. Nodes on a line
+        take its value exactly: a mesh made from a tensor grid, with the
+        lines on the grid's columns, gives the tensor grid's result."""
+        import types
+        from .device import QuantumChannel
+        self._qc, self._qL, self._qLp, self._qcols, self._qruns = None, None, None, [], []
+        if qc is None:
+            return
+        if not isinstance(qc, QuantumChannel):
+            raise ValueError("quantum must be a QuantumChannel")
+        if qc.holes is not None and not self.holes:
+            raise ValueError("QuantumChannel(holes=...) needs holes in the device "
+                             "(hole_mass and hole mobilities)")
+        P = self.mesh.points
+        excl = np.zeros(self.N, bool)
+        for nodes in self.enodes.values():
+            excl[nodes] = True
+        ok = self.node_semi & ~excl
+        h = qc.line_spacing if qc.line_spacing is not None else float(np.median(self.eh))
+        lines = self._mesh_lines(types.SimpleNamespace(direction=(0.0, 1.0), path_spacing=h),
+                                 ok)
+        w0, w1 = qc.window
+        eps = 1e-9 * max(1.0, float(np.ptp(P)))
+        runs = []
+        for L in lines:
+            a, b, wa, wb, s = L["a"], L["b"], L["wa"], L["wb"], L["s"]
+            xl = float(wa[0] * P[a[0], 0] + wb[0] * P[b[0], 0])
+            if qc.x_range is not None and not (qc.x_range[0] - eps <= xl
+                                               <= qc.x_range[1] + eps):
+                continue
+            # a sample on a node is good where the node is; one between two
+            # nodes where the line's triangles there are
+            on_a, on_b = wb <= 1e-12, wa <= 1e-12
+            good = np.where(on_a, ok[a], np.where(on_b, ok[b], L["ok_s"] & ok[a] & ok[b]))
+            sel = good & (s >= w0 - eps) & (s <= w1 + eps)
+            sel[0] = sel[-1] = False                 # walls need a sample outside
+            k = 0
+            n_s = s.size
+            while k < n_s:
+                if not sel[k]:
+                    k += 1
+                    continue
+                k1 = k
+                while k1 + 1 < n_s and sel[k1 + 1]:
+                    k1 += 1
+                if k1 - k + 1 >= 3:
+                    i = np.arange(k, k1 + 1)
+                    runs.append(dict(a=a[i], b=b[i], wa=wa[i], wb=wb[i], z=s[i].copy(),
+                                     zl=float(s[k - 1]), zr=float(s[k1 + 1]), x=xl))
+                k = k1 + 1
+        if not runs:
+            raise ValueError("the QuantumChannel window holds no semiconductor stretch of "
+                             "at least 3 samples on any line")
+        xs = np.array(sorted(set(r["x"] for r in runs)))
+        # nodes in the window, within the lines' span: each takes the value
+        # of the lines on its two sides at its height
+        z = P[:, 1]
+        qn = ok & (z >= w0 - eps) & (z <= w1 + eps) & (P[:, 0] >= xs[0] - eps) & (
+            P[:, 0] <= xs[-1] + eps)
+        nodes = np.flatnonzero(qn)
+        k = np.clip(np.searchsorted(xs, P[nodes, 0] - eps), 1, max(xs.size - 1, 1))
+        if xs.size == 1:
+            klo = khi = np.zeros(nodes.size, int)
+            th = np.zeros(nodes.size)
+        else:
+            klo, khi = k - 1, k
+            th = (P[nodes, 0] - xs[klo]) / (xs[khi] - xs[klo])
+            on_lo = np.abs(P[nodes, 0] - xs[klo]) <= eps
+            on_hi = np.abs(P[nodes, 0] - xs[khi]) <= eps
+            th = np.where(on_lo, 0.0, np.where(on_hi, 1.0, np.clip(th, 0.0, 1.0)))
+        for r in runs:
+            r["line"] = int(np.searchsorted(xs, r["x"] - eps))
+        if self._te is not None:
+            e = np.concatenate([self._te["n"], self._te["p"]])
+            if np.any(qn[self.ei[e]] | qn[self.ej[e]]):
+                raise ValueError("heterojunctions='thermionic' at band steps inside the "
+                                 "QuantumChannel window: keep the steps outside the window "
+                                 "or use heterojunctions='drift-diffusion'")
+        if self._tb is not None:
+            tbn = np.concatenate([self._tb["int_nodes"]] +
+                                 [np.ravel(L_["path"]) for L_ in self._tb["links"]])
+            if np.any(qn[tbn.astype(int)]):
+                raise ValueError("a tunnel barrier lies inside the QuantumChannel window")
+        self._qc, self._qruns, self._qmask = qc, runs, qn
+        self._qmap = dict(nodes=nodes, z=z[nodes], klo=klo, khi=khi, th=th, xs=xs)
+        self._qL = np.zeros(self.N)
+        self._qLp = np.zeros(self.N)
+        self._qbase = dict(Ec0=self.Ec0.copy(), Eg=self.Eg.copy(),
+                           en=[tr["en"] for tr in self._traps],
+                           ep=[tr["ep"] for tr in self._traps])
+
+    def _line_values(self, vals):
+        """Values per run (one array per run) carried to the mapped nodes."""
+        mp = self._qmap
+        nl = mp["xs"].size
+        out_lo = np.zeros(mp["nodes"].size)
+        out_hi = np.zeros(mp["nodes"].size)
+        have_lo = np.zeros(mp["nodes"].size, bool)
+        have_hi = np.zeros(mp["nodes"].size, bool)
+        zq = mp["z"]
+        for r, v in zip(self._qruns, vals):
+            k = r["line"]
+            inside = (zq >= r["z"][0] - 1e-9) & (zq <= r["z"][-1] + 1e-9)
+            if not inside.any():
+                continue
+            val = np.interp(zq, r["z"], v)
+            m_lo = inside & (mp["klo"] == k)
+            m_hi = inside & (mp["khi"] == k)
+            out_lo[m_lo], have_lo[m_lo] = val[m_lo], True
+            out_hi[m_hi], have_hi[m_hi] = val[m_hi], True
+        th = mp["th"]
+        res = np.where(have_lo & have_hi, (1.0 - th) * out_lo + th * out_hi,
+                       np.where(have_lo, out_lo, np.where(have_hi, out_hi, 0.0)))
+        if nl == 1:
+            res = np.where(have_lo, out_lo, 0.0)
+        return res
+
+    def _q_columns(self, x, carrier):
+        """As `Device._q_columns`, on the lines of the mesh."""
+        from .device import _G2D, column_states
+        qc = self._qc
+        psi, fn, fp, _ = self._unpack(x)
+        Ec = self._ec0_real() - psi
+        Ev = Ec - self._eg_real()
+        kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
+        lam_runs, wt_runs = [], []
+        sub, sheets, top_share = [], [], 0.0
+        for r in self._qruns:
+            a, b, wa, wb = r["a"], r["b"], r["wa"], r["wb"]
+
+            def at(v):
+                return wa * v[a] + wb * v[b]
+            kt = at(kT)
+            if carrier == "n":
+                mass, mass_xy, U, F = at(self.me_node), None, at(Ec), at(fn)
+            else:
+                mass = np.full(a.size, qc.holes[0])
+                mass_xy, U, F = qc.holes[1], -at(Ev), -at(fp)
+            e_max = float(np.max(F) + 40.0 * np.max(kt))
+            E, p2, w = column_states(r["z"], U, mass, qc.n_states, r["zl"], r["zr"],
+                                     e_max=e_max)
+            mi = ((w[:, None] * p2 * mass[:, None]).sum(0) if mass_xy is None
+                  else np.full(E.size, mass_xy))
+            occ = kt[:, None] * np.logaddexp(0.0, (F[:, None] - E[None, :]) / kt[:, None])
+            parts = _G2D * mi[None, :] * occ * p2
+            nq = parts.sum(1)
+            if nq.max() > 0 and E.size == qc.n_states:
+                top_share = max(top_share, float((parts[:, -1] * w).sum() / (nq * w).sum()))
+            dos = at(self.Nc) if carrier == "n" else at(self.Nv)
+            eta = self._inv_occ(nq / dos)
+            lam = np.clip(F - U - kt * eta, -qc.max_shift, qc.max_shift)
+            lam_runs.append(lam)
+            wt_runs.append(((nq > 1e-6 * max(nq.max(), 1e-30)) & (np.abs(lam) < qc.max_shift))
+                           .astype(float))
+            sub.append((r["x"], E if carrier == "n" else -E))
+            sheets.append(float((nq * w).sum() * 1e14))
+        target = np.zeros(self.N)
+        weight = np.zeros(self.N, bool)
+        nd = self._qmap["nodes"]
+        target[nd] = self._line_values(lam_runs)
+        weight[nd] = self._line_values(wt_runs) > 0.5
+        return target, weight, dict(subbands=sub, sheet_cm2=sheets, top_share=top_share)
+
+    def ballistic_current(self, *a, **k):
+        raise ValueError("ballistic_current is for devices on tensor grids (Device)")
+
+    def negf(self, *a, **k):
+        raise ValueError("negf is for devices on tensor grids (Device)")
 
     def _node_field(self, psi):
         bt = self._bt

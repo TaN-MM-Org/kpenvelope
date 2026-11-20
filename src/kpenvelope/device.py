@@ -611,7 +611,10 @@ class QuantumChannel:
     the holes the same way, with one band of mass m_z across the layers
     and the 2D density-of-states mass m_inplane, both yours with their
     source (electrons=False leaves the electrons classical); their quantum
-    potential lowers the holes' band edge. x_range=None takes every column
+    potential lowers the holes' band edge. On a MeshDevice (new in 0.26.0)
+    the columns are vertical lines through the mesh, line_spacing nm apart
+    (default the median edge length; see `MeshDevice._setup_quantum`).
+    x_range=None takes every column
     except those under an ohmic contact on the top face (the implanted,
     three-dimensional electron gas there needs no confinement). Lambda
     changes from one column to the next as the bands do; where the window
@@ -630,10 +633,11 @@ class QuantumChannel:
     x_range: tuple = None
     n_states: int = 400
     tol: float = 1e-5
-    max_outer: int = 200
+    max_outer: int = 100
     max_shift: float = 1.0
     electrons: bool = True
     holes: tuple = None
+    line_spacing: float = None
 
     def __post_init__(self):
         w = tuple(float(v) for v in self.window)
@@ -658,6 +662,9 @@ class QuantumChannel:
             object.__setattr__(self, "holes", (float(h[0]), float(h[1]), h[2]))
         if not (self.electrons or self.holes is not None):
             raise ValueError("QuantumChannel needs electrons=True or holes=(...)")
+        if self.line_spacing is not None and not (math.isfinite(self.line_spacing)
+                                                  and self.line_spacing > 0):
+            raise ValueError("QuantumChannel.line_spacing must be > 0 (nm)")
 
 
 _H2M = HBAR ** 2 / (2.0 * M0 * QE) * 1e18            # hbar^2 / 2 m0, eV nm^2
@@ -756,6 +763,7 @@ class DeviceState:
     lattice_heat: np.ndarray = None
     quantum_potential: np.ndarray = None
     quantum: dict = None
+    negf: dict = None
 
     def sheet(self, depth: float = 150.0):
         """Electrons per cm^2 below the top `depth` nm, at each lateral
@@ -3797,6 +3805,201 @@ class Device:
             per.append((Et, J))
             total += J
         return total, per
+
+    def _poisson_frozen(self, x, bias, Tn, tol=1e-9, max_iter=60):
+        """Poisson's equation alone, with every quasi-Fermi level of x held:
+        Newton's method on the potential (the carrier densities follow it
+        through their fixed levels)."""
+        import scipy.sparse.linalg as spl
+        idx = np.arange(self.N) * self.nv
+        x = x.copy()
+        for it in range(max_iter):
+            F = self._residual(x, bias, Tn)
+            J = self._jacobian(x, F, bias, Tn, None, None)
+            Jb = J[idx][:, idx].tocsc()
+            d = spl.spsolve(Jb, -F[idx])
+            if not np.all(np.isfinite(d)):
+                raise RuntimeError("Poisson's equation could not be solved")
+            d = np.clip(d, -0.2, 0.2)
+            x[idx] += d
+            if float(np.max(np.abs(d))) < tol:
+                return x, it + 1
+        raise RuntimeError("Poisson's equation did not converge")
+
+    def negf(self, bias: dict, source: str = "source", drain: str = "drain",
+             dx: float = 0.5, scattering_time: float = None, guess: DeviceState = None,
+             energy_step: float = None, emax_kT: float = 15.0, energy_rtol: float = 1e-3,
+             tol: float = 1e-4, max_outer: int = 100):
+        """Quantum transport of the channel electrons by non-equilibrium
+        Green's functions, self-consistent with the potential (new in
+        0.26.0). Needs a 2D device with a QuantumChannel for electrons.
+
+        Along every column of the QuantumChannel between the two contacts
+        the electrons have their subbands (as in the QuantumChannel); each
+        subband i, with energy E_i(x) and state-averaged mass m_i(x), is a
+        1D chain along x on an even grid of spacing `dx` nm, joined at its
+        ends to the source and the drain, which fill it at their Fermi levels
+        (-V); the motion along the width is free (see `kpenvelope.negf`:
+        uncoupled mode space, R. Venugopal et al., J. Appl. Phys. 92, 3730
+        (2002)). The electron density of the channel is
+        sum_i n_i(x) |psi_i(z; x)|^2; Poisson's equation is solved with it
+        (through a quasi-Fermi level that gives this density, held while the
+        potential is found), the subbands and chains are solved again, and
+        the two are repeated until the potential changes by less than `tol`
+        V. The current is the Landauer current of all subbands.
+
+        Without scattering_time the electrons are ballistic: they tunnel
+        through and reflect from barriers, but states lower than both
+        contacts' band bottoms (a well along the channel) are not filled.
+        scattering_time = tau (s) adds Buttiker probes with eta = hbar / tau
+        on every site, which relax momentum and energy and fill such states
+        (a long uniform channel then has the Drude conductance q^2 n tau / m;
+        see `kpenvelope.negf`). Outside the window (and the holes
+        everywhere) the carriers keep the quasi-Fermi levels of the
+        drift-diffusion solution at this bias. Electrodes other than the
+        source and the drain carry no current here.
+
+        Returns the DeviceState, with efn the electrons' effective
+        quasi-Fermi level in the channel, current {source: -I, drain: I}
+        (A/mm) and negf = dict(current, mode_currents, modes (per subband:
+        x, E_i(x), m_i(x)), energies, transmission (per subband),
+        iterations, last_change, probe_levels)."""
+        from .negf import Chain, chain_transport
+        if self._qc is None or not self._qc.electrons:
+            raise ValueError("negf needs a device with a QuantumChannel for electrons")
+        if self.dim != 2:
+            raise ValueError("negf is for 2D devices")
+        es, ed = self.edict.get(source), self.edict.get(drain)
+        if es is None or ed is None:
+            raise ValueError("unknown source or drain electrode")
+        if not (dx > 0 and tol > 0):
+            raise ValueError("dx and tol must be > 0")
+        if scattering_time is not None and not scattering_time > 0:
+            raise ValueError("scattering_time must be > 0 (s)")
+        lo, hi = sorted([0.5 * (es.x0 + es.x1), 0.5 * (ed.x0 + ed.x1)])
+        cols = [dict(c) for c in self._qcols if lo < c["x"] < hi]
+        if len(cols) < 2:
+            raise ValueError("no quantum columns between the source and the drain")
+        cols = sorted(cols, key=lambda c: c["x"])
+        xc = np.array([c["x"] for c in cols])
+        if np.any(np.diff(xc) <= 0):
+            raise ValueError("negf needs one QuantumChannel run per column (a single "
+                             "channel along z)")
+        st0 = self.solve(bias, guess=guess)
+        bias_in = dict(st0.internal or st0.bias)
+        FS, FD = -bias_in.get(source, 0.0), -bias_in.get(drain, 0.0)
+        kT = KB * self.T
+        eta = None if scattering_time is None else HBAR / scattering_time / QE
+        nx = max(int(round((xc[-1] - xc[0]) / dx)), 2) + 1
+        xs = np.linspace(xc[0], xc[-1], nx)
+        a = float(xs[1] - xs[0])
+        xe = np.concatenate([[xc[0]], 0.5 * (xc[1:] + xc[:-1]), [xc[-1]]])   # box edges
+        Tn = np.full(self.N, self.T)
+        Lam_save = None if self._qL is None else (self._qL.copy(), self._qLp.copy())
+        self._apply_q(np.zeros(self.N), np.zeros(self.N))
+        nv = self.nv
+        try:
+            x = st0._x.copy()
+            target = self._check_bias(bias)
+            qnodes = np.concatenate([c["nodes"] for c in cols])
+            hist = []
+            probe_F = None
+            beta = 0.3
+            acc = _Anderson(m=8, beta=beta, positive=False)
+            for it in range(1, int(max_outer) + 1):
+                psi = x.reshape(self.N, nv)[:, 0]
+                Ec = self.Ec0 - psi
+                emax = max(FS, FD) + emax_kT * kT
+                # subbands of every column: as many as the column with the
+                # most states below emax holds
+                K = 1
+                for c in cols:
+                    E, _, _ = column_states(c["z"], Ec[c["nodes"]], c["mass"], self._qc.n_states,
+                                            c["zl"], c["zr"], e_max=emax)
+                    K = max(K, E.size)
+                K = min(K, min(c["nodes"].size for c in cols))
+                Ei = np.empty((len(cols), K))
+                mi = np.empty((len(cols), K))
+                P2 = []
+                for k, c in enumerate(cols):
+                    E, p2, w = column_states(c["z"], Ec[c["nodes"]], c["mass"], K,
+                                             c["zl"], c["zr"])
+                    c["w"] = w
+                    Ei[k] = E
+                    P2.append(p2)
+                    mi[k] = (w[:, None] * p2 * c["mass"][:, None]).sum(0)
+                ncol = [np.zeros(c["nodes"].size) for c in cols]
+                modes, mode_I, trans = [], [], []
+                newF = []
+                for i in range(K):
+                    if float(np.min(Ei[:, i])) > emax:
+                        break
+                    U = np.interp(xs, xc, Ei[:, i])
+                    m = np.interp(xs, xc, mi[:, i])
+                    ch = Chain(U, m, a, eta=eta)
+                    guess_F = None if probe_F is None or i >= len(probe_F) else probe_F[i]
+                    r = chain_transport(ch, FS, FD, kT, energy_step=energy_step,
+                                        emax_kT=emax_kT, probe_guess=guess_F,
+                                        rtol=energy_rtol)
+                    # each column takes the mean over its own box along x (the
+                    # density oscillates on the scale of the electrons'
+                    # wavelength, finer than the device grid)
+                    cum = np.concatenate([[0.0], np.cumsum(0.5 * (r["n"][1:] + r["n"][:-1]) * a)])
+                    nn = (np.interp(xe[1:], xs, cum) - np.interp(xe[:-1], xs, cum)) / np.diff(xe)
+                    for k in range(len(cols)):
+                        ncol[k] += nn[k] * P2[k][:, i]                   # nm^-3
+                    modes.append(dict(x=xs, E=U, mass=m))
+                    mode_I.append(r["I"] * 1e6)                          # A/mm
+                    trans.append((r["E"], r["T"]))
+                    newF.append(r["probe_F"])
+                probe_F = newF
+                # the effective quasi-Fermi level that gives this density
+                X = x.reshape(self.N, nv).copy()
+                fn_new = X[:, 1].copy()
+                for k, c in enumerate(cols):
+                    nd = c["nodes"]
+                    dens = np.maximum(ncol[k], 1e-30 * self.Nc[nd])
+                    fn_new[nd] = Ec[nd] + kT * self._inv_occ(dens / self.Nc[nd])
+                X[:, 1] = fn_new
+                x1, _ = self._poisson_frozen(X.ravel(), target, Tn)
+                psi1 = x1.reshape(self.N, nv)[:, 0]
+                R = psi1 - psi
+                d = float(np.max(np.abs(R)))
+                hist.append(d)
+                if d < tol:
+                    x = x1
+                    break
+                # the next potential: Anderson-accelerated, damped
+                psi_next = acc.step(psi, R, psi + beta * R, d)
+                X1 = x1.reshape(self.N, nv).copy()
+                X1[:, 0] = psi_next
+                x = X1.ravel()
+            else:
+                hint = ("" if eta is not None else
+                        "; without scattering, states in a dip of a subband below both "
+                        "contacts' band bottoms stay empty, which can keep the potential "
+                        "from settling: give scattering_time (Buttiker probes), or put the "
+                        "ends of the QuantumChannel's x_range where the bands are flat")
+                raise RuntimeError(f"NEGF and the potential did not settle in {max_outer} "
+                                   f"iterations (last change {hist[-1]:.2e} V){hint}")
+            st = self._state(x, target, Tn, True, len(hist), internal=bias_in)
+            I = float(sum(mode_I))
+            st.current = {e.name: 0.0 for e in self.electrodes}
+            st.current[source] = -I
+            st.current[drain] = I
+            st.quantum_potential = np.zeros(self.shape)
+            st.quantum = dict(subbands=[(float(xc[k]), Ei[k].copy()) for k in range(len(cols))],
+                              sheet_cm2=[float((ncol[k] * cols[k]["w"]).sum() * 1e14)
+                                         for k in range(len(cols))],
+                              iterations=len(hist), last_change=hist[-1])
+            st.negf = dict(current=I, mode_currents=mode_I, modes=modes,
+                           transmission=trans, iterations=len(hist), last_change=hist[-1],
+                           probe_levels=probe_F if eta is not None else None,
+                           quantum_nodes=qnodes)
+            return st
+        finally:
+            if Lam_save is not None:
+                self._apply_q(*Lam_save)
 
     def _solve_band_to_band(self, bias, guess, thermal, max_bias_step, tol, thermal_tol,
                             max_thermal_iter, energy_relaxation, rtol=1e-6, max_outer=80):
