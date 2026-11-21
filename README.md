@@ -236,8 +236,9 @@ The main gaps, in plain terms:
   are very dense; the Fermi-Dirac form is an option, still for one
   energy-independent scattering time.
 - The polar optical phonons of the scattering lifetimes are bulk ones
-  of one energy, without the interface modes of the heterostructure, and
-  the screening leaves out the polarization between subbands.
+  of one energy, without the interface modes of the heterostructure.
+  Screening by all the levels together is an option (static, and only
+  among the levels you pass).
 - No material numbers without a source: where a number is missing, you
   supply it with its source.
 - There is no paid support. Questions and bug reports go to the
