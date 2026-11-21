@@ -40,14 +40,18 @@ only looks right.
   electrons, and electrons hopping over band steps.
 - Electrons and holes in a channel as quantum states (their allowed
   energies and where they sit), solved together with the current, also
-  on triangle meshes; quantum transport of the channel electrons by
-  non-equilibrium Green's functions (tunneling, reflection, and
-  scattering if you want it), and the ballistic limit of a transistor's
-  current.
+  on triangle meshes; quantum transport of the channel electrons or
+  holes by non-equilibrium Green's functions (tunneling, reflection,
+  electrons changing subband, and scattering if you want it), and the
+  ballistic limit of a transistor's current.
+- Scattering lifetimes and mobility of a 2D gas from its own
+  wavefunction: phonons, alloy disorder, interface roughness and charged
+  impurities, with the material numbers you give.
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
-  shapes on triangle meshes.
+  shapes on triangle meshes, with a built-in generator of quality
+  meshes.
 - Process steps that build the shape and the doping: deposition and
   etching (also with the shadowing of narrow openings, particles that
   bounce, and etching driven by ions and a reactive gas together),
@@ -199,11 +203,12 @@ The full list is in [How it is checked](https://github.com/TaN-MM-Org/kpenvelope
 
 The main gaps, in plain terms:
 
-- Quantum transport is one band per subband, each subband on its own
-  (no mixing between subbands), electrons only, on rectangular grids; its
-  scattering is one simple model (Buttiker probes with one scattering
-  time), not phonons. Without scattering, long access regions or high
-  drain voltages can keep it from settling.
+- Quantum transport is one band per subband, one carrier at a time, on
+  rectangular grids. Carriers can change subband only without
+  scattering, and the scattering is one simple model (Buttiker probes
+  with one scattering time), not phonons. Without scattering, long
+  access regions, high drain voltages or small dips along the channel
+  can keep it from settling.
 - With velocity saturation, the hot-electron model does not turn into
   drift-diffusion as its relaxation time goes to zero. That is how such
   models behave; the attempts to change it are described on the limits
@@ -214,16 +219,19 @@ The main gaps, in plain terms:
   Carlo implant ranges use a textbook electronic stopping that can be off
   by tens of percent for light ions, diffusion constants come from you,
   and the shapes are built from square cells.
-- The built-in meshes are simple. For complex shapes, bring a mesh from
-  a mesh generator.
+- The built-in quality mesh generator is 2D and isotropic: thin layers
+  need many small triangles, and it does not refine where the solution
+  changes fast.
 - Tunneling between bands follows straight paths in one direction, not
   paths that bend with the field. Models that depend on each other, such
   as tunneling and heat, are solved by taking turns, which is slower than
   solving them together.
 - The heat carried by electrons uses a simple form that comes out too
   small where the electrons are very dense, as in a transistor channel.
-- No scattering lifetimes, and no material numbers without a source:
-  where a number is missing, you supply it with its source.
+- Scattering lifetimes are for one subband at a time and leave out
+  polar optical phonons, the main limit in GaN near room temperature.
+- No material numbers without a source: where a number is missing, you
+  supply it with its source.
 - There is no paid support. Questions and bug reports go to the
   [issue tracker](https://github.com/TaN-MM-Org/kpenvelope/issues).
 

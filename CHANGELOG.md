@@ -4,6 +4,78 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.27.0 (2026-11-21)
+
+Electrons can change subband in quantum transport, holes can be solved
+by it too, the package makes quality triangle meshes, the quantum channel
+on meshes keeps band steps where the mesh puts them, and scattering
+lifetimes and mobility of a 2D gas are computed from its own
+wavefunction. The examples print what they printed before, except
+example 58 (the quantum channel on a mesh, now closer to the tensor
+grid); examples 62 to 65 are new.
+
+### Added
+
+- `Device.negf(..., coupled_modes=M)`: NEGF in coupled mode space, the
+  lowest M states of every column joined by their overlaps, so electrons
+  change subband where the channel's profile across it changes; with all
+  modes it is the full 2D problem (ballistic only). `kpenvelope.negf`
+  adds `Slab`, `slab_transport` and `lead_surface_green` (leads by
+  decimation).
+- `Device.negf(..., carrier="holes")`: the holes of a QuantumChannel with
+  `holes=(m_z, m_inplane, ...)`, with or without scattering, uncoupled or
+  coupled; `Slab(mass_x=)` for a mass along x of its own.
+- `kpenvelope.mesh.quality_mesh(regions, h, min_angle)`: quality meshes
+  of polygon regions by Delaunay refinement (every boundary and interface
+  an edge, no node in a segment's diametral circle, smallest angle up to
+  34 degrees, a size field).
+- `kpenvelope.scattering.Subband`: transport and quantum lifetimes and
+  the mobility of one subband from acoustic phonons, alloy disorder,
+  interface roughness (Gaussian or exponential correlation) and screened
+  charged impurities (sheets or profiles), with your material numbers.
+
+### Changed
+
+- The quantum channel on meshes: the material on each sample of a line is
+  the mean over its share of the line. Before, a node on a band step took
+  its whole share from the one region it belongs to, which moved the
+  step by up to half a spacing, differently on each line: on a quality
+  mesh the confined sheet was 1.6 to 2.0 percent off a fine tensor grid
+  at every mesh size; now 0.54, 0.20 and 0.10 percent at 1, 0.5 and 0.25
+  nm. On a mesh made from a tensor grid with a band step inside the
+  window, the result now differs from the tensor grid's by that
+  half-spacing effect of the tensor grid.
+- `Device(grid=...)` refuses nodes closer than 1e-6 nm with a clear
+  message (a near-duplicate node made the Poisson solve fail).
+
+### Not included (see docs/limits.md)
+
+- Scattering in coupled mode space; phonon self-energies in NEGF; NEGF
+  on triangle meshes; both carriers in NEGF at once. Polar optical
+  phonon and intersubband scattering in the lifetimes. The hot-electron
+  model's limit at zero relaxation time with velocity saturation, the
+  plasma's own chemistry, oxide shapes that follow the flow, elasticity,
+  electronic stopping beyond Lindhard-Scharff, tunneling paths that bend
+  with the field, tunneling and heat inside one Newton solve, and the
+  Peltier heat in Fermi-Dirac form are as in 0.26.0. The app does not
+  have the new features yet.
+
+### Checks (tests)
+
+15 new tests (372 in all; docs/checks.md has the tolerances): the leads
+by decimation against the exact chain lead; coupled mode space against
+the dense real-space inverse, mode counting, the sum of chains without
+mixing, and the uncoupled device; holes against the mirror image of
+electrons and the QuantumChannel's holes; a slab with a mass along x of
+its own; the quality mesh's angles, areas, conformity and diametral
+circles, and a ring resistor converging at second order; the quantum
+channel on a quality mesh against a fine tensor grid; the scattering
+rates against closed forms (Fang-Howard and square-well overlaps,
+Price's acoustic rate, the alloy rate), an independent integral with
+the closed-form Fang-Howard form factors, the far-away-charge limits,
+the Hellmann-Feynman shift of a level, and the thermal average. All 65
+documented examples were rerun.
+
 ## 0.26.0 (2026-11-20)
 
 The channel electrons can be solved as waves by non-equilibrium Green's
