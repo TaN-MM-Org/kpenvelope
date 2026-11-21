@@ -533,6 +533,48 @@ def _pair(z, q, a, b):
     return tot + (a * b).sum()
 
 
+def _pair_matrix(z, q, A):
+    """sum_ij A_ip A_jr exp(-q |z_i - z_j|) for every q (1/nm) and every
+    two columns p, r of A: (len(q), P, P), by the two one-sided recursions
+    (`_pair` for all columns at once)."""
+    q = np.atleast_1d(np.asarray(q, float))
+    P = A.shape[1]
+    tot = np.einsum("kp,kr->pr", A, A)[None, :, :].repeat(q.size, 0)
+    S = np.zeros((q.size, P))
+    for k_ in range(1, z.size):
+        S = np.exp(-q * (z[k_] - z[k_ - 1]))[:, None] * (S + A[k_ - 1])
+        tot += A[k_][None, :, None] * S[:, None, :]
+    S = np.zeros((q.size, P))
+    for k_ in range(z.size - 2, -1, -1):
+        S = np.exp(-q * (z[k_ + 1] - z[k_]))[:, None] * (S + A[k_ + 1])
+        tot += A[k_][None, :, None] * S[:, None, :]
+    return tot
+
+
+def _sheet_transforms(z, q, A, pos):
+    """F_p(q, z_c) = sum_i A_ip exp(-q |z_i - z_c|) at the positions pos:
+    (len(q), P, len(pos)), by the two one-sided recursions."""
+    q = np.atleast_1d(np.asarray(q, float))
+    P = A.shape[1]
+    zz = np.concatenate([z, pos])
+    order = np.argsort(zz, kind="stable")
+    zs = zz[order]
+    aa = np.concatenate([A, np.zeros((pos.size, P))])[order]
+    F = np.empty((q.size, P, zs.size))
+    S = np.zeros((q.size, P))
+    for k_ in range(zs.size):
+        if k_:
+            S = np.exp(-q * (zs[k_] - zs[k_ - 1]))[:, None] * (S + aa[k_ - 1])
+        F[:, :, k_] = S + aa[k_]
+    S = np.zeros((q.size, P))
+    for k_ in range(zs.size - 1, -1, -1):
+        if k_ < zs.size - 1:
+            S = np.exp(-q * (zs[k_ + 1] - zs[k_]))[:, None] * (S + aa[k_ + 1])
+        F[:, :, k_] += S
+    at = np.argsort(order)[z.size:]
+    return F[:, :, at]
+
+
 class Subbands:
     """Several subbands of a 2D electron (or hole) gas, with scattering
     within and between them (new in 0.29.0).
@@ -543,9 +585,20 @@ class Subbands:
     returns them. energies : the subband bottoms (eV), on the same scale as
     fermi. mass : the in-plane mass (m0, one for all). eps_r : background
     permittivity. Give fermi (eV) or sheet_cm2 (all subbands together).
-    screening : Thomas-Fermi screening by every subband's own charge with
-    its own form factor, eps(q) = 1 + sum_i q_s,i F_ii(q) / q (the
-    polarization between subbands is left out).
+    screening : True (the default) for Thomas-Fermi screening by every
+    subband's own charge with its own form factor, one number for every
+    pair, eps(q) = 1 + sum_i q_s,i F_ii(q) / q (the polarization between
+    subbands is left out). "full" (new in 0.30.0) for the dielectric
+    matrix of all pairs of subbands (T. Ando, A. B. Fowler and F. Stern,
+    Rev. Mod. Phys. 54, 437 (1982)): the screened matrix element of a
+    perturbation is V_ij = sum_kl [eps^-1]_ij,kl V_kl with
+    eps_ij,kl(q) = delta - e^2 / (2 eps q) H_ij,kl(q) Pi_kl, where
+    H_ij,kl = int int psi_i psi_j(z) psi_k psi_l(z') exp(-q |z - z'|) and
+    Pi_kl the static polarization of each pair at long wavelength (the
+    Thomas-Fermi value -dn_k/dE_F within a subband, (n_k - n_l) /
+    (E_k - E_l) between two), so electrons that move between subbands
+    also screen. It applies to the ionized impurities and the roughness;
+    False for no screening.
 
     The mechanisms are those of `Subband`, now with form factors between
     subbands i and j (psi_i psi_j in place of psi^2), so an electron can
@@ -605,12 +658,16 @@ class Subbands:
         self.fermi = float(fermi)
         self.sheets = self._sheets(self.fermi)                    # 1/m^2 per subband
         self.sheet = float(self.sheets.sum())
+        if screening not in (True, False, "full"):
+            raise ValueError('screening must be True, False or "full"')
+        self.full_screening = screening == "full"
         self.screening = bool(screening)
         x = (self.fermi - Es) / self.kT
         dn = self.dos / (1.0 + np.exp(-np.clip(x, -700, 700)))
         self.q_s = QE ** 2 / (2 * self.eps) * dn / QE              # 1/m per subband
         self.n_theta = int(n_theta)
         self._spl = {}
+        self._screen = None
 
     def _sheets(self, F):
         return self.dos * self.kT * np.logaddexp(0.0, (F - self.E) / self.kT)
@@ -646,6 +703,118 @@ class Subbands:
             if self.q_s[i] > 0:
                 e = e + self.q_s[i] / np.maximum(q, 1e-30) * self.form_factor(i, i, q * 1e-9)
         return e
+
+    # ------------------------------------------- screening of all pairs
+    def pairs(self):
+        """The pairs (k, l), k <= l, in the order of the dielectric matrix."""
+        return [(k, l) for k in range(self.n) for l in range(k, self.n)]
+
+    def polarization(self, q_nm=None):
+        """Static polarization of every pair (1/(J m^2)), both orders (k, l)
+        and (l, k) counted. Without q_nm, at long wavelength: -dn_k/dE_F
+        within a subband, 2 (n_k - n_l) / (E_k - E_l) between two (its
+        limit -2 dn_k/dE_F when they have one energy); (P,).
+
+        With q_nm (1/nm): the static Lindhard (RPA) polarization at q,
+        (len(q), P),
+
+            chi_kl(q) = 2 / A sum_k' [f(E_k + e_k') - f(E_l + e_k'+q)]
+                        / (E_k + e_k' - E_l - e_k'+q),
+
+        in closed form at zero temperature (the angle and the wave number
+        integrals; within a subband it is the 2D Lindhard function,
+        -m / (pi hbar^2) [1 - sqrt(1 - (2 k_F / q)^2)] for q > 2 k_F) and
+        at the temperature by Maldague's integral over the Fermi level
+        (P. F. Maldague, Surf. Sci. 73, 296 (1978)),
+        int dmu chi(q, T = 0, mu) / (4 kT cosh^2((mu - E_F) / 2 kT))."""
+        if q_nm is not None:
+            return self._lindhard(np.atleast_1d(np.asarray(q_nm, float)) * 1e9)
+        dn = self.q_s * 2 * self.eps / QE ** 2
+        out = []
+        for k, l in self.pairs():
+            if k == l:
+                out.append(-dn[k])
+                continue
+            dE = (self.E[k] - self.E[l]) * QE
+            if abs(dE) < 1e-6 * self.kT * QE:
+                out.append(-(dn[k] + dn[l]))
+            else:
+                out.append(2 * (self.sheets[k] - self.sheets[l]) / dE)
+        return np.array(out)
+
+    def _lindhard(self, q):
+        """polarization(q_nm) for q in 1/m: (len(q), P)."""
+        c2 = (HBAR ** 2 * q / self.m) ** 2                     # (J m)^2
+        eq = HBAR ** 2 * q * q / (2 * self.m)                  # J
+        kT, F = self.kT * QE, self.fermi * QE
+        Es = self.E * QE
+        xg, wg = np.polynomial.legendre.leggauss(96)
+
+        def term(a, k):
+            """(1 / pi) sum over the filled disk of subband k of the angle
+            integral of 1 / (a - c k cos theta), at the temperature: the
+            disk of radius k_F holds v(s) = s / (|a| + sqrt(a^2 - c^2 s)),
+            s = k_F^2, up to s0 = a^2 / c^2, and |a| / c^2 beyond; weighted
+            by 1 / (4 kT cosh^2((mu - E_F) / 2 kT)) over the Fermi levels mu
+            (Maldague), exactly beyond s0 and by Gauss-Legendre below."""
+            A = np.abs(a)
+            out = np.zeros(q.size)
+            ok = A > 0
+            if not ok.any():
+                return out
+            A, C2 = A[ok], c2[ok]
+            with np.errstate(divide="ignore", over="ignore"):
+                mu0 = Es[k] + HBAR ** 2 * (A * A / C2) / (2 * self.m)
+                # beyond s0: |a| / c^2 times the share of Fermi levels above mu0
+                r2 = np.exp(np.log(A) - np.log(C2) - np.logaddexp(0.0, (mu0 - F) / kT))
+            r2 = np.where(np.isfinite(r2), r2, 0.0)
+            lo = max(Es[k], F - 40 * kT)
+            hi = np.minimum(mu0, F + 40 * kT)
+            r1 = np.zeros(A.size)
+            go = hi > lo
+            if go.any():
+                h = 0.5 * (hi[go] - lo)
+                mu = lo + h[:, None] * (xg[None, :] + 1.0)
+                sv = 2 * self.m * (mu - Es[k]) / HBAR ** 2
+                Ag = A[go][:, None]
+                v = sv / (Ag + np.sqrt(np.maximum(Ag * Ag - C2[go][:, None] * sv, 0.0)))
+                wmu = 1.0 / (4 * kT * np.cosh(0.5 * (mu - F) / kT) ** 2)
+                r1[go] = h * (v * wmu * wg[None, :]).sum(1)
+            out[ok] = np.sign(a[ok]) * (r1 + r2) / math.pi
+            return out
+
+        res = []
+        for k, l in self.pairs():
+            chi = term(Es[k] - Es[l] - eq, k) + term(Es[l] - Es[k] - eq, l)
+            res.append(chi if k == l else 2 * chi)
+        return np.stack(res, 1)
+
+    def _screen_grid(self):
+        """log q (q in 1/nm) and the inverse dielectric matrix there,
+        (nq, P, P), for screening="full"."""
+        if self._screen is None:
+            lq = np.linspace(math.log(1e-6), math.log(1e3), 900)
+            q = np.exp(lq)
+            pr = self.pairs()
+            A = np.stack([self.w * self.psi[:, k] * self.psi[:, l] for k, l in pr], 1)
+            H = _pair_matrix(self.z, q, A)
+            c = QE ** 2 / (2 * self.eps * q * 1e9)
+            M = np.eye(len(pr))[None] - c[:, None, None] * H * self.polarization(q)[:, None, :]
+            self._screen = (lq, A, np.linalg.inv(M))
+        return self._screen
+
+    def screened(self, V, q_nm):
+        """The screened matrix elements of a perturbation whose bare
+        elements between the pairs are V (P values, or (len(q), P)), at
+        q (1/nm), with the full dielectric matrix: (len(q), P)."""
+        from scipy.interpolate import CubicSpline
+        lq, _, B = self._screen_grid()
+        if "inverse" not in self._spl:
+            self._spl["inverse"] = CubicSpline(lq, B, axis=0)
+        q = np.atleast_1d(np.asarray(q_nm, float))
+        V = np.broadcast_to(np.asarray(V, float), (q.size, B.shape[1]))
+        Bq = self._spl["inverse"](np.log(np.clip(q, 1e-6, 1e3)))
+        return np.einsum("qab,qb->qa", Bq, V)
 
     def _angles(self, ki, kj):
         """theta nodes and weights (2 x int_0^pi) per pair of wave numbers,
@@ -747,6 +916,23 @@ class Subbands:
                 spl[key] = CubicSpline(lq, (Fz[:, at] ** 2) @ dens)
             return spl[key]
 
+        if self.full_screening:
+            from scipy.interpolate import CubicSpline
+            lq, A, B = self._screen_grid()
+            F = _sheet_transforms(self.z, np.exp(lq), A, pos)       # (nq, P, nc)
+            # sum over the charges of the screened F_ij squared
+            G = np.einsum("qab,qbc->qac", B, F)
+            G2 = np.einsum("qac,c->qa", G * G, dens)
+            # splined as its logarithm: it falls like exp(-2 q d) at large q
+            floor = 1e-300 + 1e-30 * float(np.max(G2))
+            gs = {p: CubicSpline(lq, np.log(np.maximum(G2[:, a], floor)))
+                  for a, p in enumerate(self.pairs())}
+
+            def W(q, i, j):
+                g = gs[(min(i, j), max(i, j))](np.log(np.clip(q * 1e-9, 1e-6, 1e3)))
+                return pre * np.exp(g) / q ** 2
+            return _Elastic(self, W)
+
         def W(q, i, j):
             F2 = F2_of(i, j)(np.log(np.clip(q * 1e-9, 1e-6, 1e3)))
             return pre * F2 / (q * self._eps_q(q)) ** 2
@@ -762,13 +948,27 @@ class Subbands:
         pz = np.array([np.interp(z_interface, self.z, self.psi[:, i]) for i in range(self.n)])
         D, L = rms_nm * 1e-9, correlation_nm * 1e-9
 
+        def spectrum(q):
+            if correlation == "gaussian":
+                return math.pi * D * D * L * L * np.exp(-(q * L) ** 2 / 4)
+            return 2 * math.pi * D * D * L * L / (1 + (q * L) ** 2) ** 1.5
+
+        if self.full_screening:
+            from scipy.interpolate import CubicSpline
+            lq, _, B = self._screen_grid()
+            pr = self.pairs()
+            V = np.array([step_eV * QE * pz[k] * pz[l] * 1e9 for k, l in pr])
+            R = np.einsum("qab,b->qa", B, V)
+            rs = {p: CubicSpline(lq, R[:, a]) for a, p in enumerate(pr)}
+
+            def W(q, i, j):
+                r = rs[(min(i, j), max(i, j))](np.log(np.clip(q * 1e-9, 1e-6, 1e3)))
+                return r * r * spectrum(q)
+            return _Elastic(self, W)
+
         def W(q, i, j):
             M2 = (step_eV * QE * pz[i] * pz[j] * 1e9) ** 2
-            if correlation == "gaussian":
-                S = math.pi * D * D * L * L * np.exp(-(q * L) ** 2 / 4)
-            else:
-                S = 2 * math.pi * D * D * L * L / (1 + (q * L) ** 2) ** 1.5
-            return M2 * S / self._eps_q(q) ** 2
+            return M2 * spectrum(q) / self._eps_q(q) ** 2
         return _Elastic(self, W)
 
     def polar_optical(self, phonon_eV, eps_static, eps_high, temperature_K=None,
