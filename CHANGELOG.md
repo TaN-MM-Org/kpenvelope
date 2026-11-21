@@ -4,6 +4,61 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.28.0 (2026-11-21)
+
+Polar optical phonons join the scattering lifetimes, with an exact
+solution of the Boltzmann equation; meshes can adapt to the solution;
+the thermoelectric current and Peltier heat can take their Fermi-Dirac
+form. The examples print what they printed before; examples 66 to 68
+are new.
+
+### Added
+
+- `Subband.polar_optical(phonon_eV, eps_static, eps_high, ...)`: LO
+  phonon scattering through the Froehlich coupling with the subband's
+  form factor. With it, `Subband.mobility` solves the linearized
+  Boltzmann equation exactly (Rode's method in 2D, with the Pauli factors
+  of a degenerate gas) together with the elastic mechanisms.
+- `kpenvelope.mesh.recovered_hessian` and `size_from_solution`: second
+  derivatives of a nodal field (exact for quadratics) and a size field
+  for `quality_mesh` that spreads the interpolation error evenly.
+- `Device(..., thermoelectric="fermi-dirac")` (also `MeshDevice`): the
+  thermal diffusion and the Peltier heat of a degenerate gas, kT
+  ((5/2) F_3/2 / F_1/2 - eta) per electron, for a constant scattering
+  time.
+
+### Changed
+
+- `MeshDevice` judges a negative dual face against the edge's own
+  length: on very fine meshes a right angle on a straight boundary (a
+  face of zero, slightly negative after rounding) no longer warns.
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; scattering in coupled mode space; NEGF on
+  triangle meshes; scattering between subbands and interface phonon
+  modes in the lifetimes; an automatic adapt-and-solve loop and
+  anisotropic meshes. The hot-electron model's limit at zero relaxation
+  time with velocity saturation, the plasma's own chemistry, oxide shapes
+  that follow the flow, elasticity, electronic stopping beyond
+  Lindhard-Scharff, tunneling paths that bend with the field, and
+  tunneling and heat inside one Newton solve are as in 0.27.0. The app
+  does not have the new features yet.
+
+### Checks (tests)
+
+9 new tests (381 in all; docs/checks.md has the tolerances): the polar
+optical angular integrals against their elliptic-integral closed forms;
+the exact Boltzmann solution against the elastic limits (vanishing
+coupling, small phonon energy), detailed balance of the collision
+operator and convergence in the energy step; recovered second
+derivatives exact for quadratics; an adaptive mesh of an L-shaped
+conductor against uniform ones; F_3/2 against quadrature and the
+Fermi-Dirac Peltier factor against its limits and arbitrary precision;
+the thermoelectric current of a degenerate bar against its integral;
+the Peltier heat at the contacts; the Jacobian of the new fluxes. All
+68 documented examples were rerun.
+
 ## 0.27.0 (2026-11-21)
 
 Electrons can change subband in quantum transport, holes can be solved

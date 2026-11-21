@@ -45,13 +45,14 @@ only looks right.
   electrons changing subband, and scattering if you want it), and the
   ballistic limit of a transistor's current.
 - Scattering lifetimes and mobility of a 2D gas from its own
-  wavefunction: phonons, alloy disorder, interface roughness and charged
-  impurities, with the material numbers you give.
+  wavefunction: acoustic and polar optical phonons (the latter by an
+  exact solution of the Boltzmann equation), alloy disorder, interface
+  roughness and charged impurities, with the material numbers you give.
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
   shapes on triangle meshes, with a built-in generator of quality
-  meshes.
+  meshes that can also refine where the solution changes fast.
 - Process steps that build the shape and the doping: deposition and
   etching (also with the shadowing of narrow openings, particles that
   bounce, and etching driven by ions and a reactive gas together),
@@ -220,16 +221,19 @@ The main gaps, in plain terms:
   by tens of percent for light ions, diffusion constants come from you,
   and the shapes are built from square cells.
 - The built-in quality mesh generator is 2D and isotropic: thin layers
-  need many small triangles, and it does not refine where the solution
-  changes fast.
+  need many small triangles. It can refine where the solution curves,
+  but you run the loop of meshing and solving yourself.
 - Tunneling between bands follows straight paths in one direction, not
   paths that bend with the field. Models that depend on each other, such
   as tunneling and heat, are solved by taking turns, which is slower than
   solving them together.
-- The heat carried by electrons uses a simple form that comes out too
-  small where the electrons are very dense, as in a transistor channel.
-- Scattering lifetimes are for one subband at a time and leave out
-  polar optical phonons, the main limit in GaN near room temperature.
+- The heat carried by electrons, and their thermal diffusion, are by
+  default in a simple form that comes out too small where the electrons
+  are very dense; the Fermi-Dirac form is an option, still for one
+  energy-independent scattering time.
+- Scattering lifetimes are for one subband at a time (no scattering
+  between subbands), and the polar optical phonons are bulk ones of one
+  energy, without the interface modes of the heterostructure.
 - No material numbers without a source: where a number is missing, you
   supply it with its source.
 - There is no paid support. Questions and bug reports go to the
