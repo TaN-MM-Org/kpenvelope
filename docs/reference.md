@@ -181,7 +181,10 @@ read the results on the right:
   how much of the charge comes from dislocation lines, and the source
   of every number.
 - **Electrons**: the band diagram and the electron density, the sheet
-  density as one big number, and the lowest energy levels.
+  density as one big number, and the lowest energy levels. Since 0.29.0
+  it also finds the mobility of the electron layer, all its levels
+  together; since 0.30.0 the charges and the roughness are screened by
+  all the levels together (the dielectric matrix).
 - **How sure?**: how sure the electron density is, from the errors you
   give for each composition, thickness and the surface barrier, with a
   bar chart of where the error comes from (or a spread of random
@@ -229,13 +232,24 @@ read the results on the right:
   with the hot electrons; electrons can cross the barrier step by
   thermionic emission; and a thermal runaway button raises the drain
   voltage until no steady temperature is left. Since 0.24.0 the channel electrons can be
-  treated as quantum states.
+  treated as quantum states. Since 0.30.0 the Peltier heat can take the
+  full (Fermi-Dirac) heat per electron of the crowded channel, and for a
+  short transistor (gaps and gate at most 600 nm together) the tab gives
+  the current at one bias with the electrons treated as waves (NEGF,
+  ballistic or with scattering at the rate of the tab's mobility), next to
+  the ordinary current and the ballistic limit.
 - **Process steps** (new in 0.23.0): write a short recipe, one step per
   line (deposit, etch, implant, anneal, oxidize), and see the
   cross-section it builds, with its materials or its doping, the
   thickness in the middle and the doses. Since 0.24.0 deposit and etch also
   take mode=flux (narrow openings fill and etch more slowly) and oxidize
-  takes mode=2d (oxide under mask edges).
+  takes mode=2d (oxide under mask edges). Since 0.30.0: implant
+  ranges=simulate follows the ions (the package's Monte Carlo) instead of
+  taking a range you type; plasmaetch etches with a reactive gas and
+  ions together; oxidize mode=2d viscosity= lets the oxide flow and
+  reports the largest stress (stress_volume= and temperature= slow the
+  growth where it is squeezed); and the app says when part of an
+  implant's dose leaves the picture or lands in a mask.
 - **Defect lines**: what the published data say about the charge
   of the misfit lines, combined, and how precisely a planned holography
   measurement would pin it down.
@@ -617,6 +631,29 @@ example) gives its inputs, units and conventions.
   tunneling in the I-V sweep, and in the Transistor tab the full
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
+
+**Screening by every pair of subbands, the app catches up (new in 0.30.0)**
+
+- `Subbands(..., screening="full")` -- the static dielectric matrix of
+  all pairs of subbands (T. Ando, A. B. Fowler and F. Stern, Rev. Mod.
+  Phys. 54, 437 (1982), doi:10.1103/RevModPhys.54.437) screens the
+  ionized impurities and the roughness: V_ij = sum_kl [eps^-1]_ij,kl
+  V_kl, eps_ij,kl(q) = delta - e^2 H_ij,kl(q) Pi_kl(q) / (2 eps q), with
+  H_ij,kl the form factor of two pairs and Pi_kl(q) the static Lindhard
+  polarization of each pair at the temperature (closed form at zero
+  temperature, then Maldague's integral over the Fermi level, P. F.
+  Maldague, Surf. Sci. 73, 296 (1978)). Polar
+  optical phonons keep their own `screening` option (one number).
+  `pairs()` lists the pairs in the matrix's order; `polarization(q_nm=None)`
+  gives Pi (at long wavelength without q); `screened(V, q_nm)` the
+  screened elements of any perturbation (example 70).
+- The app: in the Transistor tab, the current at one bias with the
+  electrons as waves (`Device.negf`) for short transistors, and the
+  Fermi-Dirac heat per electron with the Peltier heat; in Process steps,
+  simulated implant ranges (`bca.simulate`), `plasmaetch`
+  (`Structure.plasma_etch`) and oxide flow (`viscosity`, `stress_volume`);
+  the mobility of the Electrons tab with `screening="full"`. A mobility
+  you type without a source is now labeled as your own number.
 
 **Scattering between subbands, mobility in the app (new in 0.29.0)**
 

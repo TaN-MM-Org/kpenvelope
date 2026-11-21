@@ -32,7 +32,7 @@ subband, holes in quantum transport, a quality mesh, and scattering
 lifetimes and mobility of a 2D gas; 66 to 68 polar optical phonons,
 meshes that adapt to the solution, and thermoelectric currents of a
 degenerate gas; 69 a gas of several subbands that scatter into each
-other.
+other; 70 the screening of all its pairs of levels.
 
 ### 1. Energy levels and what they are made of
 
@@ -3182,6 +3182,51 @@ slower than they would be alone, because they can also be scattered up
 into the other levels. Counting all four levels gives 752 cm²/Vs, against 726
 cm²/Vs when the lowest level is treated as the whole gas. The roughness
 numbers are illustrative; polar optical phonons are the main limit here.
+
+### 70. Screening by every pair of levels (new in 0.30.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.scattering import Subbands
+
+# the 2DEG of example 69 at 300 K with interface roughness (0.3 nm and
+# 1.5 nm, illustrative) and a sheet of 1e12 cm^-2 charges 1 nm into the
+# barrier, screened three ways: not at all, by one Thomas-Fermi number for
+# every pair of levels, and by the dielectric matrix of all pairs (Lindhard)
+gan, bar = algan(0.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(bar, 25.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 324.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 324.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, bar.me)
+E, p2, w, psi = column_states(z, r.ec[win], mass, 4, z[0] - 0.1, z[-1] + 0.1, signed=True)
+for screening in (False, True, "full"):
+    sb = Subbands(z, psi, E, gan.me, gan.eps_r, fermi=0.0, weights=w, screening=screening)
+    rough = sb.mobility(sb.roughness(300.0, bar.ec - gan.ec, 0.3, 1.5))["mobility_cm2Vs"]
+    charges = sb.mobility(sb.impurities(z0=301.0, sheet_cm2=1e12))["mobility_cm2Vs"]
+    print(f"screening {str(screening):5s}: roughness alone {rough:7.0f} cm^2/Vs, "
+          f"charges alone {charges:8.0f} cm^2/Vs")
+```
+
+```
+screening False: roughness alone    1222 cm^2/Vs, charges alone     3877 cm^2/Vs
+screening True : roughness alone    2224 cm^2/Vs, charges alone    29468 cm^2/Vs
+screening full : roughness alone    1741 cm^2/Vs, charges alone    22478 cm^2/Vs
+```
+
+Electrons crowd around a charge or a bump of the interface and partly
+hide it. With `screening=True` every pair of levels sees one number,
+the Thomas-Fermi one, from each level's own electrons. With
+`screening="full"` the electrons can also shift between levels to do the
+hiding, each pair of levels has its own share (the dielectric matrix of
+Ando, Fowler and Stern), and the hiding fades for bumps shorter than the
+electrons' wavelength (the Lindhard form, where Thomas-Fermi stays
+constant). Here the full form hides less than one Thomas-Fermi number
+does, so both mobilities come out lower, by about a fifth to a quarter.
+The roughness numbers and the charge sheet are illustrative.
 
 ## Tutorials
 

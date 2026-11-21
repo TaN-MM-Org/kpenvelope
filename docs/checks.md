@@ -343,6 +343,32 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Screening by every pair of subbands, the app catches up (new in 0.30.0)**
+
+- The long-wavelength polarization of every pair equals the density
+  change of the n x n Hamiltonian with a small random potential added at
+  a fixed Fermi level (1e-8; measured 2e-10). The Lindhard polarization
+  goes over into it as q goes to 0 (1e-9; measured 2e-13) and equals a
+  direct 2D integral over the wave vector at 300 K for every pair at
+  q = 1.5 nm^-1 (2e-5; measured 1e-7).
+- The screened elements of a sheet of charges and of the roughness,
+  for every pair at q = 0.05, 0.4 and 2 nm^-1, equal a separate solve of
+  the self-consistent potential on the grid nodes (the induced density
+  of every pair fed back through the Coulomb kernel; 1e-6, measured
+  1.4e-7). One subband: the matrix is the single number 1 - e^2 H Pi /
+  (2 eps q) (1e-8).
+- The app: the 2D oxide with flow gives the library's area and largest
+  stress (1e-9; example 61: 2892 nm^2, -11.1 GPa); the simulated implant
+  quotes the library's range and keeps the dose that was not bounced
+  back (1 percent), and a note appears when the dose leaves the picture;
+  plasma etching gives the library's area (1e-12); the wave current of
+  a short transistor with no scattering is within 5 percent of the
+  ballistic limit (measured 1.4 percent) and above twice the
+  drift-diffusion current, and with scattering it uses tau = mu m / q
+  (1e-12) and falls below 0.9 of the ballistic one; the dense-heat
+  option switches the device to the Fermi-Dirac form; a typed mobility
+  without a source is no longer credited to the paper of the default.
+
 **Scattering between subbands, mobility in the app (new in 0.29.0)**
 
 - `Subbands` with one subband is `Subband`: the same mobility for

@@ -11,10 +11,17 @@ The limits of each part of the package, in detail. The
   potentials, alloy potentials and roughness parameters differ between
   sources by factors of two and more). `Subband` is one subband alone;
   `Subbands` (since 0.29.0) has scattering between subbands, with one
-  in-plane mass for all of them and Thomas-Fermi screening by each
-  subband's own charge (no polarization between subbands, no dynamic
-  screening). Both are in the Born approximation with one background
-  permittivity (no image charges). Acoustic phonons are in the
+  in-plane mass for all of them. Its default screening is Thomas-Fermi
+  by each subband's own charge, one number for every pair; since 0.30.0
+  `screening="full"` uses the static dielectric matrix of all pairs, with
+  the Lindhard polarization of each pair (electrons shifting between
+  subbands screen too), but only among the subbands you pass (mixing with
+  higher, empty states is left out), static (no dynamic screening) and
+  without exchange and correlation (the random-phase approximation); it
+  screens the impurities and the roughness, while the optional screening
+  of polar optical phonons stays one Thomas-Fermi number. Both are in
+  the Born approximation with one background permittivity (no image
+  charges). Acoustic phonons are in the
   equipartition limit (elastic; too fast below the Bloch-Gruneisen
   temperature). Polar optical phonons (since 0.28.0) are bulk LO phonons
   of one energy, without dispersion, without the interface and confined
@@ -34,7 +41,17 @@ The limits of each part of the package, in detail. The
   since 0.29.0) keeps the levels of the exact region that each hold at
   least 0.5 percent of its electrons (at most five) and says what share
   they hold; it has GaN's polar optical phonons, the stack's ionized
-  donors, and roughness and acoustic phonons from numbers you type.
+  donors, and roughness and acoustic phonons from numbers you type, with
+  the full screening since 0.30.0.
+- The app (since 0.30.0) has the library's features of 0.24.0 to 0.30.0
+  that fit its tabs: the quantum (NEGF) current at one bias for short
+  transistors only (gaps and gate at most 600 nm together; electrons
+  only, uncoupled modes, no heat), the Fermi-Dirac heat per electron,
+  simulated implant ranges, plasma etching and oxide flow in the
+  process recipe, and the mobility of the electron layer. It does not
+  offer the triangle meshes and adaptive meshes, the NEGF of holes or
+  coupled modes, the separate scattering lifetimes of `Subband`, or the
+  3D devices; use the library for those.
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small
