@@ -32,7 +32,7 @@ before; example 70 is new.
 ### Changed
 
 - The app's mobility with donors or roughness is lower than in 0.29.0
-  (by a fifth to a quarter in example 70), because the full
+  (by a fifth to a quarter in the cases tried), because the full
   screening hides charges and bumps less than one Thomas-Fermi number.
 - A mobility typed in the Transistor tab without a source is listed as
   your own number instead of being credited to the paper of the default.
