@@ -618,6 +618,27 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Scattering between subbands, mobility in the app (new in 0.29.0)**
+
+- `kpenvelope.scattering.Subbands(z, psi, energies, mass, eps_r,
+  fermi=None, sheet_cm2=None, temperature_K=300, weights=None,
+  screening=True)` -- several subbands with their envelopes (signed,
+  orthonormal) and bottoms; the mechanisms of `Subband` (`acoustic`,
+  `alloy`, `impurities`, `roughness`, `polar_optical`) with form factors
+  between subbands, so electrons scatter within and between them.
+  `mobility(*mechanisms, n_energy=None)` solves the linearized Boltzmann
+  equation of all subbands together (exact for elastic scattering, after
+  S. D. Siggia and P. C. Kwok, Phys. Rev. B 2, 1024 (1970),
+  doi:10.1103/PhysRevB.2.1024; with polar optical phonons on energy cells
+  whose edges include every subband bottom) and returns the mobility,
+  that of each mechanism alone and that of each subband's electrons;
+  `lifetimes(*mechanisms, energy=None)` the quantum and transport times
+  of each subband at one energy.
+- `column_states(..., signed=True)` also returns the envelopes themselves.
+- The app: "Find the mobility" in the Electrons tab (polar optical
+  phonons of GaN, the stack's donors, roughness and acoustic phonons with
+  your numbers and their source).
+
 **Polar optical phonons, meshes that adapt, Fermi-Dirac thermoelectric effects (new in 0.28.0)**
 
 - `Subband.polar_optical(phonon_eV, eps_static, eps_high, temperature_K=None,

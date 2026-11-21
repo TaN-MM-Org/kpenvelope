@@ -31,7 +31,8 @@ ions and a gas, and oxide stress; 62 to 65 electrons that change
 subband, holes in quantum transport, a quality mesh, and scattering
 lifetimes and mobility of a 2D gas; 66 to 68 polar optical phonons,
 meshes that adapt to the solution, and thermoelectric currents of a
-degenerate gas.
+degenerate gas; 69 a gas of several subbands that scatter into each
+other.
 
 ### 1. Energy levels and what they are made of
 
@@ -3129,6 +3130,58 @@ larger (0.91 against 0.31 kT at 300 K), and the current nearly twice as
 large over this range of temperatures. With
 `thermoelectric="fermi-dirac"` the current and the Peltier heat both use
 it.
+
+### 69. Electrons that scatter between subbands (new in 0.29.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subband, Subbands
+
+# the 2DEG of an AlGaN/GaN heterostructure at 300 K: its lowest levels
+# with their envelopes, polar optical phonons (cited GaN numbers) and
+# interface roughness (0.3 nm and 1.5 nm, illustrative), with the
+# electrons free to move between levels, against the lowest level alone
+gan, bar = algan(0.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(bar, 25.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 324.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 324.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, bar.me)
+E, p2, w, psi = column_states(z, r.ec[win], mass, 4, z[0] - 0.1, z[-1] + 0.1, signed=True)
+hw, es, ei = ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp
+many = Subbands(z, psi, E, gan.me, es, fermi=0.0, weights=w)
+res = many.mobility(many.polar_optical(hw, es, ei), many.roughness(300.0, bar.ec - gan.ec, 0.3, 1.5))
+one = Subband(z, p2[:, 0], gan.me, es, fermi=-float(E[0]), weights=w)
+mu1 = one.mobility(one.polar_optical(hw, es, ei), one.roughness(300.0, bar.ec - gan.ec, 0.3, 1.5))
+print(f"all electrons {r.sheet_quantum_cm2:.3e} cm^-2")
+for k in range(4):
+    print(f"level {k}: {1e3 * E[k]:7.1f} meV, {res['sheets_cm2'][k]:.2e} cm^-2, "
+          f"mobility {res['subbands'][k]:6.0f} cm^2/Vs")
+print(f"four levels together: {res['mobility_cm2Vs']:.0f} cm^2/Vs; "
+      f"the lowest level alone, as if it were the whole gas: {mu1['mobility_cm2Vs']:.0f} cm^2/Vs")
+```
+
+```
+all electrons 1.436e+13 cm^-2
+level 0:  -138.1 meV, 1.15e+13 cm^-2, mobility    654 cm^2/Vs
+level 1:    -2.2 meV, 1.59e+12 cm^-2, mobility   1236 cm^2/Vs
+level 2:    45.4 meV, 3.44e+11 cm^-2, mobility   1487 cm^2/Vs
+level 3:    68.9 meV, 1.45e+11 cm^-2, mobility   1546 cm^2/Vs
+four levels together: 752 cm^2/Vs; the lowest level alone, as if it were the whole gas: 726 cm^2/Vs
+```
+
+`Subbands` takes the envelopes of several levels and lets every
+mechanism move electrons within a level and from one level to another.
+The lowest level holds most of the electrons; here the electrons of the
+upper levels move more easily, and the lowest level's electrons are
+slower than they would be alone, because they can also be scattered up
+into the other levels. Counting all four levels gives 752 cm²/Vs, against 726
+cm²/Vs when the lowest level is treated as the whole gas. The roughness
+numbers are illustrative; polar optical phonons are the main limit here.
 
 ## Tutorials
 

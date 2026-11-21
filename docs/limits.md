@@ -6,12 +6,14 @@ The limits of each part of the package, in detail. The
 ## Limits
 
 - Scattering lifetimes (`kpenvelope.scattering`, since 0.27.0) are
-  computed for one subband at a time, from its own envelope, with the
-  material numbers you give (the package ships none: deformation
+  computed from the subbands' own envelopes, with the material numbers
+  you give (the package ships none but GaN's phonons: deformation
   potentials, alloy potentials and roughness parameters differ between
-  sources by factors of two and more). Only scattering within the
-  subband (no transitions to other subbands), in the Born approximation,
-  with Thomas-Fermi screening by that subband alone and one background
+  sources by factors of two and more). `Subband` is one subband alone;
+  `Subbands` (since 0.29.0) has scattering between subbands, with one
+  in-plane mass for all of them and Thomas-Fermi screening by each
+  subband's own charge (no polarization between subbands, no dynamic
+  screening). Both are in the Born approximation with one background
   permittivity (no image charges). Acoustic phonons are in the
   equipartition limit (elastic; too fast below the Bloch-Gruneisen
   temperature). Polar optical phonons (since 0.28.0) are bulk LO phonons
@@ -21,13 +23,18 @@ The limits of each part of the package, in detail. The
   phonons, unscreened by default (static screening, the option, is an
   upper bound: at the phonon frequency screening is weaker); with them
   the mobility comes from the exact solution of the linearized Boltzmann
-  equation of one subband, which takes the energy steps of a fraction of
-  the phonon energy and stops at 40 kT above the Fermi level. There is
+  equation (of all the subbands together with `Subbands`), which takes
+  energy steps of a fraction of the phonon energy and stops at 40 kT
+  above the Fermi level or the highest subband. There is
   no piezoelectric scattering and no charged dislocations here (the
   separate line model of `line_scattering_rate` has them). Roughness is
   the shift of one band step (zero for a wave function that vanishes at
   the interface, as with an infinite barrier). The mobility is that of
-  one subband in a small field (no hot electrons).
+  a small field (no hot electrons). The app's mobility (Electrons tab,
+  since 0.29.0) keeps the levels of the exact region that each hold at
+  least 0.5 percent of its electrons (at most five) and says what share
+  they hold; it has GaN's polar optical phonons, the stack's ionized
+  donors, and roughness and acoustic phonons from numbers you type.
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small

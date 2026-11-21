@@ -343,6 +343,33 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Scattering between subbands, mobility in the app (new in 0.29.0)**
+
+- `Subbands` with one subband is `Subband`: the same mobility for
+  Coulomb, roughness and acoustic scattering (1e-4, the two energy
+  grids; measured 2e-5 and better) and for polar optical phonons (1e-9;
+  measured 1e-12), the same transport and quantum lifetimes (1e-9).
+- Two wells far apart, one subband in each, envelopes with no common
+  node: each subband's mobility is that of the single-subband model and
+  the total their density-weighted mean (2e-4; measured 2e-5 to 4e-5),
+  with Coulomb, roughness and polar optical phonons, the subband bottoms
+  not on a common grid. (A first version on one uniform grid was 1.6
+  percent off for the subband whose bottom fell inside a cell, where the
+  threshold of phonon emission makes g jump; the cells now have an edge
+  at every subband bottom.)
+- Three coupled subbands of a tilted well at 300 K and 77 K: with
+  acoustic phonons alone (the same rate in every direction) the exact
+  times are 1 / sum_j nu_ij, integrated by quadrature (1e-4; measured
+  3e-6 to 4e-5); with Coulomb, roughness and acoustic scattering
+  together, the cell solution against the exact solution at each energy
+  (Siggia and Kwok's small linear system) integrated by Gauss quadrature
+  (1e-5; measured 3e-6); with polar optical phonons the collision operator
+  is symmetric with the weight f0 (1 - f0) (1e-10; measured 2e-15), and
+  cells of hbar w / 32 and / 64 agree (1e-4).
+- The app's mobility equals the same calculation written with the
+  library (1e-12), keeps more than 90 percent of the electrons of the
+  exact region in its levels, and asks for the source of typed numbers.
+
 **Polar optical phonons, adaptive meshes, Fermi-Dirac thermoelectric effects (new in 0.28.0)**
 
 - Polar optical phonons: for a gas of zero thickness the angular
