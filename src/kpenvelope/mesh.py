@@ -110,6 +110,250 @@ def mesh_from_grid(x, z, region_of):
     return Mesh(pts[used], remap[tris], np.array(labs, dtype=object))
 
 
+def _point_in_polygon(px, pz, poly):
+    """Even-odd rule, vectorized over points (px, pz arrays)."""
+    poly = np.asarray(poly, float)
+    x0, z0 = poly[:, 0], poly[:, 1]
+    x1, z1 = np.roll(x0, -1), np.roll(z0, -1)
+    inside = np.zeros(np.shape(px), bool)
+    for a, b, c, d in zip(x0, z0, x1, z1):
+        cond = (b > pz) != (d > pz)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xc = a + (pz - b) * (c - a) / (d - b)
+        inside ^= cond & (px < xc)
+    return inside
+
+
+def _tri_quality(P, T):
+    """Smallest angle (degrees), circumcenters and areas of triangles."""
+    A, B, C = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    a = np.hypot(*(B - C).T)
+    b = np.hypot(*(C - A).T)
+    c = np.hypot(*(A - B).T)
+    cosA = np.clip((b * b + c * c - a * a) / (2 * b * c), -1, 1)
+    cosB = np.clip((a * a + c * c - b * b) / (2 * a * c), -1, 1)
+    cosC = np.clip((a * a + b * b - c * c) / (2 * a * b), -1, 1)
+    ang = np.degrees(np.arccos(np.stack([cosA, cosB, cosC], 1)))
+    area = 0.5 * np.abs((B[:, 0] - A[:, 0]) * (C[:, 1] - A[:, 1])
+                        - (C[:, 0] - A[:, 0]) * (B[:, 1] - A[:, 1]))
+    return ang.min(1), _circumcenters(A, B, C), area, np.maximum(np.maximum(a, b), c)
+
+
+def quality_mesh(regions: dict, h=None, min_angle: float = 25.0, max_points: int = 200000):
+    """A quality triangle mesh of regions given as polygons (new in 0.27.0).
+
+    regions : {label: [(x, z), ...]} (nm), each a simple polygon listed
+    around its boundary (or a list of such polygons); neighbors share their
+    common edges, which become mesh edges. h : the largest edge length
+    wanted (nm), a number or a function h(x, z); None: as fine as the
+    input and the angle bound need. min_angle : the smallest angle wanted
+    (degrees; Ruppert's algorithm guarantees about 20.7, and up to about
+    30 usually works).
+
+    Delaunay refinement after J. Ruppert, "A Delaunay refinement algorithm
+    for quality 2-dimensional mesh generation", J. Algorithms (1995): every
+    boundary and interface segment whose diametral circle holds another
+    node is split at its middle, and every triangle with too small an
+    angle (or too long an edge) gets a node at its circumcenter, unless
+    that node would lie in a segment's diametral circle, in which case the
+    segment is split instead. The result is a conforming Delaunay mesh in
+    which every segment is an edge and no node lies in a segment's
+    diametral circle, so the angle across from every boundary and interface
+    edge is at most 90 degrees and the box method has no negative dual
+    faces there. Input corners sharper than min_angle keep their angle.
+    Returns a `Mesh` with each triangle labeled by the region holding its
+    centroid."""
+    from scipy.spatial import Delaunay, cKDTree
+    if not regions:
+        raise ValueError("regions must not be empty")
+    if not (0 < min_angle <= 34):
+        raise ValueError("min_angle must be in (0, 34] degrees")
+    polys = []
+    for lab, pg in regions.items():
+        pl = pg if (len(pg) and np.ndim(pg[0]) == 2) else [pg]
+        for q in pl:
+            q = np.asarray(q, float)
+            if q.ndim != 2 or q.shape[1] != 2 or q.shape[0] < 3:
+                raise ValueError(f"region {lab!r}: a polygon needs at least 3 (x, z) points")
+            if np.allclose(q[0], q[-1]):
+                q = q[:-1]
+            polys.append((lab, q))
+    hfun = (h if callable(h) else (lambda x, z, v=h: np.full(np.shape(x), float(v)))
+            if h is not None else None)
+    # nodes and segments (shared edges once)
+    key = {}
+    pts = []
+
+    def node(p):
+        k_ = (round(float(p[0]), 9), round(float(p[1]), 9))
+        if k_ not in key:
+            key[k_] = len(pts)
+            pts.append([float(p[0]), float(p[1])])
+        return key[k_]
+    segs = set()
+    for _, q in polys:
+        ids = [node(p) for p in q]
+        for i in range(len(ids)):
+            a_, b_ = ids[i], ids[(i + 1) % len(ids)]
+            if a_ != b_:
+                segs.add((min(a_, b_), max(a_, b_)))
+    corner = np.zeros(len(pts), bool)
+    corner[:] = True                         # input vertices
+    P = np.array(pts, float)
+    segs = list(segs)
+    # split segments longer than h first
+    if hfun is not None:
+        out = []
+        for a_, b_ in segs:
+            pa, pb = P[a_], P[b_]
+            L = float(np.hypot(*(pb - pa)))
+            hm = float(np.min(hfun(np.array([pa[0], pb[0], 0.5 * (pa[0] + pb[0])]),
+                                   np.array([pa[1], pb[1], 0.5 * (pa[1] + pb[1])]))))
+            n = max(1, int(math.ceil(L / hm)))
+            prev = a_
+            for t_ in range(1, n):
+                newp = pa + (pb - pa) * t_ / n
+                P = np.vstack([P, newp])
+                cur = P.shape[0] - 1
+                out.append((min(prev, cur), max(prev, cur)))
+                prev = cur
+            out.append((min(prev, b_), max(prev, b_)))
+        segs = out
+    corner = np.concatenate([corner, np.zeros(P.shape[0] - corner.size, bool)])
+    lo, hi = P.min(0), P.max(0)
+    scale = float(np.max(hi - lo))
+
+    def inside_any(x, z):
+        res = np.zeros(np.shape(x), bool)
+        for _, q in polys:
+            res |= _point_in_polygon(x, z, q)
+        return res
+
+    def split_encroached(P, segs, extra=None):
+        """Split segments with a node (or one of `extra`) inside their
+        diametral circle, until none is left."""
+        changed = True
+        while changed:
+            changed = False
+            tree = cKDTree(P)
+            new_segs = []
+            add = []
+            for a_, b_ in segs:
+                m = 0.5 * (P[a_] + P[b_])
+                r = 0.5 * float(np.hypot(*(P[b_] - P[a_])))
+                near = tree.query_ball_point(m, r * (1 - 1e-9))
+                near = [q for q in near if q != a_ and q != b_]
+                if near:
+                    idx = P.shape[0] + len(add)
+                    add.append(m)
+                    new_segs += [(min(a_, idx), max(a_, idx)), (min(idx, b_), max(idx, b_))]
+                    changed = True
+                else:
+                    new_segs.append((a_, b_))
+            if add:
+                P = np.vstack([P, np.array(add)])
+            segs = new_segs
+            if P.shape[0] > max_points:
+                raise RuntimeError("quality_mesh: too many points; loosen h or min_angle")
+        return P, segs
+    P, segs = split_encroached(P, segs)
+    for _it in range(1000):
+        tri = Delaunay(P).simplices
+        cen = P[tri].mean(1)
+        keep = inside_any(cen[:, 0], cen[:, 1])
+        tri = tri[keep]
+        amin, cc, area, lmax = _tri_quality(P, tri)
+        # triangles at a sharp input corner keep their angle
+        sharp = np.zeros(tri.shape[0], bool)
+        if np.any(corner):
+            vc = corner[np.minimum(tri, corner.size - 1)] & (tri < corner.size)
+            sharp = vc.any(1) & (amin < min_angle)
+            # only exempt if the small angle sits at the input vertex itself
+            if sharp.any():
+                A_, B_, C_ = P[tri[:, 0]], P[tri[:, 1]], P[tri[:, 2]]
+
+                def ang(u, v, w_):
+                    d1, d2 = v - u, w_ - u
+                    return np.degrees(np.arccos(np.clip(np.sum(d1 * d2, 1) / (
+                        np.hypot(*d1.T) * np.hypot(*d2.T)), -1, 1)))
+                angs = np.stack([ang(A_, B_, C_), ang(B_, C_, A_), ang(C_, A_, B_)], 1)
+                at = np.argmin(angs, 1)
+                vtx = tri[np.arange(tri.shape[0]), at]
+                sharp = sharp & (vtx < corner.size) & corner[np.minimum(vtx, corner.size - 1)]
+        bad = (amin < min_angle) & ~sharp
+        if hfun is not None:
+            bad |= lmax > 1.0001 * hfun(cen[keep][:, 0], cen[keep][:, 1])
+        if not bad.any():
+            break
+        # worst first; skip circumcenters too close to one already taken
+        order = np.argsort(amin[bad])
+        cand = cc[bad][order]
+        crad = np.hypot(*(cand - P[tri[bad][order][:, 0]]).T)
+        cand_ok = inside_any(cand[:, 0], cand[:, 1])
+        cand, crad = cand[cand_ok], crad[cand_ok]
+        taken = []
+        tree_t = None
+        for p_, r_ in zip(cand, crad):
+            if taken:
+                if tree_t is None or len(taken) % 64 == 0:
+                    tree_t = cKDTree(np.array(taken))
+                d_, _ = tree_t.query(p_)
+                close = any(np.hypot(*(p_ - t2)) < 0.5 * r_ for t2 in taken[-64:])
+                if d_ < 0.5 * r_ or close:
+                    continue
+            taken.append(p_)
+        if not taken:
+            break
+        taken = np.array(taken)
+        # a circumcenter in a segment's diametral circle splits the segment
+        enc = np.zeros(taken.shape[0], bool)
+        seg_split = set()
+        SA = np.array([P[a_] for a_, _ in segs])
+        SB = np.array([P[b_] for _, b_ in segs])
+        SM = 0.5 * (SA + SB)
+        SR = 0.5 * np.hypot(*(SB - SA).T)
+        st = cKDTree(SM)
+        rmax = float(SR.max())
+        for q, p_ in enumerate(taken):
+            for sidx in st.query_ball_point(p_, rmax):
+                if np.hypot(*(p_ - SM[sidx])) < SR[sidx] * (1 - 1e-9):
+                    enc[q] = True
+                    seg_split.add(sidx)
+        if seg_split:
+            add, new_segs = [], []
+            for sidx, (a_, b_) in enumerate(segs):
+                if sidx in seg_split:
+                    idx = P.shape[0] + len(add)
+                    add.append(SM[sidx])
+                    new_segs += [(min(a_, idx), max(a_, idx)), (min(idx, b_), max(idx, b_))]
+                else:
+                    new_segs.append((a_, b_))
+            P = np.vstack([P, np.array(add)])
+            segs = new_segs
+        P = np.vstack([P, taken[~enc]])
+        P, segs = split_encroached(P, segs)
+        if P.shape[0] > max_points:
+            raise RuntimeError("quality_mesh: too many points; loosen h or min_angle")
+    else:
+        warnings.warn("quality_mesh: the refinement did not finish; some triangles keep "
+                      "angles below min_angle", RuntimeWarning, stacklevel=2)
+    tri = Delaunay(P).simplices
+    cen = P[tri].mean(1)
+    labs = np.empty(tri.shape[0], dtype=object)
+    labs[:] = None
+    for lab, q in polys:
+        m = _point_in_polygon(cen[:, 0], cen[:, 1], q) & np.array([v is None for v in labs])
+        labs[m] = lab
+    keep = np.array([v is not None for v in labs])
+    tri, labs = tri[keep], labs[keep]
+    used = np.unique(tri)
+    remap = -np.ones(P.shape[0], int)
+    remap[used] = np.arange(used.size)
+    mesh = Mesh(P[used], remap[tri], labs)
+    mesh.segments = np.array([[remap[a_], remap[b_]] for a_, b_ in segs], int)
+    return mesh
+
+
 @dataclasses.dataclass(frozen=True)
 class MeshRegion:
     """What a region of the mesh is made of: a semiconductor (material, with
@@ -597,9 +841,14 @@ class MeshDevice(Device):
         column for the Schroedinger equation, with its walls at the samples
         just outside it; the quantum potential found on the lines is
         carried to the mesh nodes in the window, linearly along each line
-        and between the two lines on either side of a node. Nodes on a line
-        take its value exactly: a mesh made from a tensor grid, with the
-        lines on the grid's columns, gives the tensor grid's result."""
+        and between the two lines on either side of a node. The material on
+        a sample (band offset, gap, mass) is the mean over its share of the
+        line, so a material step stays where the mesh puts it. Nodes on a
+        line take its value exactly: a mesh made from a tensor grid, with the
+        lines on the grid's columns, gives the tensor grid's result when no
+        material step lies inside the window (at a step the tensor grid
+        gives a node's whole share to the layer above it, which moves the
+        step by half a spacing)."""
         import types
         from .device import QuantumChannel
         self._qc, self._qL, self._qLp, self._qcols, self._qruns = None, None, None, [], []
@@ -645,7 +894,8 @@ class MeshDevice(Device):
                 if k1 - k + 1 >= 3:
                     i = np.arange(k, k1 + 1)
                     runs.append(dict(a=a[i], b=b[i], wa=wa[i], wb=wb[i], z=s[i].copy(),
-                                     zl=float(s[k - 1]), zr=float(s[k1 + 1]), x=xl))
+                                     zl=float(s[k - 1]), zr=float(s[k1 + 1]), x=xl,
+                                     full=(s, a, b, wa, wb)))
                 k = k1 + 1
         if not runs:
             raise ValueError("the QuantumChannel window holds no semiconductor stretch of "
@@ -669,6 +919,84 @@ class MeshDevice(Device):
             th = np.where(on_lo, 0.0, np.where(on_hi, 1.0, np.clip(th, 0.0, 1.0)))
         for r in runs:
             r["line"] = int(np.searchsorted(xs, r["x"] - eps))
+        # material values (band offset, gap, mass) on the samples: the mean
+        # over each sample's box (half way to each neighbor) of the
+        # materials the line passes through there, so a material step sits
+        # where the mesh puts it whichever region a node on it belongs to
+        # (a node on a step belongs to one region in the device, the one
+        # with the most of its control volume; along a line that would move
+        # the step by up to half a spacing, differently from line to line)
+        import scipy.sparse as sp
+        T_ = self.mesh.triangles
+        reg = self.mesh.regions
+        Px = P[:, 0]
+        rep = {}
+        for lab in set(reg.tolist()):
+            cand = np.flatnonzero(self.node_region == lab)
+            if cand.size:
+                rep[lab] = int(cand[0])
+        txmin, txmax = Px[T_].min(axis=1), Px[T_].max(axis=1)
+        seg_cache = {}
+
+        def segments(r):
+            """the line's segments between its crossings, each with the node
+            whose material it takes (-1: outside the semiconductor)"""
+            key = r["x"]
+            if key in seg_cache:
+                return seg_cache[key]
+            s_, *_ = r["full"]
+            zm = 0.5 * (s_[1:] + s_[:-1])
+            cand = np.flatnonzero((txmin <= r["x"] + eps) & (txmax >= r["x"] - eps))
+            node = -np.ones(zm.size, int)
+            if cand.size:
+                A_, B_, C_ = (P[T_[cand, j]] for j in range(3))
+                det = ((B_[:, 1] - C_[:, 1]) * (A_[:, 0] - C_[:, 0])
+                       + (C_[:, 0] - B_[:, 0]) * (A_[:, 1] - C_[:, 1]))
+                for q in range(zm.size):
+                    l1 = ((B_[:, 1] - C_[:, 1]) * (r["x"] - C_[:, 0])
+                          + (C_[:, 0] - B_[:, 0]) * (zm[q] - C_[:, 1])) / det
+                    l2 = ((C_[:, 1] - A_[:, 1]) * (r["x"] - C_[:, 0])
+                          + (A_[:, 0] - C_[:, 0]) * (zm[q] - C_[:, 1])) / det
+                    inside = (l1 >= -1e-9) & (l2 >= -1e-9) & (1 - l1 - l2 >= -1e-9)
+                    hit = np.flatnonzero(inside)
+                    if not hit.size:
+                        continue
+                    t = cand[hit[0]]
+                    lab = reg[t]
+                    if not self._regions_semi[lab]:
+                        continue
+                    mine = [v for v in T_[t] if self.node_region[v] == lab]
+                    node[q] = int(mine[0]) if mine else rep.get(lab, -1)
+            seg_cache[key] = (s_, node)
+            return seg_cache[key]
+
+        for r in runs:
+            z_ = r["z"]
+            n_ = z_.size
+            on_a, on_b = r["wb"] <= 1e-12, r["wa"] <= 1e-12
+            zb = np.concatenate([[r["zl"]], z_, [r["zr"]]])
+            lo_b, hi_b = 0.5 * (zb[:-2] + zb[1:-1]), 0.5 * (zb[1:-1] + zb[2:])
+            s_, node = segments(r)
+            rows, cols, vals = [], [], []
+            for q in range(n_):
+                ov = np.minimum(s_[1:], hi_b[q]) - np.maximum(s_[:-1], lo_b[q])
+                use = (ov > 0) & (node >= 0)
+                if (not use.any() or ov[use].sum() <= 0) and (on_a[q] or on_b[q]):
+                    rows.append(q)
+                    cols.append(int(r["a"][q] if on_a[q] else r["b"][q]))
+                    vals.append(1.0)
+                    continue
+                if not use.any() or ov[use].sum() <= 0:
+                    rows += [q, q]
+                    cols += [int(r["a"][q]), int(r["b"][q])]
+                    vals += [float(r["wa"][q]), float(r["wb"][q])]
+                    continue
+                wq = ov[use] / ov[use].sum()
+                rows += [q] * int(use.sum())
+                cols += node[use].tolist()
+                vals += wq.tolist()
+            r["mat"] = sp.csr_matrix((vals, (rows, cols)), shape=(n_, self.N))
+            del r["full"]
         if self._te is not None:
             e = np.concatenate([self._te["n"], self._te["p"]])
             if np.any(qn[self.ei[e]] | qn[self.ej[e]]):
@@ -729,12 +1057,15 @@ class MeshDevice(Device):
 
             def at(v):
                 return wa * v[a] + wb * v[b]
+            mat = r["mat"].dot
             kt = at(kT)
+            Ec0r, Egr = self._ec0_real(), self._eg_real()
+            Ecs = mat(Ec0r) - at(psi)
             if carrier == "n":
-                mass, mass_xy, U, F = at(self.me_node), None, at(Ec), at(fn)
+                mass, mass_xy, U, F = mat(self.me_node), None, Ecs, at(fn)
             else:
                 mass = np.full(a.size, qc.holes[0])
-                mass_xy, U, F = qc.holes[1], -at(Ev), -at(fp)
+                mass_xy, U, F = qc.holes[1], -(Ecs - mat(Egr)), -at(fp)
             e_max = float(np.max(F) + 40.0 * np.max(kt))
             E, p2, w = column_states(r["z"], U, mass, qc.n_states, r["zl"], r["zr"],
                                      e_max=e_max)
@@ -745,19 +1076,27 @@ class MeshDevice(Device):
             nq = parts.sum(1)
             if nq.max() > 0 and E.size == qc.n_states:
                 top_share = max(top_share, float((parts[:, -1] * w).sum() / (nq * w).sum()))
-            dos = at(self.Nc) if carrier == "n" else at(self.Nv)
-            eta = self._inv_occ(nq / dos)
-            lam = np.clip(F - U - kt * eta, -qc.max_shift, qc.max_shift)
-            lam_runs.append(lam)
-            wt_runs.append(((nq > 1e-6 * max(nq.max(), 1e-30)) & (np.abs(lam) < qc.max_shift))
-                           .astype(float))
+            lam_runs.append(nq)
+            wt_runs.append(np.full(nq.size, max(float(nq.max()), 1e-300)))
             sub.append((r["x"], E if carrier == "n" else -E))
             sheets.append(float((nq * w).sum() * 1e14))
+        # the confined density, carried to the nodes; the quantum potential
+        # from each node's own band edge, level and density of states (so a
+        # node next to a material step keeps its own material)
         target = np.zeros(self.N)
         weight = np.zeros(self.N, bool)
         nd = self._qmap["nodes"]
-        target[nd] = self._line_values(lam_runs)
-        weight[nd] = self._line_values(wt_runs) > 0.5
+        nqn = np.maximum(self._line_values(lam_runs), 0.0)
+        nmax = self._line_values(wt_runs)
+        ktn = kT[nd]
+        if carrier == "n":
+            U_, F_, dos = Ec[nd], fn[nd], self.Nc[nd]
+        else:
+            U_, F_, dos = -Ev[nd], -fp[nd], self.Nv[nd]
+        eta = self._inv_occ(np.maximum(nqn, 1e-300) / dos)
+        lam = np.clip(F_ - U_ - ktn * eta, -qc.max_shift, qc.max_shift)
+        target[nd] = lam
+        weight[nd] = (nqn > 1e-6 * np.maximum(nmax, 1e-300)) & (np.abs(lam) < qc.max_shift)
         return target, weight, dict(subbands=sub, sheet_cm2=sheets, top_share=top_share)
 
     def ballistic_current(self, *a, **k):

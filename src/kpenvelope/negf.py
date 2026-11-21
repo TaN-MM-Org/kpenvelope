@@ -490,38 +490,21 @@ def _segments(bottoms, top):
     return out
 
 
-def adaptive_energies(chain: Chain, FS: float, FD: float, kT: float, mass_y: float,
-                      step: float, top: float, rtol: float = 1e-4, max_nodes: int = 40000):
-    """Nodes and weights (composite Simpson) for the energy integrals of a
-    chain, refined where they need it: every interval whose Simpson and
-    trapezoid estimates of the density at any site (or of the current)
-    differ by more than its share of rtol is halved, until the estimated
-    error is below rtol of the largest density (and of the current). Long
-    flat stretches of a band, whose 1D density of states has a sharp edge
-    anywhere in energy, are found this way."""
-    bottoms = list(chain.band_bottoms())
-    if chain.eta is not None:
-        bottoms.append(float(np.min(chain.U)))
+def _adaptive_grid(func, bottoms, top, step, rtol=1e-4, max_nodes=40000):
+    """Composite-Simpson nodes and weights over [min(bottoms), top] for
+    func(E) -> (nE, P) (the last column a current, the rest densities):
+    each piece between band bottoms is mapped to crowd into its singular
+    ends (`_segments`), and every interval whose Simpson and trapezoid
+    estimates differ by more than its share of rtol (of the largest density,
+    and of the current) is halved."""
     segs = _segments(bottoms, top)
     if not segs:
         return np.zeros(0), np.zeros(0)
-    Fm = max(FS, FD)
 
     def integrand(seg, u):
         Em, dEm, _ = seg
         u = np.clip(u, 1e-6, 1.0 - 1e-6)      # never exactly on a band edge
-        E = Em(u)
-        sol = chain.solve(E)
-        NS = _n1((FS - E) / kT, mass_y, kT)
-        ND = _n1((FD - E) / kT, mass_y, kT)
-        if chain.eta is not None:
-            Atot = -2.0 * sol["Gd"].imag
-            d = Atot * _n1((Fm - E) / kT, mass_y, kT)[:, None]
-        else:
-            d = sol["AL"] * NS[:, None] + sol["AR"] * ND[:, None]
-        cur = sol["T"] * np.abs(NS - ND) + sol["T"] * (NS + ND) * 1e-3
-        g = np.concatenate([d, cur[:, None]], axis=1) * dEm(u)[:, None]
-        return E, g
+        return func(Em(u)) * dEm(u)[:, None]
 
     nodesE, nodesW = [], []
     for seg in segs:
@@ -531,7 +514,7 @@ def adaptive_energies(chain: Chain, FS: float, FD: float, kT: float, mass_y: flo
         b = a + 1.0 / n0
         m = 0.5 * (a + b)
         u_all = np.unique(np.concatenate([a, b, m]))
-        _, G = integrand(seg, u_all)
+        G = integrand(seg, u_all)
         val = dict(zip(u_all.tolist(), G))
         while True:
             ga = np.array([val[v] for v in a.tolist()])
@@ -557,7 +540,7 @@ def adaptive_energies(chain: Chain, FS: float, FD: float, kT: float, mass_y: flo
             m = 0.5 * (a + b)
             new = np.array([v for v in m.tolist() if v not in val])
             if new.size:
-                _, Gn = integrand(seg, new)
+                Gn = integrand(seg, new)
                 val.update(zip(new.tolist(), Gn))
             order = np.argsort(a)
             a, b, m = a[order], b[order], m[order]
@@ -571,6 +554,31 @@ def adaptive_energies(chain: Chain, FS: float, FD: float, kT: float, mass_y: flo
         nodesE.append(Em(uc))
         nodesW.append(ww * dEm(uc))
     return np.concatenate(nodesE), np.concatenate(nodesW)
+
+
+def adaptive_energies(chain: Chain, FS: float, FD: float, kT: float, mass_y: float,
+                      step: float, top: float, rtol: float = 1e-4, max_nodes: int = 40000):
+    """Nodes and weights (composite Simpson) for the energy integrals of a
+    chain, refined where they need it (see `_adaptive_grid`): long flat
+    stretches of a band, whose 1D density of states has a sharp edge
+    anywhere in energy, are found this way."""
+    bottoms = list(chain.band_bottoms())
+    if chain.eta is not None:
+        bottoms.append(float(np.min(chain.U)))
+    Fm = max(FS, FD)
+
+    def f(E):
+        sol = chain.solve(E)
+        NS = _n1((FS - E) / kT, mass_y, kT)
+        ND = _n1((FD - E) / kT, mass_y, kT)
+        if chain.eta is not None:
+            Atot = -2.0 * sol["Gd"].imag
+            d = Atot * _n1((Fm - E) / kT, mass_y, kT)[:, None]
+        else:
+            d = sol["AL"] * NS[:, None] + sol["AR"] * ND[:, None]
+        cur = sol["T"] * np.abs(NS - ND) + sol["T"] * (NS + ND) * 1e-3
+        return np.concatenate([d, cur[:, None]], axis=1)
+    return _adaptive_grid(f, bottoms, top, step, rtol, max_nodes)
 
 
 def chain_transport(chain: Chain, FS: float, FD: float, kT: float,
@@ -635,3 +643,214 @@ def chain_transport(chain: Chain, FS: float, FD: float, kT: float,
         n = n + dc
     return dict(n=n, I=_G0 * float(np.sum(IS * w)), I_drain=_G0 * float(np.sum(ID * w)),
                 E=E, T=sol["T"], probe_F=Fp)
+
+
+# --------------------------------------------- coupled mode space (0.27.0)
+def lead_surface_green(E, D, C, eta=1e-9, tol=1e-12, max_iter=200):
+    """Surface Green's function of a semi-infinite lead of identical slices
+    with on-slice block D and symmetric coupling C between neighbors, at the
+    energies E (nE,), by the decimation of M. P. Lopez Sancho, J. M. Lopez
+    Sancho and J. Rubio, J. Phys. F 15, 851 (1985),
+    doi:10.1088/0305-4608/15/4/009, at E + i eta. Returns (nE, M, M)."""
+    E = np.atleast_1d(np.asarray(E, float))
+    M = D.shape[0]
+    I = np.eye(M)
+    z = (E + 1j * eta)[:, None, None] * I[None]
+    eps_s = np.broadcast_to(D, (E.size, M, M)).astype(complex)
+    eps = eps_s.copy()
+    al = np.broadcast_to(C, (E.size, M, M)).astype(complex)
+    be = al.copy()
+    for _ in range(max_iter):
+        g = np.linalg.inv(z - eps)
+        agb = al @ g @ be
+        bga = be @ g @ al
+        eps_s = eps_s + agb
+        eps = eps + agb + bga
+        al = al @ g @ al
+        be = be @ g @ be
+        if float(np.max(np.abs(al))) < tol and float(np.max(np.abs(be))) < tol:
+            break
+    else:
+        raise RuntimeError("the lead's surface Green's function did not converge")
+    return np.linalg.inv(z - eps_s)
+
+
+class Slab:
+    """A 2D effective-mass region (x along the transport, z across), uniform
+    in x with spacing a (nm) and on the same z nodes in every column, joined
+    at both ends to leads that continue the end columns (new in 0.27.0).
+
+    U, mass : (Nx, Nz) potential (eV) and mass (m0) at the nodes. z : the
+    nodes (nm), zl, zr : the walls (psi = 0) below and above them. The
+    z-part of each column is the box-method operator of `column_states`;
+    neighbors along x are joined by hbar^2 / (2 m a^2) (link mass the mean of
+    the two nodes). n_modes : the lowest eigenstates of every column kept
+    (coupled mode space: R. Venugopal et al., J. Appl. Phys. 95, 292 (2004),
+    doi:10.1063/1.1631754); all Nz is exact (a change of basis of the real-
+    space problem). mass_x : the mass along x where it differs from the
+    one across (default mass), as for holes with an in-plane mass of their
+    own."""
+
+    def __init__(self, U, mass, a, z, zl, zr, n_modes=None, mass_x=None):
+        U = np.asarray(U, float)
+        m = np.broadcast_to(np.asarray(mass, float), U.shape).astype(float)
+        mx = m if mass_x is None else np.broadcast_to(np.asarray(mass_x, float),
+                                                      U.shape).astype(float)
+        if not np.all(mx > 0):
+            raise ValueError("spacing and masses must be positive")
+        z = np.asarray(z, float)
+        if U.ndim != 2 or U.shape[1] != z.size or U.shape[0] < 2 or z.size < 2:
+            raise ValueError("U must be (Nx >= 2, Nz) with Nz = len(z) >= 2")
+        if not (a > 0 and np.all(m > 0)):
+            raise ValueError("spacing and masses must be positive")
+        Nx, Nz = U.shape
+        self.U, self.m, self.a, self.z = U, m, float(a), z
+        M = Nz if n_modes is None else int(min(n_modes, Nz))
+        if M < 1:
+            raise ValueError("n_modes must be >= 1")
+        self.M = M
+        zz = np.concatenate([[zl], z, [zr]])
+        h = np.diff(zz)
+        if np.any(h <= 0):
+            raise ValueError("z must increase, with the walls outside it")
+        w = 0.5 * (h[:-1] + h[1:])
+        self.w = w
+        # x couplings on every link (Nx - 1, Nz) and the lead ones
+        tx = _H2M / (0.5 * (mx[1:] + mx[:-1]) * a * a)
+        tL = _H2M / (mx[0] * a * a)
+        tR = _H2M / (mx[-1] * a * a)
+        self.mx = mx
+        self.tx, self.tL, self.tR = tx, tL, tR
+        from scipy.linalg import eigh_tridiagonal
+        V, Ez = [], []
+        Dt, Ct = [], []
+        for j in range(Nx):
+            mm = np.concatenate([[m[j, 0]], m[j], [m[j, -1]]])
+            c = _H2M / (0.5 * (mm[1:] + mm[:-1]) * h)
+            diag = (U[j] * w + c[:-1] + c[1:]) / w
+            off = -c[1:-1] / np.sqrt(w[:-1] * w[1:])
+            e, v = eigh_tridiagonal(diag, off, select="i", select_range=(0, M - 1))
+            V.append(v)
+            Ez.append(e)
+        self.V, self.Ez = V, np.array(Ez)
+        for j in range(Nx):
+            tl = tL if j == 0 else tx[j - 1]
+            tr = tR if j == Nx - 1 else tx[j]
+            Dt.append(np.diag(self.Ez[j]) + V[j].T @ ((tl + tr)[:, None] * V[j]))
+        for j in range(Nx - 1):
+            Ct.append(-V[j].T @ (tx[j][:, None] * V[j + 1]))
+        self.Dt, self.Ct = Dt, Ct
+        # leads: slices equal to the end columns
+        self.DL = np.diag(self.Ez[0]) + V[0].T @ ((2 * tL)[:, None] * V[0])
+        self.CL = -V[0].T @ (tL[:, None] * V[0])
+        self.DR = np.diag(self.Ez[-1]) + V[-1].T @ ((2 * tR)[:, None] * V[-1])
+        self.CR = -V[-1].T @ (tR[:, None] * V[-1])
+        self.Nx, self.Nz = Nx, Nz
+
+    def band_bottoms(self):
+        """The leads' subband bottoms (eV): eigenvalues of D + 2 C."""
+        return np.concatenate([np.linalg.eigvalsh(self.DL + 2 * self.CL),
+                               np.linalg.eigvalsh(self.DR + 2 * self.CR)])
+
+    def solve(self, E, eta=1e-9, weights=None):
+        """Per energy: the transmission T (nE) and the contacts' spectral
+        functions in the mode basis of each column, diagonals only: PL, PR
+        (nE, Nx, M). With weights = (wL, wR) (nE each), also the node
+        densities sum_E wL A_L + wR A_R (Nx, Nz; per node of the column,
+        psi^2 normalization), summed in the mode basis first."""
+        E = np.atleast_1d(np.asarray(E, float))
+        nE, Nx, M = E.size, self.Nx, self.M
+        I = np.eye(M)
+        gsL = lead_surface_green(E, self.DL, self.CL, eta)
+        gsR = lead_surface_green(E, self.DR, self.CR, eta)
+        SL = self.CL @ gsL @ self.CL
+        SR = self.CR @ gsR @ self.CR
+        GL = 1j * (SL - np.conj(np.swapaxes(SL, 1, 2)))
+        GR = 1j * (SR - np.conj(np.swapaxes(SR, 1, 2)))
+        z = (E + 1j * eta)[:, None, None] * I[None]
+        A = [z - self.Dt[j][None] for j in range(Nx)]
+        A[0] = A[0] - SL
+        A[-1] = A[-1] - SR
+        # left- and right-connected Green's functions
+        gl = [None] * Nx
+        gl[0] = np.linalg.inv(A[0])
+        for j in range(1, Nx):
+            C = self.Ct[j - 1]
+            gl[j] = np.linalg.inv(A[j] - C.T[None] @ gl[j - 1] @ C[None])
+        gr = [None] * Nx
+        gr[-1] = np.linalg.inv(A[-1])
+        for j in range(Nx - 2, -1, -1):
+            C = self.Ct[j]
+            gr[j] = np.linalg.inv(A[j] - C[None] @ gr[j + 1] @ C.T[None])
+        # first column G_j0 and last column G_jN
+        c0 = [None] * Nx
+        c0[0] = gr[0]
+        for j in range(1, Nx):
+            c0[j] = gr[j] @ self.Ct[j - 1].T[None] @ c0[j - 1]
+        cN = [None] * Nx
+        cN[-1] = gl[-1]
+        for j in range(Nx - 2, -1, -1):
+            cN[j] = gl[j] @ self.Ct[j][None] @ cN[j + 1]
+        T = np.real(np.trace(GL @ cN[0] @ GR @ np.conj(np.swapaxes(cN[0], 1, 2)),
+                             axis1=1, axis2=2))
+        PL = np.empty((nE, Nx, M))
+        PR = np.empty((nE, Nx, M))
+        dens = None if weights is None else np.zeros((Nx, self.Nz))
+        for j in range(Nx):
+            P = c0[j] @ GL @ np.conj(np.swapaxes(c0[j], 1, 2))
+            Q = cN[j] @ GR @ np.conj(np.swapaxes(cN[j], 1, 2))
+            PL[:, j] = np.real(np.diagonal(P, axis1=1, axis2=2))
+            PR[:, j] = np.real(np.diagonal(Q, axis1=1, axis2=2))
+            if weights is not None:
+                S = np.real(np.tensordot(weights[0], P, axes=1)
+                            + np.tensordot(weights[1], Q, axes=1))
+                Vj = self.V[j]
+                dens[j] = np.einsum("km,mn,kn->k", Vj, S, Vj) / self.w
+        return dict(E=E, T=T, PL=PL, PR=PR, density=dens)
+
+    def node_spectral(self, E, eta=1e-9):
+        """AL, AR on the nodes (nE, Nx, Nz), one energy at a time (for
+        checks: slow)."""
+        E = np.atleast_1d(np.asarray(E, float))
+        AL = np.empty((E.size, self.Nx, self.Nz))
+        AR = np.empty((E.size, self.Nx, self.Nz))
+        for k, e in enumerate(E):
+            one = np.ones(1)
+            AL[k] = self.solve(np.array([e]), eta, weights=(one, 0 * one))["density"]
+            AR[k] = self.solve(np.array([e]), eta, weights=(0 * one, one))["density"]
+        return AL, AR
+
+
+def slab_transport(slab: Slab, FS: float, FD: float, kT: float, mass_y: float = None,
+                   energy_step: float = None, emax_kT: float = 30.0, rtol: float = 1e-4,
+                   energies=None):
+    """Density (nm^-3, (Nx, Nz)) and current per width (A/nm) of a Slab
+    whose third direction (the width) is free with one mass mass_y (default
+    the mean of the masses), filled from a source at FS (x = 0 side) and a
+    drain at FD (eV), ballistic. The energy grid is refined on the modal
+    densities and the current (`_adaptive_grid`). Returns dict(n, I, E, T)."""
+    my = float(np.mean(slab.m)) if mass_y is None else float(mass_y)
+    top = max(FS, FD) + emax_kT * kT
+    step = kT / 10.0 if energy_step is None else float(energy_step)
+    Nx, Nz = slab.Nx, slab.Nz
+
+    def f(E):
+        s = slab.solve(E)
+        NS = _n1((FS - E) / kT, my, kT)
+        ND = _n1((FD - E) / kT, my, kT)
+        d = (s["PL"] * NS[:, None, None] + s["PR"] * ND[:, None, None]).reshape(E.size, -1)
+        cur = s["T"] * np.abs(NS - ND) + s["T"] * (NS + ND) * 1e-3
+        return np.concatenate([d, cur[:, None]], axis=1)
+    if energies is None:
+        E, w = _adaptive_grid(f, slab.band_bottoms(), top, step, rtol)
+    else:
+        E = np.asarray(energies, float)
+        w = np.gradient(E) if E.size > 1 else np.ones(1)
+    if E.size == 0:
+        return dict(n=np.zeros((Nx, Nz)), I=0.0, E=E, T=np.zeros(0))
+    NS = _n1((FS - E) / kT, my, kT)
+    ND = _n1((FD - E) / kT, my, kT)
+    s = slab.solve(E, weights=(NS * w, ND * w))
+    pref = 2.0 / (2.0 * math.pi * slab.a)
+    I = _G0 * float(np.sum(s["T"] * (NS - ND) * w))
+    return dict(n=pref * s["density"], I=I, E=E, T=s["T"])
