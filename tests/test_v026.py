@@ -189,7 +189,9 @@ def test_quantum_channel_on_a_mesh_equals_the_tensor_grid():
     el = [Electrode("source", "ohmic", 0, 100),
           Electrode("gate", "schottky", 200, 300, barrier=0.8),
           Electrode("drain", "ohmic", 400, 500)]
-    qc = QuantumChannel((95.0, 125.0), x_range=(120, 380), line_spacing=20.0,
+    # the window inside the well, its walls on the well's edges: every sample
+    # on a line is a node of one material, as on the tensor grid
+    qc = QuantumChannel((100.5, 119.5), x_range=(120, 380), line_spacing=20.0,
                         holes=(1.0, 1.0, "test"))
     layers = [StackLayer(bar, 100.0, donors=1e-4), StackLayer(g, 20.0, donors=1e-3),
               StackLayer(bar, 80.0, donors=1e-4)]
