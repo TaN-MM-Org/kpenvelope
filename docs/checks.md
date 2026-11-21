@@ -343,6 +343,45 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Polar optical phonons, adaptive meshes, Fermi-Dirac thermoelectric effects (new in 0.28.0)**
+
+- Polar optical phonons: for a gas of zero thickness the angular
+  integrals equal their closed forms in complete elliptic integrals,
+  int dtheta / q = 4 K(m) / (k + k') and the one with cos(theta) (1e-10;
+  measured 1e-14), and the spline of the form factor equals the direct
+  sum (1e-8; measured 3e-10). The exact Boltzmann solution, with a
+  vanishing coupling, equals the relaxation-time mobility of the elastic
+  mechanisms (1e-5; measured 2e-6); with a small phonon energy it tends
+  to the elastic limit with the momentum rate C (2N + 1) int (1 -
+  cos(theta)) H / q dtheta (0.75 and 0.072 percent at 2 and 0.5 meV for
+  a non-degenerate gas, 0.10 and 0.010 percent for a degenerate one);
+  the linearized collision operator is symmetric with the weight f0 (1 -
+  f0), detailed balance with equilibrium phonons (1e-10; measured 1e-13);
+  energy steps of hbar w / 64 and / 128 agree (2e-4).
+- Adaptive meshes: the recovered second derivatives of a quadratic are
+  exact on a tensor mesh and on a quality mesh, boundary nodes included
+  (1e-6; measured 2e-9, the regularization). An L-shaped conductor (a
+  corner singularity) on adaptive meshes reaches half the error of a
+  uniform mesh of 13 189 nodes with under half the nodes; the reference
+  0.31938 ohm mm comes from adaptive meshes up to 74 706 nodes and
+  uniform ones up to 51 103 nodes, extrapolated (they agree within 1e-5;
+  errors -0.334, -0.142, -0.056 percent uniform at 890, 3354, 13 189
+  nodes; -0.092, -0.042, -0.020 percent adaptive at 978, 1954, 5029). A
+  really obtuse boundary triangle still warns.
+- Fermi-Dirac thermoelectric effects: F_3/2 against quadrature (1e-8;
+  measured 2e-12 to 2e-9); G(4) = 1.0911 against 0.63 for the
+  Boltzmann-like form; the excess G - G_B against its asymptote exp(eta)
+  / 2^(7/2) far below the band edge (1e-9) and, where mpmath is
+  installed, against arbitrary precision (1e-6); a degenerate bar (eta =
+  5.0) with grounded ends and a temperature profile carries Gamma L /
+  (mu N_d) = k int G dT exactly in the continuum (1e-5 at 201 nodes;
+  4.7e-6, 1.2e-6 and 2.9e-7 at 101, 201 and 401 nodes, second order),
+  twice the Boltzmann-like current; at one temperature the two forms give
+  the same current to the last bit; the Peltier heat at the contacts is
+  kT G I / q (1e-6); the Jacobian of the new fluxes against finite
+  differences across a p-n junction with traps (1e-6); a mesh made from
+  the tensor grid gives the same current (3e-13, not in the suite).
+
 **Coupled modes, holes in NEGF, quality meshes, scattering lifetimes (new in 0.27.0)**
 
 - Leads by decimation: the surface Green's function of a uniform chain

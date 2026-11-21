@@ -618,6 +618,39 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Polar optical phonons, meshes that adapt, Fermi-Dirac thermoelectric effects (new in 0.28.0)**
+
+- `Subband.polar_optical(phonon_eV, eps_static, eps_high, temperature_K=None,
+  screening=False)` -- polar optical (LO) phonon scattering through the
+  Froehlich coupling, with the subband's own form factor. It is inelastic,
+  so `Subband.mobility` then solves the linearized Boltzmann equation of
+  the subband exactly on an energy grid in steps of a fraction of the
+  phonon energy (D. L. Rode, Phys. Rev. B 2, 1012 (1970),
+  doi:10.1103/PhysRevB.2.1012, here in 2D and with the Pauli factors of a
+  degenerate gas), together with every elastic mechanism.
+  `rate(E, quantum=True)` is the out-scattering rate; `lifetimes` gives
+  the quantum lifetime and no transport lifetime for it. The GaN numbers
+  are in `kpenvelope.phonons.GAN_BARKER1973` (example 66).
+- `kpenvelope.mesh.recovered_hessian(mesh, values)` -- the second
+  derivatives of a nodal field, from a least-squares quadratic through
+  the two rings of neighbors of every node (exact for quadratics).
+- `kpenvelope.mesh.size_from_solution(mesh, values, tolerance, h_min,
+  h_max, grading=0.3)` -- a size field for `quality_mesh` that puts the
+  error of linear interpolation of `values` near `tolerance`
+  everywhere (h = sqrt(8 tolerance / |largest second derivative|)),
+  limited in how fast it grows; mesh, solve, and mesh again (example 67).
+- `Device(..., thermoelectric="fermi-dirac")` (also `MeshDevice`; needs
+  `statistics="fermi"`) -- the thermal diffusion of the current and the
+  Peltier heat of a degenerate gas: Gamma = -mu n [grad F + k G grad T],
+  Pi = kT G, G = (5/2) F_3/2(eta) / F_1/2(eta) - eta (constant
+  scattering time), in place of the non-degenerate G = 5/2 - ln(n /
+  N_c) of the default `"boltzmann"`. At one temperature the two are the
+  same model (example 68).
+- `MeshDevice` warns about negative dual faces relative to each edge's
+  own length, so right angles on straight boundaries (a dual face of zero
+  that rounding makes slightly negative) no longer warn on very fine
+  meshes.
+
 **Coupled modes and holes in NEGF, a quality mesh generator, scattering lifetimes (new in 0.27.0)**
 
 - `Device.negf(..., coupled_modes=M)` -- NEGF in coupled mode space: the

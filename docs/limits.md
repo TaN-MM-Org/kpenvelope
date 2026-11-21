@@ -14,13 +14,20 @@ The limits of each part of the package, in detail. The
   with Thomas-Fermi screening by that subband alone and one background
   permittivity (no image charges). Acoustic phonons are in the
   equipartition limit (elastic; too fast below the Bloch-Gruneisen
-  temperature); there are no polar optical phonons (the main limit in
-  GaN near room temperature, inelastic, with no single lifetime), no
-  piezoelectric scattering, and no charged dislocations here (the
+  temperature). Polar optical phonons (since 0.28.0) are bulk LO phonons
+  of one energy, without dispersion, without the interface and confined
+  modes of the heterostructure (the dielectric continuum model of
+  `kpenvelope.phonons` has those, not coupled to the rates), without hot
+  phonons, unscreened by default (static screening, the option, is an
+  upper bound: at the phonon frequency screening is weaker); with them
+  the mobility comes from the exact solution of the linearized Boltzmann
+  equation of one subband, which takes the energy steps of a fraction of
+  the phonon energy and stops at 40 kT above the Fermi level. There is
+  no piezoelectric scattering and no charged dislocations here (the
   separate line model of `line_scattering_rate` has them). Roughness is
   the shift of one band step (zero for a wave function that vanishes at
-  the interface, as with an infinite barrier). The mobility is the
-  Boltzmann average of one subband.
+  the interface, as with an infinite barrier). The mobility is that of
+  one subband in a small field (no hot electrons).
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small
@@ -212,12 +219,18 @@ The limits of each part of the package, in detail. The
   heat are added, with the heat each carrier carries taken from the
   package's own thermoelectric current, Pi = kT (5/2 + ln(N_c / n)),
   so that heat and current agree. That is the value for a
-  non-degenerate gas with a constant mobility. Where the electrons are
+  non-degenerate gas with a constant mobility, and it is still the
+  default, so earlier results do not change. Where the electrons are
   degenerate (n above N_c, as in a transistor channel) it comes out too
   small and can even change sign: with the Fermi level 4 kT above the
   band edge it gives 0.63 kT, against 1.09 kT for the same gas (same
-  constant scattering time) worked out with Fermi-Dirac statistics. The
-  change of the band edges with temperature does not enter Pi. Other
+  constant scattering time) worked out with Fermi-Dirac statistics.
+  `thermoelectric="fermi-dirac"` (since 0.28.0, with
+  `statistics="fermi"`) uses the Fermi-Dirac value in both the heat and
+  the current; it is still for an energy-independent scattering time
+  (other scattering laws change the 5/2), and it does not run with hot
+  electrons, whose energy balance stays Boltzmann's. The change of the
+  band edges with temperature does not enter Pi. Other
   codes write the thermoelectric power differently (the Kelvin formula
   used by M. Kantner, arXiv:1911.00377, has 3/2 in place of 5/2), so
   compare like with like.
@@ -230,8 +243,11 @@ The limits of each part of the package, in detail. The
   regions given as polygons (Delaunay refinement with a smallest angle
   up to 34 degrees and a size field); curved boundaries are polygons
   (you choose the chords), there is no anisotropic refinement (thin
-  layers need many small triangles), no refinement driven by the
-  solution, and nothing in 3D. The other generators are simple (Delaunay
+  layers need many small triangles), and nothing in 3D. Refinement
+  driven by the solution (since 0.28.0, `size_from_solution`) is
+  isotropic, uses the curvature of one field you choose, and needs you
+  to remesh and solve again (no automatic loop, no transfer of the
+  solution to the new mesh beyond starting over). The other generators are simple (Delaunay
   of your points, a rectangular grid cut into triangles, or the cells of
   a `Structure`); refine where the warning about negative dual faces
   appears. A mesh of long, thin triangles gives poor

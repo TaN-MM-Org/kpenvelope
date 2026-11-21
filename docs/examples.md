@@ -29,7 +29,9 @@ transistor and particles that bounce; 57 to 61 quantum transport, a
 quantum channel on a mesh, implant ranges by Monte Carlo, etching with
 ions and a gas, and oxide stress; 62 to 65 electrons that change
 subband, holes in quantum transport, a quality mesh, and scattering
-lifetimes and mobility of a 2D gas.
+lifetimes and mobility of a 2D gas; 66 to 68 polar optical phonons,
+meshes that adapt to the solution, and thermoelectric currents of a
+degenerate gas.
 
 ### 1. Energy levels and what they are made of
 
@@ -2975,6 +2977,158 @@ angles, tau_t is many times tau_q, as Das Sarma and Stern showed. The
 mobility adds the rates at each energy and averages over the electrons.
 Every material number here is illustrative; with your cited values the
 same lines give your structure's numbers.
+
+### 66. Polar optical phonons and the mobility of a 2D electron gas (new in 0.28.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subband
+
+# the 2DEG of an AlGaN/GaN heterostructure: polar optical phonons (the LO
+# energy and dielectric constants of GaN from the package's cited set,
+# Barker and Ilegems 1973) and acoustic phonons (deformation potential
+# illustrative), at three temperatures
+gan = algan(0.0)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(algan(0.25), 25.0)]
+hw = ph.w_LO_perp / 1000.0                   # meV -> eV
+for T in (77.0, 200.0, 300.0):
+    r = solve_electrons(layers, 1.0, temperature_K=T, dz=0.1,
+                        quantum_window=(280.0, 324.0), n_states=10)
+    win = (r.z >= 280.0) & (r.z <= 324.0)
+    z = r.z[win]
+    mass = np.where(z < 300.0, gan.me, algan(0.25).me)
+    E, p2, w = column_states(z, r.ec[win], mass, 1, z[0] - 0.1, z[-1] + 0.1)
+    sb = Subband(z, p2[:, 0], gan.me, ph.eps0_perp, fermi=-float(E[0]), temperature_K=T,
+                 weights=w)
+    pop = sb.polar_optical(hw, ph.eps0_perp, ph.eps_inf_perp)
+    ac = sb.acoustic(8.3, 6150.0, 6560.0)
+    res = sb.mobility(pop, ac)
+    print(f"{T:5.0f} K: lowest subband {sb.sheet * 1e-4:.2e} cm^-2; mobility, polar optical "
+          f"{res['each'][0]:9.0f}, acoustic {res['each'][1]:7.0f}, both {res['mobility_cm2Vs']:6.0f} "
+          f"cm^2/Vs; quantum lifetime from the phonons {sb.lifetimes(pop)['quantum_s']:.1e} s")
+```
+
+```
+   77 K: lowest subband 1.20e+13 cm^-2; mobility, polar optical  28537190, acoustic   27746, both  27681 cm^2/Vs; quantum lifetime from the phonons 3.3e-09 s
+  200 K: lowest subband 1.18e+13 cm^-2; mobility, polar optical      5937, acoustic   10612, both   3721 cm^2/Vs; quantum lifetime from the phonons 6.2e-13 s
+  300 K: lowest subband 1.16e+13 cm^-2; mobility, polar optical      1222, acoustic    7016, both   1037 cm^2/Vs; quantum lifetime from the phonons 1.0e-13 s
+```
+
+An electron that emits or absorbs a polar optical phonon (92 meV in GaN)
+changes its energy by far more than kT, so the scattering has no
+relaxation time. `mobility` then solves the Boltzmann equation of the
+subband directly, on energies in steps of a fraction of the phonon
+energy, with both phonon processes and every other mechanism in it. At
+77 K there are almost no phonons to absorb and few electrons with enough
+energy to emit one, so the polar optical phonons barely scatter; by
+room temperature they set the mobility. The phonon numbers are the
+package's cited GaN set; the deformation potential is illustrative, and
+the screening of the polar coupling (off here) and the interface modes
+of the heterostructure are left out (see the limits).
+
+### 67. A mesh that adapts to the solution
+
+```python
+import numpy as np
+from kpenvelope import algan
+from kpenvelope.device import Electrode, Mobility
+from kpenvelope.mesh import MeshDevice, MeshRegion, quality_mesh, size_from_solution
+
+# an L-shaped conductor (doped GaN, numbers illustrative) between the
+# faces x = 200 nm and z = 200 nm: the current turns the inner corner,
+# where the field is singular. Meshes that follow the potential's
+# curvature against uniform ones; the converged value is 0.31938 ohm mm
+L = [(0, 0), (200, 0), (200, 100), (100, 100), (100, 200), (0, 200)]
+region = {"s": MeshRegion(material=algan(0.0), mobility=Mobility(500.0, "illustrative"),
+                          donors=1e-3)}
+
+
+def solve(m):
+    P = m.points
+    faces = {"a": np.flatnonzero(np.isclose(P[:, 0], 200.0)),
+             "b": np.flatnonzero(np.isclose(P[:, 1], 200.0))}
+    dev = MeshDevice(m, region, [Electrode("a", "ohmic", 0, 1), Electrode("b", "ohmic", 0, 1)],
+                     faces, statistics="boltzmann")
+    st = dev.solve({"b": 0.001})
+    return 0.001 / abs(st.current["b"]), st
+
+
+for h in (10.0, 5.0, 2.5):
+    m = quality_mesh({"s": L}, h=h, min_angle=28)
+    R, _ = solve(m)
+    print(f"uniform  h {h:4.1f} nm: {len(m.points):6d} nodes, R {R:.5f} ohm mm, "
+          f"error {100 * (R / 0.31938 - 1):+.3f} %")
+m = quality_mesh({"s": L}, h=20.0, min_angle=28)
+for it in range(6):
+    R, st = solve(m)
+    if it >= 3:
+        print(f"adaptive step {it}: {len(m.points):6d} nodes, R {R:.5f} ohm mm, "
+              f"error {100 * (R / 0.31938 - 1):+.3f} %")
+    h = size_from_solution(m, st.psi, tolerance=2e-6 * 0.5 ** it, h_min=0.01, h_max=20.0)
+    m = quality_mesh({"s": L}, h=h, min_angle=28)
+```
+
+```
+uniform  h 10.0 nm:    890 nodes, R 0.31831 ohm mm, error -0.334 %
+uniform  h  5.0 nm:   3354 nodes, R 0.31893 ohm mm, error -0.142 %
+uniform  h  2.5 nm:  13189 nodes, R 0.31920 ohm mm, error -0.056 %
+adaptive step 3:    978 nodes, R 0.31909 ohm mm, error -0.092 %
+adaptive step 4:   1954 nodes, R 0.31924 ohm mm, error -0.042 %
+adaptive step 5:   5029 nodes, R 0.31932 ohm mm, error -0.020 %
+```
+
+`size_from_solution` reads how strongly the potential curves around each
+node (its second derivatives, from a quadratic fitted to the
+neighbors) and asks for triangles small enough that linear
+interpolation errs by about the tolerance everywhere; `quality_mesh`
+then makes that mesh. Each pass halves the tolerance. Near the inner
+corner the triangles shrink far below the uniform sizes, elsewhere
+they stay large, and the error falls much faster per node than with a
+uniform mesh: 5 029 adapted nodes beat 13 189 uniform ones by nearly
+three times.
+
+### 68. Thermoelectric current of a degenerate gas
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface
+
+# a degenerate n-GaN bar (2e19 cm^-3, numbers illustrative) with its ends
+# at 300 and 400 K and both contacts grounded: the thermoelectric current
+# in the two forms of the thermal diffusion
+L = 4000.0
+z = np.linspace(0, L, 201)
+for form in ("boltzmann", "fermi-dirac"):
+    dev = Device([StackLayer(algan(0.0), L, donors=2e-2)], 20.0,
+                 [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")],
+                 Mobility(1000.0, "illustrative"), Surface("pinned", barrier=1.0),
+                 grid=dict(x=np.array([0.0, 10.0, 20.0]), z=z), statistics="fermi",
+                 temperature_model="full", heat_model="thermoelectric", thermoelectric=form)
+    T = np.tile(300.0 + 100.0 * z / L, 3)
+    st = dev.solve({}, lattice_temperature=T)
+    print(f"{form:11s}: current {1e3 * st.current['bot']:6.2f} mA/mm")
+```
+
+```
+boltzmann  : current   7.44 mA/mm
+fermi-dirac: current  14.35 mA/mm
+```
+
+A temperature difference drives electrons from the hot end to the cold
+one even with both contacts at 0 V. How hard depends on the heat each
+electron carries, kT G: the default form of the package, kT (5/2 -
+ln(n / N_c)), is right for a non-degenerate gas, but this bar is
+degenerate (its Fermi level is 5 kT above the band edge), where the
+Fermi-Dirac value, kT ((5/2) F_3/2 / F_1/2 - eta), is about three times
+larger (0.91 against 0.31 kT at 300 K), and the current nearly twice as
+large over this range of temperatures. With
+`thermoelectric="fermi-dirac"` the current and the Peltier heat both use
+it.
 
 ## Tutorials
 
