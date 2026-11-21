@@ -343,6 +343,68 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Coupled modes, holes in NEGF, quality meshes, scattering lifetimes (new in 0.27.0)**
+
+- Leads by decimation: the surface Green's function of a uniform chain
+  against the exact lead self-energy -t e^(ika) (2e-9).
+- Coupled mode space: a uniform guide transmits exactly its number of
+  open modes; with all modes, the transmission and the spectral function
+  equal those of the dense real-space inverse (1e-13 and 4e-15); with
+  fewer modes the transmission converges as modes are added (1.130,
+  1.606, 1.857 and 1.8725 at 0.35 eV with 2, 4, 6 and 8 modes); where
+  the potential changes only along x the modes do not mix and the slab
+  carries the sum of the chains' currents (2e-7, tested to 1e-5); with a
+  mass along x of its own, the same sum with that mass, while the column
+  states keep the mass across (1e-13). In the transistor of example 57
+  the coupled current is within 1 percent of the uncoupled one (+0.20
+  percent with 4 modes, +0.45 percent with 6).
+- Holes in NEGF: a gated well and its mirror image for holes (bands
+  upside down, donors to acceptors) give the same current, sheets and
+  potential with the sign turned (1e-10; measured 3e-15 uncoupled, 1e-7
+  coupled, where the iteration's tolerance sets it); with masses of 0.3
+  m0 across and 0.6 m0 in the plane, the equilibrium hole sheet equals
+  the QuantumChannel's away from the leads (1e-3; measured 3.7e-4).
+- Quality mesh generator: on an L-shaped pair of regions with a slanted
+  interface and a size field, every angle is at least the bound asked
+  for (28 degrees), each region's area is exact (1e-12), no edge is
+  longer than the size field, every boundary and interface segment is an
+  edge, and no node lies inside a segment's diametral circle. A quarter
+  ring resistor meshed by it converges at second order to the exact
+  resistance of the ring (0.19, 0.060 and 0.017 percent at h = 60, 30
+  and 15 nm, the polygon's chords included), with no negative dual faces.
+- Quantum channel on meshes: on a quality mesh the confined sheet of
+  every line agrees with a fine tensor grid (0.1 nm) to 0.54, 0.20 and
+  0.10 percent at sizes of 1, 0.5 and 0.25 nm (before this version, 1.6
+  to 2.0 percent at all three: a node on the well's edge took the whole
+  of its share of the line from one material, which moved the edge by up
+  to half a spacing, differently on each line). On the shifted-row mesh
+  of 0.26.0 the error is now 0.62, 0.15 and 0.046 percent at 1, 0.5 and
+  0.25 nm (example 58). The tensor-grid twin is exact again (1e-10) with
+  the window inside the well.
+- Scattering lifetimes, against closed forms and an independent
+  integral: the integral of psi^4 of the Fang-Howard form (3 b / 16) and
+  of an infinite well (3 / 2W) (1e-9, 1e-6); the acoustic-phonon rate
+  against Price's closed form for the Fang-Howard gas (1e-9; measured
+  1e-11); the alloy rate against its formula (1e-12); the screened
+  Coulomb rate of a sheet of charges against SciPy quadrature with the
+  closed-form Fang-Howard form factors of Ando, Fowler and Stern (2e-6;
+  measured 4e-7), for the transport and quantum rates; a density profile
+  against the sum of its sheets (1e-10); far-away charges in a thin,
+  strongly screened, cold gas against tau_t / tau_q = (2 k_F d)^2 (4e-3)
+  and mu = 8 e (k_F d)^3 / (pi hbar N) (0.9 and 0.6 percent above it at
+  k_F d = 7.7 and 31, which is the 1 / (q_s d) correction: the exact
+  integral for a gas of zero thickness at T = 0 gives 0.94 and 0.39
+  percent); the roughness matrix element against the shift of the level
+  when the interface moves (Hellmann-Feynman, 1e-6; measured 8e-8); the
+  roughness rate against quadrature (1e-8, Gaussian and exponential
+  correlation) and its short-correlation limit pi m M^2 Delta^2 L^2 /
+  hbar^3 (1e-4); the thermal average of the mobility against quadrature
+  for rates that go as E^s, degenerate and not (2e-5), and the
+  non-degenerate limit Gamma(s + 2) (kT)^s (5e-5); Matthiessen's rule
+  (1e-12).
+- Grids: a tensor grid with two nodes closer than 1e-6 nm is refused
+  with the place named.
+
 **Quantum transport, meshes, implants, etching kinetics, oxide flow (new in 0.26.0)**
 
 - NEGF chain: the transmission of a rectangular barrier (0.3 eV, 2 nm,
@@ -372,8 +434,9 @@ the tests use:
   on the grid's columns, gives the tensor grid's current (1e-10, measured
   5e-14) and potential and quantum potential (1e-10 V) with electrons and
   holes; on a mesh of nearly equilateral triangles the confined sheet
-  approaches the tensor grid's at second order (1.9, 0.5 and 0.07 percent
-  at steps of 1, 0.5 and 0.25 nm).
+  approaches the tensor grid's at second order (since 0.27.0 0.62, 0.15
+  and 0.046 percent at steps of 1, 0.5 and 0.25 nm; 1.9, 0.5 and 0.07
+  percent in 0.26.0).
 - Monte Carlo implants: the scattering angle of the Coulomb potential
   against 2 atan(1 / (2 eps b)) (1e-9; measured 3e-12); the Coulomb
   stopping up to a largest impact parameter against its closed form

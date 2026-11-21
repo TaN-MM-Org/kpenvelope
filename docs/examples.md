@@ -27,7 +27,9 @@ in the device solver and a transistor, line-of-sight etching and
 deposition, and LOCOS oxidation; 55 and 56 the ballistic limit of a
 transistor and particles that bounce; 57 to 61 quantum transport, a
 quantum channel on a mesh, implant ranges by Monte Carlo, etching with
-ions and a gas, and oxide stress.
+ions and a gas, and oxide stress; 62 to 65 electrons that change
+subband, holes in quantum transport, a quality mesh, and scattering
+lifetimes and mobility of a 2D gas.
 
 ### 1. Energy levels and what they are made of
 
@@ -2647,17 +2649,19 @@ for dz in (1.0, 0.5):
 ```
 
 ```
-step 1.0 nm: tensor grid 2.8845e+12 cm^-2, mesh 2.8307e+12 to 2.9365e+12 cm^-2 (805 nodes)
-step 0.5 nm: tensor grid 2.8805e+12 cm^-2, mesh 2.8680e+12 to 2.8954e+12 cm^-2 (3003 nodes)
+step 1.0 nm: tensor grid 2.8845e+12 cm^-2, mesh 2.8667e+12 to 2.8921e+12 cm^-2 (805 nodes)
+step 0.5 nm: tensor grid 2.8805e+12 cm^-2, mesh 2.8762e+12 to 2.8845e+12 cm^-2 (3003 nodes)
 ```
 
 On a `MeshDevice` the quantum channel solves the Schroedinger equation
 along vertical lines through the mesh, sampled where they cross the
 triangles' edges, and carries the quantum potential back to the nodes.
 The confined sheet density on the mesh approaches the tensor grid's as
-the step shrinks (2 percent at 1 nm, 0.5 percent at 0.5 nm here); a mesh
-made from the tensor grid itself gives the tensor grid's result to
-machine precision (see the checks).
+the step shrinks (0.6 percent at 1 nm, 0.15 percent at 0.5 nm here; up
+to 0.26.0, before the materials on a line were averaged over each
+sample's share of it, 2 and 0.5 percent); a mesh made from the tensor
+grid itself gives the tensor grid's result to machine precision when no
+band step lies inside the window (see the checks).
 
 ### 59. Implant ranges by Monte Carlo
 
@@ -2769,6 +2773,208 @@ With `stress_volume_nm3` the reaction slows where the stress normal to
 the interface is compressive, so the corners grow less oxide, as Kao and
 co-workers found. The shape still follows the package's volume rule; the
 flow sets the stress.
+
+### 62. Electrons that change subband: coupled mode space (new in 0.27.0)
+
+```python
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# the short transistor of example 57, its channel electrons in coupled
+# mode space: the lowest M states of every column joined by their overlaps,
+# so electrons can change subband where the channel's profile changes
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+contacts = [Electrode("source", "ohmic", 0, 50, implant_depth=30, implant_donors=1e20),
+            Electrode("gate", "schottky", 85, 115, barrier=1.0),
+            Electrode("drain", "ohmic", 150, 200, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 200.0, contacts, Mobility(1500.0, "illustrative"),
+             Surface("pinned", barrier=1.0), dx_fine=5, dx_max=50, dz_fine=0.5, dz_max=50,
+             quantum=QuantumChannel((270.0, 319.5), x_range=(55, 145)))
+bias = {"gate": -1.0, "drain": 0.05}
+dd = dev.solve(bias)
+one = dev.negf(bias, guess=dd)
+print(f"uncoupled mode space: {one.negf['current']:.4f} A/mm "
+      f"({len(one.negf['modes'])} subbands, each on its own)")
+for M in (2, 4):
+    st = dev.negf(bias, guess=dd, coupled_modes=M)
+    print(f"coupled, {M} modes:     {st.negf['current']:.4f} A/mm "
+          f"({100 * (st.negf['current'] / one.negf['current'] - 1):+.2f} %)")
+```
+
+```
+uncoupled mode space: 1.1812 A/mm (22 subbands, each on its own)
+coupled, 2 modes:     1.1524 A/mm (-2.44 %)
+coupled, 4 modes:     1.1835 A/mm (+0.20 %)
+```
+
+In coupled mode space every column between the contacts keeps its
+lowest M states, and the slab of columns is solved as one problem in
+which neighboring columns are joined through the overlaps of their
+states, so an electron can leave one subband for another where the
+channel's profile across it changes. With all the states of a column it
+is the full 2D problem. Two modes are too few here (the second and higher
+subbands carry current too); with four the current is within 0.2 percent
+of the 22 uncoupled chains, so in this transistor, whose channel changes
+slowly along x, subband mixing hardly matters. It matters where the
+cross-section changes over a few nanometers. Coupled modes are ballistic
+only. Numbers illustrative.
+
+### 63. Holes in quantum transport
+
+```python
+import dataclasses
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+
+# a p-channel transistor: a well for holes 0.3 eV deep, acceptors in the
+# barriers, the holes of the channel solved by NEGF with their own masses
+# (0.3 m0 across the well; in the plane 0.3 or 0.6 m0); numbers illustrative
+base = dataclasses.replace(algan(0.0), eg=3.4, me=0.2, eps_r=9.0)
+mk = lambda ev, name: dataclasses.replace(base, name=name, ec=ev + 3.4)
+layers = [StackLayer(mk(0.0, "b1"), 50.0, acceptors=1e-3), StackLayer(mk(0.3, "w"), 10.0),
+          StackLayer(mk(0.0, "b2"), 20.0, acceptors=1e-3)]
+contacts = [Electrode("source", "ohmic", 0, 40),
+            Electrode("gate", "schottky", 85, 115, barrier=2.4),
+            Electrode("drain", "ohmic", 160, 200)]
+bias = {"gate": 0.3, "drain": -0.02}
+for m_plane in (0.3, 0.6):
+    dev = Device(layers, 200.0, contacts, Mobility(300.0, "illustrative"),
+                 Surface("states", fixed_charge=0.0), dx_fine=5, dx_max=10, dz_fine=0.5,
+                 dz_max=10, hole_mass=0.3, hole_mobility=Mobility(300.0, "illustrative"),
+                 quantum=QuantumChannel((44.0, 66.0), x_range=(45, 155), electrons=False,
+                                        holes=(0.3, m_plane, "illustrative")))
+    dd = dev.solve(bias)
+    ball = dev.negf(bias, guess=dd, carrier="holes")
+    scat = dev.negf(bias, guess=dd, carrier="holes", scattering_time=2e-13)
+    sheets = ball.quantum["hole_sheet_cm2"]
+    print(f"in-plane mass {m_plane} m0: drain current ballistic {ball.current['drain']:+.4f} "
+          f"A/mm, with scattering {scat.current['drain']:+.4f} A/mm; holes under the "
+          f"gate {min(sheets):.2e} cm^-2")
+```
+
+```
+in-plane mass 0.3 m0: drain current ballistic -0.0451 A/mm, with scattering -0.0231 A/mm; holes under the gate 7.85e+11 cm^-2
+in-plane mass 0.6 m0: drain current ballistic -0.0353 A/mm, with scattering -0.0149 A/mm; holes under the gate 8.61e+11 cm^-2
+```
+
+`negf(..., carrier="holes")` solves the holes of the QuantumChannel as
+waves, with the valence band edge, the mass across the well for the
+subbands and the in-plane mass along the channel and the width. A heavier
+in-plane mass holds more holes under the gate (more states per energy)
+but carries less current: the ballistic current falls as the holes get
+slower, and with scattering the Drude conductance q^2 p tau / m falls
+too. The chains are fed at their ends from the contacts' Fermi levels,
+so the barrier between these top contacts and the well (which
+drift-diffusion includes) is not in these currents. Numbers illustrative.
+
+### 64. A quality mesh: a curved resistor
+
+```python
+import math
+import numpy as np
+from kpenvelope import algan
+from kpenvelope.device import Electrode, Mobility
+from kpenvelope.mesh import MeshDevice, MeshRegion, quality_mesh, _tri_quality
+
+# a quarter ring of doped GaN between two ohmic faces, meshed with the
+# package's quality mesh generator; its resistance against the exact
+# (pi / 2) / (q n mu ln(b / a) t) of the true ring (numbers illustrative)
+a, b, mu, nd = 200.0, 600.0, 500.0, 1e18
+exact = 1 / (1.602176634e-19 * nd * mu) * (math.pi / 2) / (math.log(b / a) * 0.1)
+for n, h in ((40, 60.0), (80, 30.0), (160, 15.0)):
+    th = np.linspace(0, math.pi / 2, n + 1)
+    ring = ([(a * math.cos(t), a * math.sin(t)) for t in th]
+            + [(b * math.cos(t), b * math.sin(t)) for t in th[::-1]])
+    m = quality_mesh({"gan": ring}, h=h, min_angle=28)
+    P = m.points
+    faces = {"a": np.flatnonzero(np.isclose(P[:, 1], 0.0)),
+             "b": np.flatnonzero(np.isclose(P[:, 0], 0.0, atol=1e-9))}
+    dev = MeshDevice(m, {"gan": MeshRegion(material=algan(0.0),
+                                           mobility=Mobility(mu, "illustrative"),
+                                           donors=nd * 1e-21)},
+                     [Electrode("a", "ohmic", 0, 1), Electrode("b", "ohmic", 0, 1)],
+                     faces, statistics="boltzmann")
+    R = 0.01 / abs(dev.solve({"b": 0.01}).current["b"])
+    amin = _tri_quality(m.points, m.triangles)[0].min()
+    print(f"h {h:4.0f} nm: {len(P):5d} nodes, smallest angle {amin:4.1f} deg, "
+          f"R {R:.5e} ohm mm, error {100 * (R / exact - 1):+.3f} %")
+```
+
+```
+h   60 nm:   378 nodes, smallest angle 28.1 deg, R 1.78142e-01 ohm mm, error -0.191 %
+h   30 nm:  1133 nodes, smallest angle 28.0 deg, R 1.78376e-01 ohm mm, error -0.060 %
+h   15 nm:  3664 nodes, smallest angle 28.0 deg, R 1.78451e-01 ohm mm, error -0.017 %
+```
+
+`quality_mesh` takes regions as polygons (here one ring, its arcs as
+chords) and refines a Delaunay mesh until no angle is below `min_angle`
+and no edge is longer than `h`, keeping every boundary and interface as
+mesh edges with no node too close to them (the conditions under which
+the box method has no negative dual faces). The resistance converges at
+second order to the exact one of the true ring; part of the error is the
+chords of the polygon.
+
+### 65. Scattering lifetimes and mobility of a 2D electron gas
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.scattering import Subband
+
+# the 2DEG of an AlGaN/GaN heterostructure from the Schroedinger-Poisson
+# solver at 77 K, its lowest subband, and its mobility from four mechanisms.
+# Every material number here is ILLUSTRATIVE: put in cited values for your
+# sample. (Polar optical phonons, the main limit in GaN near room
+# temperature, are not among the mechanisms.)
+layers = [StackLayer(algan(0.0), 300.0, donors=1e-5), StackLayer(algan(0.25), 25.0)]
+r = solve_electrons(layers, 1.0, temperature_K=77.0, dz=0.1, quantum_window=(280.0, 324.0),
+                    n_states=10)
+win = (r.z >= 280.0) & (r.z <= 324.0)
+z = r.z[win]
+mass = np.where(z < 300.0, algan(0.0).me, algan(0.25).me)
+E, p2, w = column_states(z, r.ec[win], mass, 2, z[0] - 0.1, z[-1] + 0.1)
+gan, bar = algan(0.0), algan(0.25)
+sb = Subband(z, p2[:, 0], gan.me, gan.eps_r, fermi=-float(E[0]), temperature_K=77.0,
+             weights=w)
+print(f"sheet {r.sheet_quantum_cm2:.3e} cm^-2 in all subbands; lowest subband "
+      f"{sb.sheet * 1e-4:.3e} cm^-2, E_F - E_1 = {1e3 * sb.fermi:.1f} meV")
+mechanisms = {
+    "acoustic phonons (D 8.3 eV)": sb.acoustic(8.3, 6150.0, 6560.0),
+    "alloy (barrier, 1 eV)": sb.alloy(0.25, 1.0, 0.0228, mask=z > 300.0),
+    "roughness (0.3 nm, 1.5 nm)": sb.roughness(300.0, bar.ec - gan.ec, 0.3, 1.5),
+    "charges 1e11 cm^-2 at the surface": sb.impurities(z0=325.0, sheet_cm2=1e11),
+}
+res = sb.mobility(*mechanisms.values())
+for (name, f), mu in zip(mechanisms.items(), res["each"]):
+    lt = sb.lifetimes(f)
+    print(f"  {name:36s} mu {mu:10.0f} cm^2/Vs, tau_t {lt['transport_s']:.2e} s, "
+          f"tau_q {lt['quantum_s']:.2e} s")
+print(f"all together: mu {res['mobility_cm2Vs']:.0f} cm^2/Vs")
+```
+
+```
+sheet 1.435e+13 cm^-2 in all subbands; lowest subband 1.202e+13 cm^-2, E_F - E_1 = 143.9 meV
+  acoustic phonons (D 8.3 eV)          mu      27746 cm^2/Vs, tau_t 3.16e-12 s, tau_q 3.16e-12 s
+  alloy (barrier, 1 eV)                mu      39802 cm^2/Vs, tau_t 4.53e-12 s, tau_q 4.53e-12 s
+  roughness (0.3 nm, 1.5 nm)           mu       1867 cm^2/Vs, tau_t 2.10e-13 s, tau_q 2.03e-13 s
+  charges 1e11 cm^-2 at the surface    mu  469319459 cm^2/Vs, tau_t 5.27e-08 s, tau_q 2.51e-11 s
+all together: mu 1675 cm^2/Vs
+```
+
+`Subband` takes the envelope of one subband (here the lowest of the
+Schroedinger-Poisson solution) and works out the Born-approximation
+rates of each mechanism on it, screened by the subband's own electrons.
+The transport lifetime tau_t sets the mobility; the quantum lifetime
+tau_q, which counts every scattering event, sets the damping of
+magneto-oscillations. For short-range scatterers (phonons, alloy) the
+two are equal; for charges far away, which scatter mostly by small
+angles, tau_t is many times tau_q, as Das Sarma and Stern showed. The
+mobility adds the rates at each energy and averages over the electrons.
+Every material number here is illustrative; with your cited values the
+same lines give your structure's numbers.
 
 ## Tutorials
 

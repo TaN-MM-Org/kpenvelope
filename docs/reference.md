@@ -618,6 +618,59 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Coupled modes and holes in NEGF, a quality mesh generator, scattering lifetimes (new in 0.27.0)**
+
+- `Device.negf(..., coupled_modes=M)` -- NEGF in coupled mode space: the
+  lowest M states of every column between the contacts, joined by their
+  overlaps, so electrons change subband where the channel's profile
+  across it changes (R. Venugopal, S. Goasguen, S. Datta and M. S.
+  Lundstrom, J. Appl. Phys. 95, 292 (2004), doi:10.1063/1.1631754).
+  With M equal to the nodes of a column it is the full 2D problem. The
+  columns must share their z nodes; ballistic only.
+- `Device.negf(..., carrier="holes")` -- the same for the holes of a
+  QuantumChannel with `holes=(m_z, m_inplane, ...)`: one band, m_z
+  across the channel, m_inplane along x and the width. Results as for
+  electrons, with `hole_subbands` and `hole_sheet_cm2` in `quantum` and
+  efp the holes' effective quasi-Fermi level.
+- `kpenvelope.negf.Slab(U, mass, a, z, zl, zr, n_modes=None,
+  mass_x=None)` (a 2D region along x, its `solve(E)` and
+  `band_bottoms()`), `slab_transport(slab, FS, FD, kT, mass_y=None, ...)`
+  and `lead_surface_green(E, D, C)` (the leads by decimation: M. P. Lopez
+  Sancho, J. M. Lopez Sancho and J. Rubio, J. Phys. F 15, 851 (1985),
+  doi:10.1088/0305-4608/15/4/009).
+- `kpenvelope.mesh.quality_mesh(regions, h=None, min_angle=25,
+  max_points=200000)` -- a triangle mesh of regions given as polygons,
+  by Delaunay refinement (J. Ruppert, J. Algorithms (1995)):
+  every boundary and interface segment is an edge, no node lies in a
+  segment's diametral circle, the smallest angle is at least
+  `min_angle` (up to 34 degrees; sharp input corners keep their angle),
+  and no edge is longer than `h` (a number or a function h(x, z)).
+- `kpenvelope.scattering.Subband(z, psi2, mass, eps_r, fermi=None,
+  sheet_cm2=None, temperature_K=300, weights=None, screening=True)` --
+  scattering rates of one subband on its own envelope, with your material
+  numbers: `acoustic(D, density, sound_velocity)` (deformation potential,
+  equipartition), `alloy(x, potential, cell_volume, mask)`,
+  `impurities(z0=, sheet_cm2=)` or `impurities(profile_cm3=)` (screened
+  Coulomb), `roughness(z_interface, step, rms, correlation_length,
+  correlation="gaussian" or "exponential")`. Each gives a function
+  rate(E, quantum=False) (transport rate, or with quantum=True the
+  single-particle rate). `lifetimes(*mechanisms, energy=None)` gives the
+  transport and quantum lifetimes, `mobility(*mechanisms)` the mobility
+  (all mechanisms added at each energy, averaged over the thermal
+  distribution) and that of each mechanism alone. Sources in the
+  module's docstring.
+- The quantum channel on a mesh: the material on each sample of a line
+  (band offset, gap, mass) is now the mean over the sample's share of
+  the line, so a band step lies where the mesh puts it. On meshes whose
+  nodes on a step belong to one region or the other from place to place
+  (any unstructured mesh), the confined sheet now converges with the
+  mesh; on a mesh made from a tensor grid it differs from the tensor grid
+  where a band step lies inside the window (the tensor grid gives a node
+  on a step wholly to the layer above).
+- `Device(grid=...)` refuses grid nodes closer than 1e-6 nm (a
+  near-duplicate node, as `np.unique` of a float `arange` can leave,
+  made the Poisson solve fail without saying why).
+
 **Quantum transport, quantum channels on meshes, Monte Carlo implants, plasma etching, oxide stress (new in 0.26.0)**
 
 - `Device.negf(bias, source="source", drain="drain", dx=0.5,

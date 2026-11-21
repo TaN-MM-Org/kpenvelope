@@ -5,10 +5,22 @@ The limits of each part of the package, in detail. The
 
 ## Limits
 
-- Scattering lifetimes (roughness, impurities, phonons) are not
-  computed. They need cited screening and roughness parameters for
-  each structure, and this package ships no number it cannot source;
-  it gives the density-of-states and velocity ingredients instead.
+- Scattering lifetimes (`kpenvelope.scattering`, since 0.27.0) are
+  computed for one subband at a time, from its own envelope, with the
+  material numbers you give (the package ships none: deformation
+  potentials, alloy potentials and roughness parameters differ between
+  sources by factors of two and more). Only scattering within the
+  subband (no transitions to other subbands), in the Born approximation,
+  with Thomas-Fermi screening by that subband alone and one background
+  permittivity (no image charges). Acoustic phonons are in the
+  equipartition limit (elastic; too fast below the Bloch-Gruneisen
+  temperature); there are no polar optical phonons (the main limit in
+  GaN near room temperature, inelastic, with no single lifetime), no
+  piezoelectric scattering, and no charged dislocations here (the
+  separate line model of `line_scattering_rate` has them). Roughness is
+  the shift of one band step (zero for a wave function that vanishes at
+  the interface, as with an infinite barrier). The mobility is the
+  Boltzmann average of one subband.
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small
@@ -214,11 +226,15 @@ The limits of each part of the package, in detail. The
   Small-signal response is linear; f_max needs a gate resistance you
   supply.
 - Shapes: `Device` builds boxes on a tensor grid; `MeshDevice` takes any
-  triangle mesh, but the package's own mesh generators are simple
-  (Delaunay of your points, a rectangular grid cut into triangles, or
-  the cells of a `Structure`), with no quality refinement: bring a quality mesh from a mesh
-  generator for complex shapes, and refine where the warning about
-  negative dual faces appears. A mesh of long, thin triangles gives poor
+  triangle mesh. Since 0.27.0 `quality_mesh` makes quality meshes of
+  regions given as polygons (Delaunay refinement with a smallest angle
+  up to 34 degrees and a size field); curved boundaries are polygons
+  (you choose the chords), there is no anisotropic refinement (thin
+  layers need many small triangles), no refinement driven by the
+  solution, and nothing in 3D. The other generators are simple (Delaunay
+  of your points, a rectangular grid cut into triangles, or the cells of
+  a `Structure`); refine where the warning about negative dual faces
+  appears. A mesh of long, thin triangles gives poor
   results even without the warning (the tests saw 30 percent and more on
   a jittered mesh of 20 nm by 0.5 nm cells). On meshes the heat sink is the bottom of
   the mesh (put the substrate into the mesh), a tunnel barrier must be
@@ -230,8 +246,12 @@ The limits of each part of the package, in detail. The
   vertical grid columns only (on a `MeshDevice`, since 0.26.0, vertical
   lines through the mesh), each column on its own (no tunneling from
   one column to the next; for that, `negf`). On a mesh, nodes between
-  two lines take the line values interpolated along x; `negf` and
-  `ballistic_current` are for tensor grids only. Each
+  two lines take the line values interpolated along x, and the
+  materials on a line are the means over each sample's share of it
+  (since 0.27.0), so on a mesh made from a tensor grid the result
+  differs from the tensor grid's where a band step lies inside the
+  window (the tensor grid gives the node on the step wholly to the layer
+  above). `negf` and `ballistic_current` are for tensor grids only. Each
   node is filled with its own electron quasi-Fermi level, which is the
   Schroedinger-Poisson density wherever that level does not change along
   the column, as in equilibrium and along a channel; where it does (a
@@ -252,15 +272,24 @@ The limits of each part of the package, in detail. The
   through the barrier, no reflection above it); the bands are those of
   the state you give.
 - Quantum transport (`Device.negf`, since 0.26.0): non-equilibrium
-  Green's functions in uncoupled mode space: each subband of the columns
-  between the contacts is a 1D chain along x, so electrons do not change
-  subband (no coupling between modes where the channel's cross-section
-  changes fast), the transverse direction is free with one mass per
-  subband, and the leads continue the end columns' potential. Without
+  Green's functions in uncoupled mode space by default: each subband of
+  the columns between the contacts is a 1D chain along x, so electrons
+  do not change subband; the transverse direction is free with one mass
+  per subband, and the leads continue the end columns' potential. Since
+  0.27.0 `coupled_modes` lets electrons change subband (coupled mode
+  space, or the full 2D problem with all modes), but only without
+  scattering, only when every column between the contacts has the same
+  z nodes, and at a cost that grows as the cube of the number of modes
+  (in the transistor of example 57, about 40 s with 6 modes and 150 s
+  with 12 on one core of our test machine). The chains are fed at their ends from the source and drain
+  Fermi levels: access regions between a contact and the window (a
+  contact on top of a barrier) are not in the quantum part. Without
   scattering, states in a dip of a subband below both leads' band
-  bottoms stay empty, and in long access regions or under a strong
-  drain voltage the self-consistent loop can fail to settle (it says
-  so); `scattering_time` adds Buttiker probes, which settle it. The
+  bottoms stay empty, and the self-consistent loop can fail to settle
+  (it says so): in long access regions, under a strong drain voltage,
+  and even at equilibrium where a subband dips by about 1 meV along an
+  ungated channel; `scattering_time` adds Buttiker probes, which settle
+  it. The
   probes relax momentum and energy at one rate (no phonon spectrum, no
   separate energy relaxation); their broadening is cut at the local band
   bottom and the lost states near it are added back from an infinite
@@ -268,9 +297,11 @@ The limits of each part of the package, in detail. The
   The probe resistance matches the Drude value q^2 n tau / m to about 1
   percent at 0.5 nm and better at finer steps; in the device the
   resistance per length matched drift-diffusion with mu = q tau / m to 6
-  percent at 0.5 nm and 14 percent at 1 nm. Only electrons; holes and the
-  carriers outside the window keep their drift-diffusion quasi-Fermi
-  levels at that voltage. Not with heat, hot electrons, traps' dynamics
+  percent at 0.5 nm and 14 percent at 1 nm. One carrier at a time:
+  electrons, or (since 0.27.0, `carrier="holes"`) holes with one band
+  and your two masses (no heavy-, light- and split-off-hole mixing); the
+  other carrier and the carriers outside the window keep their
+  drift-diffusion quasi-Fermi levels at that voltage. Not with heat, hot electrons, traps' dynamics
   or small-signal analysis. A 100 nm channel takes seconds without
   scattering and minutes with it.
 - Process (`Implant`, `Anneal`, `Process`, `Structure`): implant profiles
