@@ -45,9 +45,10 @@ only looks right.
   electrons changing subband, and scattering if you want it), and the
   ballistic limit of a transistor's current.
 - Scattering lifetimes and mobility of a 2D gas from its own
-  wavefunction: acoustic and polar optical phonons (the latter by an
-  exact solution of the Boltzmann equation), alloy disorder, interface
-  roughness and charged impurities, with the material numbers you give.
+  wavefunctions, with electrons moving between its levels: acoustic and
+  polar optical phonons (by an exact solution of the Boltzmann
+  equation), alloy disorder, interface roughness and charged impurities,
+  with the material numbers you give (also in the app).
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
@@ -175,7 +176,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  68 worked examples, each with the output it prints, and three
+  69 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -231,9 +232,9 @@ The main gaps, in plain terms:
   default in a simple form that comes out too small where the electrons
   are very dense; the Fermi-Dirac form is an option, still for one
   energy-independent scattering time.
-- Scattering lifetimes are for one subband at a time (no scattering
-  between subbands), and the polar optical phonons are bulk ones of one
-  energy, without the interface modes of the heterostructure.
+- The polar optical phonons of the scattering lifetimes are bulk ones
+  of one energy, without the interface modes of the heterostructure, and
+  the screening leaves out the polarization between subbands.
 - No material numbers without a source: where a number is missing, you
   supply it with its source.
 - There is no paid support. Questions and bug reports go to the

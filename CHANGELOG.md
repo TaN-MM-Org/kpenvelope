@@ -4,6 +4,43 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.29.0 (2026-11-21)
+
+Electrons of a 2D gas can scatter between its levels, and the app finds
+the mobility of the electron layer. The examples print what they printed
+before; example 69 is new.
+
+### Added
+
+- `kpenvelope.scattering.Subbands`: several subbands with their
+  envelopes, every mechanism of `Subband` within and between them, and
+  the linearized Boltzmann equation of all of them solved together
+  (exactly for elastic scattering; with polar optical phonons on energy
+  cells with an edge at every subband bottom). `mobility` returns the
+  total, each mechanism alone and each subband; `lifetimes` the quantum
+  and transport times of each subband.
+- `column_states(..., signed=True)`: the envelopes themselves, for
+  overlaps between states.
+- The app: "Find the mobility" in the Electrons tab.
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; scattering in coupled mode space; NEGF on
+  triangle meshes; interface phonon modes and polarization between
+  subbands in the lifetimes. The process, tunneling and hot-electron
+  limits are as in 0.28.0. The app has the mobility but not the other
+  features added since 0.24.0.
+
+### Checks (tests)
+
+6 new tests (387 in all; docs/checks.md has the tolerances): the signed
+envelopes; one subband against the single-subband model; two wells that
+do not overlap against two independent gases; three coupled subbands
+against the exact isotropic times and against Siggia and Kwok's solution
+at each energy; detailed balance and grid convergence with polar optical
+phonons; the app's mobility against the library. All 69 documented
+examples were rerun.
+
 ## 0.28.0 (2026-11-21)
 
 Polar optical phonons join the scattering lifetimes, with an exact
