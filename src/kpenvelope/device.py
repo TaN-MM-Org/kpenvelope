@@ -878,6 +878,82 @@ class _Anderson:
         return plain
 
 
+_FD32 = None
+
+
+def _fd32(eta):
+    """F_3/2(eta) = (1 / Gamma(5/2)) int_0^inf x^(3/2) / (1 + exp(x - eta)) dx
+    (new in 0.28.0), with F_1/2 and F_-1/2 (all normalized so that each is
+    exp(eta) for a non-degenerate gas; dF_j / d eta = F_(j-1)). Tabulated
+    on -40 <= eta <= 40 as the integral of F_1/2 (the trapezoid rule with
+    its end correction, error of order 1e-12 of the step 1e-3 to the
+    fourth); exp(eta) below and the Sommerfeld series above."""
+    global _FD32
+    from .electrons import fermi_dirac_half
+    if _FD32 is None:
+        e = np.linspace(-40.0, 40.0, 80001)
+        f, fm = (np.asarray(v, float) for v in fermi_dirac_half(e))
+        h = e[1] - e[0]
+        tr = np.concatenate([[0.0], np.cumsum(0.5 * h * (f[1:] + f[:-1]))])
+        F32 = math.exp(-40.0) * (1 - math.exp(-40.0) / 2 ** 2.5) + tr - h * h / 12 * (fm - fm[0])
+        _FD32 = (e, F32)
+    e, F32 = _FD32
+    eta = np.asarray(eta, float)
+    f12, fm12 = (np.asarray(v, float) for v in fermi_dirac_half(eta))
+    out = np.interp(eta, e, F32)
+    # cubic Hermite in between the table points (slope F_1/2)
+    lo = eta < e[0]
+    hi = eta > e[-1]
+    mid = ~(lo | hi)
+    if np.any(mid):
+        hh = e[1] - e[0]
+        i = np.clip(((eta[mid] - e[0]) / hh).astype(int), 0, e.size - 2)
+        t = (eta[mid] - e[i]) / hh
+        fa, fb = fermi_dirac_half(e[i])[0], fermi_dirac_half(e[i + 1])[0]
+        out[mid] = ((2 * t ** 3 - 3 * t ** 2 + 1) * F32[i] + (t ** 3 - 2 * t ** 2 + t) * hh * fa
+                    + (-2 * t ** 3 + 3 * t ** 2) * F32[i + 1] + (t ** 3 - t ** 2) * hh * fb)
+    if np.any(lo):
+        out[lo] = np.exp(eta[lo])
+    if np.any(hi):
+        x = eta[hi]
+        out[hi] = x ** 2.5 / math.gamma(3.5) * (1 + math.pi ** 2 / 6 * 3.75 / x ** 2
+                                                 + 7 * math.pi ** 4 / 360 * 3.75 * 0.5
+                                                 * (-0.5) / x ** 4)
+    return out, f12, fm12
+
+
+def _seebeck_fd(eta):
+    """G(eta) = (5/2) F_3/2 / F_1/2 - eta, the Peltier coefficient over kT
+    of a gas with an energy-independent scattering time under Fermi-Dirac
+    statistics, and its excess over the Boltzmann-like form G_B = 5/2 -
+    ln F_1/2 (which the flux of `_flux_general` holds): returns (G, Gd,
+    dGd/deta) with Gd = G - G_B (0 for a non-degenerate gas). Below eta =
+    -4, where Gd is of order exp(eta), from the series F_j = sum_k
+    (-1)^(k+1) exp(k eta) / k^(j+1) with the differences taken term by
+    term (the tables' rounding would swamp it there)."""
+    eta = np.clip(np.asarray(eta, float), -700.0, 700.0)
+    F32, F12, Fm = _fd32(eta)
+    F12 = np.maximum(F12, 1e-300)
+    G = 2.5 * F32 / F12 - eta
+    Gd = G - 2.5 + np.log(F12)
+    dGd = 2.5 * (1.0 - (F32 / F12) * (Fm / F12)) - 1.0 + Fm / F12
+    lo = eta < -4.0
+    if np.any(lo):
+        u = np.exp(eta[lo])
+        k = np.arange(1, 13, dtype=float)[:, None]
+        sg = (-1.0) ** (k + 1) * u[None, :] ** (k - 1)
+        dsg = (k - 1) * sg                                      # u d/du
+        s12 = (sg / k ** 1.5).sum(0)
+        s12p = (dsg / k ** 1.5).sum(0)
+        c = k ** -2.5 - k ** -1.5
+        d32 = (sg * c)[1:].sum(0)                               # s32 - s12
+        d32p = (dsg * c)[1:].sum(0)
+        G[lo] = 2.5 * (1.0 + d32 / s12) - eta[lo]
+        Gd[lo] = 2.5 * d32 / s12 + np.log1p((sg / k ** 1.5)[1:].sum(0))
+        dGd[lo] = 2.5 * (d32p * s12 - d32 * s12p) / s12 ** 2 + s12p / s12
+    return G, Gd, dGd
+
+
 def _bern_d(xv):
     """Bernoulli function B(x) = x / (e^x - 1) and its derivative."""
     from .driftdiffusion import bernoulli
@@ -955,7 +1031,7 @@ class Device:
                  heterojunctions: str = "drift-diffusion", band_to_band=None,
                  doping=None, tunnel_barriers=(), temperature_model: str = "mobility",
                  band_gap_temperature=None, heat_model: str = "joule",
-                 quantum: "QuantumChannel" = None):
+                 quantum: "QuantumChannel" = None, thermoelectric: str = "boltzmann"):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover - depends on install
@@ -1457,7 +1533,7 @@ class Device:
         self._setup_heterojunctions()
         self._setup_band_to_band()
         self._setup_tunnel_barriers(tunnel_barriers)
-        self._set_heat_model(heat_model)
+        self._set_heat_model(heat_model, thermoelectric)
         self._setup_lattice(temperature_model, band_gap_temperature,
                             np.array(labels, dtype=object)[np.broadcast_to(
                                 idx.reshape((1,) * (self.dim - 1) + (-1,)),
@@ -1563,13 +1639,24 @@ class Device:
         self._neutral = self._neutral_psi()
         L["active"] = True
 
-    def _set_heat_model(self, heat_model):
+    def _set_heat_model(self, heat_model, thermoelectric="boltzmann"):
         """heat_model "joule" (the default): Joule plus recombination heat.
         "thermoelectric" (new in 0.23.0): also the Peltier and Thomson heat
-        (see `_peltier_heat`)."""
+        (see `_peltier_heat`). thermoelectric (new in 0.28.0): "boltzmann"
+        (the default; the heat each electron carries and the thermal
+        diffusion of the current are those of a non-degenerate gas,
+        kT (5/2 - ln(n / N_c))) or "fermi-dirac" (with
+        statistics="fermi": kT ((5/2) F_3/2(eta) / F_1/2(eta) - eta), the
+        value for a constant scattering time, in both the current and the
+        heat)."""
         if heat_model not in ("joule", "thermoelectric"):
             raise ValueError("heat_model must be 'joule' or 'thermoelectric'")
+        if thermoelectric not in ("boltzmann", "fermi-dirac"):
+            raise ValueError("thermoelectric must be 'boltzmann' or 'fermi-dirac'")
+        if thermoelectric == "fermi-dirac" and not self.fermi:
+            raise ValueError("thermoelectric='fermi-dirac' needs statistics='fermi'")
         self.heat_model = heat_model
+        self.thermoelectric = thermoelectric
 
     def _kt_at(self, nodes):
         kT = self.kT
@@ -2627,9 +2714,21 @@ class Device:
         dfn = fn[j] - fn[i]
         dL = Ln[j] - Ln[i]
         dlnN = np.log(L["Nc"][j] / L["Nc"][i])
-        C = (dfn / kTl - (TLj / Tlog) * dL - (dTL / Tlog) * Ln[i]
+        fdc = self.fermi and getattr(self, "thermoelectric", "boltzmann") == "fermi-dirac"
+        dfe = dfn
+        if fdc:
+            # Fermi-Dirac thermal diffusion: Gamma = -mu n [grad F + k G grad T];
+            # this flux has k G_B grad T (G_B = 5/2 - ln F_1/2), so the rest,
+            # k (G - G_B) grad T, joins grad F: on the edge F_j - F_i + k
+            # mean(G - G_B) (T_j - T_i), inside the exponential fitting
+            if hy is not None:
+                raise ValueError("thermoelectric='fermi-dirac' does not run with hot "
+                                 "electrons (their energy balance is Boltzmann's)")
+            _, gdn, dgdn = _seebeck_fd((fn - Ec) / kTn)
+            dfe = dfn + KB * dTL * 0.5 * (gdn[i] + gdn[j])
+        C = (dfe / kTl - (TLj / Tlog) * dL - (dTL / Tlog) * Ln[i]
              - (Tbar / Tlog) * dlnN + r)
-        S = (dfn / kTl + dL * (1.0 - TLj / Tlog) - (dTL / Tlog) * Ln[i]
+        S = (dfe / kTl + dL * (1.0 - TLj / Tlog) - (dTL / Tlog) * Ln[i]
              + dlnN * (1.0 - Tbar / Tlog) + 1.5 * dlnT + r)
         S = np.clip(S, -700, 700)
         B, dB = _bern_d(C)
@@ -2650,6 +2749,13 @@ class Device:
             dC = dict(fi=(ri - 1.0) / kTl, fj=(1.0 - rj) / kTl, pi=ri / kTl, pj=-rj / kTl)
             dS = dict(fi=dC["fi"] - ri / kTi, fj=dC["fj"] + rj / kTj,
                       pi=dC["pi"] - ri / kTi, pj=dC["pj"] + rj / kTj)
+            if fdc:
+                # eta = (F - E_c0 + psi) / kT on each node
+                ei = KB * dTL * 0.5 * dgdn[i] / kTi / kTl
+                ej = KB * dTL * 0.5 * dgdn[j] / kTj / kTl
+                for k_, v_ in (("fi", ei), ("pi", ei), ("fj", ej), ("pj", ej)):
+                    dC[k_] = dC[k_] + v_
+                    dS[k_] = dS[k_] + v_
             da = a * ri / kTi
             tm = K * dmu * a * B * E_
             d = {}
@@ -2674,11 +2780,16 @@ class Device:
             Tlog, r = edge_T(TL)
             kTl = KB * Tlog
             dfp = fp[j] - fp[i]
+            dfpe = dfp
+            if fdc:
+                # holes: Gamma = mu p [grad F_p - k G grad T]: F_p - k mean(G - G_B) T
+                _, gdp, dgdp = _seebeck_fd((Ev - fp) / kTn)
+                dfpe = dfp - KB * dTL * 0.5 * (gdp[i] + gdp[j])
             dM = Mp[j] - Mp[i]
             dlnN = np.log(np.maximum(L["Nv"][j], 1e-300) / np.maximum(L["Nv"][i], 1e-300))
-            Cp = (-dfp / kTl - (TLj / Tlog) * dM - (dTL / Tlog) * Mp[i]
+            Cp = (-dfpe / kTl - (TLj / Tlog) * dM - (dTL / Tlog) * Mp[i]
                   - (Tbar / Tlog) * dlnN + r)
-            Sp = (-dfp / kTl + dM * (1.0 - TLj / Tlog) - (dTL / Tlog) * Mp[i]
+            Sp = (-dfpe / kTl + dM * (1.0 - TLj / Tlog) - (dTL / Tlog) * Mp[i]
                   + dlnN * (1.0 - Tbar / Tlog) + 1.5 * dlnT + r)
             Sp = np.clip(Sp, -700, 700)
             Bp, dBp = _bern_d(Cp)
@@ -2694,6 +2805,13 @@ class Device:
                 dC = dict(fi=(1.0 - ri) / kTl, fj=(rj - 1.0) / kTl, pi=-ri / kTl, pj=rj / kTl)
                 dS = dict(fi=dC["fi"] + ri / kTi, fj=dC["fj"] - rj / kTj,
                           pi=dC["pi"] + ri / kTi, pj=dC["pj"] - rj / kTj)
+                if fdc:
+                    # eta_p = (E_c0 - psi - E_g - F_p) / kT on each node
+                    ei = -KB * dTL * 0.5 * dgdp[i] / kTi / kTl
+                    ej = -KB * dTL * 0.5 * dgdp[j] / kTj / kTl
+                    for k_, v_ in (("fi", ei), ("pi", ei), ("fj", ej), ("pj", ej)):
+                        dC[k_] = dC[k_] + v_
+                        dS[k_] = dS[k_] + v_
                 dap = -ap * ri / kTi
                 tp = Kp * dmup * ap * Bp * Ep
                 d = {}
@@ -5418,6 +5536,17 @@ class Device:
         Boltzmann statistics Pi_n = E_c - F_n + 5/2 kT and Pi_p = F_p - E_v +
         5/2 kT). 0 where the carrier is absent."""
         kT = np.broadcast_to(np.asarray(self.kT, float), (self.N,))
+        if self.fermi and getattr(self, "thermoelectric", "boltzmann") == "fermi-dirac":
+            # kT G(eta), G = (5/2) F_3/2 / F_1/2 - eta, eta from the density
+            Gn = _seebeck_fd(self._inv_occ(np.maximum(n, 1e-300) / self.Nc))[0]
+            Pn = np.where(n > 0, kT * Gn, 0.0)
+            if self.holes:
+                Gp = _seebeck_fd(self._inv_occ(np.maximum(p, 1e-300)
+                                               / np.where(self.Nv > 0, self.Nv, 1.0)))[0]
+                Pp = np.where(p > 0, kT * Gp, 0.0)
+            else:
+                Pp = np.zeros(self.N)
+            return Pn, Pp
         with np.errstate(divide="ignore", invalid="ignore"):
             Pn = np.where(n > 0, kT * (2.5 - np.log(np.where(n > 0, n, 1.0) / self.Nc)), 0.0)
             if self.holes:

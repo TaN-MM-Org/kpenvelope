@@ -299,27 +299,64 @@ class Subband:
             return self._elastic(E, W, quantum)
         return rate
 
+    def polar_optical(self, phonon_eV, eps_static, eps_high, temperature_K=None,
+                      screening=False):
+        """Polar optical (LO) phonons through the Froehlich coupling, bulk
+        phonons of one energy phonon_eV (hbar w_LO) with the subband's own
+        form factor: |M_q|^2 = e^2 hbar w H(q) / (4 A eps_p q) times N or
+        N + 1, 1/eps_p = (1/eps_high - 1/eps_static) / eps_0, H(q) the
+        form factor of `form_factor_ee` (B. K. Ridley, Quantum Processes in
+        Semiconductors; P. J. Price, Ann. Phys. (1981)). The phonons are in
+        equilibrium at temperature_K (default the subband's).
+
+        Inelastic: it has no momentum relaxation time, so `mobility` solves
+        the linearized Boltzmann equation exactly on an energy grid in
+        steps of a fraction of hbar w (the method of D. L. Rode, Phys. Rev.
+        B 2, 1012 (1970), in 2D, with the Pauli factors of a degenerate
+        gas). rate(E, quantum=True) is the out-scattering rate of a state
+        at E (emission and absorption, with the final states' occupancy);
+        rate(E) with quantum=False refuses. screening=True divides |M_q|^2
+        by the static eps(q)^2 of the gas (an upper bound on screening,
+        which at the phonon frequency is weaker); False (default) leaves
+        it unscreened."""
+        if not (phonon_eV > 0 and eps_static > eps_high > 0):
+            raise ValueError("phonon_eV > 0 and eps_static > eps_high > 0")
+        T = self.T if temperature_K is None else float(temperature_K)
+        return _Polar(self, float(phonon_eV), 1.0 / (EPS0 * eps_high) - 1.0 / (EPS0 * eps_static),
+                      1.0 / math.expm1(float(phonon_eV) / (KB * T)), bool(screening))
+
     # --------------------------------------------------------- results
     def lifetimes(self, *mechanisms, energy=None):
         """Transport and quantum lifetimes (s) at one kinetic energy (eV;
         default the Fermi energy, or kT for a non-degenerate gas), all
-        mechanisms together (Matthiessen's rule)."""
+        mechanisms together (Matthiessen's rule). With polar optical
+        phonons among them the transport lifetime is None (an inelastic
+        process has none; `mobility` handles it exactly)."""
         E = np.atleast_1d(self.fermi if energy is None else energy)
         if energy is None and self.fermi <= 0:
             E = np.atleast_1d(self.kT)
-        rt = sum(np.asarray(f(E, quantum=False), float) for f in mechanisms)
         rq = sum(np.asarray(f(E, quantum=True), float) for f in mechanisms)
-        return dict(transport_s=float(1 / rt[0]), quantum_s=float(1 / rq[0]),
-                    energy_eV=float(E[0]))
+        if any(isinstance(f, _Polar) for f in mechanisms):
+            tt = None                  # inelastic: no transport time (see mobility)
+        else:
+            rt = sum(np.asarray(f(E, quantum=False), float) for f in mechanisms)
+            tt = float(1 / rt[0])
+        return dict(transport_s=tt, quantum_s=float(1 / rq[0]), energy_eV=float(E[0]))
 
     def mobility(self, *mechanisms, n_energy=160):
         """Mobility (cm^2/Vs) of the subband: mu = q <tau> / m with
         <tau> = int tau(E) E (-df/dE) dE / int f dE (the 2D Boltzmann
         average), the rates of all mechanisms added at each energy. Returns
         dict(mobility_cm2Vs, tau_s, each: the mobility of each mechanism
-        alone, in the order given)."""
+        alone, in the order given). With polar optical phonons among the
+        mechanisms, the linearized Boltzmann equation is solved exactly
+        instead (see `polar_optical`); tau_s is then m mu / q, and
+        n_energy sets the grid steps per phonon energy (default 160 means
+        an automatic choice)."""
         if not mechanisms:
             raise ValueError("give at least one mechanism")
+        if any(isinstance(f, _Polar) for f in mechanisms):
+            return self._mobility_bte(mechanisms, n_energy)
         top = max(self.fermi, 0.0) + 40 * self.kT
         u, wu = np.polynomial.legendre.leggauss(int(n_energy))
         u = 0.5 * (u + 1.0) * math.sqrt(top)
@@ -337,3 +374,141 @@ class Subband:
         tau = avg(sum(rates))
         each = [QE * avg(r) / self.m * 1e4 for r in rates]
         return dict(mobility_cm2Vs=QE * tau / self.m * 1e4, tau_s=tau, each=each)
+
+    def _mobility_bte(self, mechanisms, n_energy):
+        """Exact solution of the linearized 2D Boltzmann equation with one
+        polar optical phonon and any elastic mechanisms (Rode's method):
+        f = f0 + g(E) cos(phi) per unit field, on energies (j + 1/2) dE with
+        hbar w a whole number of steps, so emission and absorption join
+        grid points; a sparse linear solve, no iteration."""
+        import scipy.sparse as sp
+        import scipy.sparse.linalg as spl
+        pol = [f for f in mechanisms if isinstance(f, _Polar)]
+        if len({p.hw for p in pol}) != 1:
+            raise ValueError("one phonon energy at a time (add the couplings of modes "
+                             "with the same energy into one polar_optical)")
+        hw = pol[0].hw
+        top = max(self.fermi, 0.0) + 40 * self.kT
+        # steps of at most kT / 10 and hbar w / 4
+        n_sub = max(4, int(math.ceil(hw / (self.kT / 10))))
+        if n_energy != 160:
+            n_sub = int(n_energy)
+        dE = hw / n_sub
+        nE = int(math.ceil(top / dE))
+        E = (np.arange(nE) + 0.5) * dE
+        kT = self.kT
+        f0 = 0.5 * (1 - np.tanh(0.5 * (E - self.fermi) / kT))
+        mdf = 0.25 / kT / np.cosh(0.5 * np.clip((E - self.fermi) / kT, -700, 700)) ** 2
+        v = np.sqrt(2 * E * QE / self.m)
+        elastic = [f for f in mechanisms if not isinstance(f, _Polar)]
+
+        def solve(use_pol, use_el):
+            nu = np.zeros(nE)
+            for f in use_el:
+                nu += np.asarray(f(E, quantum=False), float)
+            diag = nu.copy()
+            rows, cols, vals = [], [], []
+            for p in use_pol:
+                So, cm, cp = p._operator(E, f0, n_sub)
+                diag += So
+                j = np.arange(n_sub, nE)
+                rows += j.tolist()
+                cols += (j - n_sub).tolist()
+                vals += (-cm[j]).tolist()
+                j = np.arange(0, nE - n_sub)
+                rows += j.tolist()
+                cols += (j + n_sub).tolist()
+                vals += (-cp[j]).tolist()
+            M = sp.csr_matrix((vals, (rows, cols)), shape=(nE, nE)) + sp.diags(diag)
+            g = spl.spsolve(M.tocsc(), v * mdf)
+            nf = kT * float(np.logaddexp(0.0, self.fermi / kT))         # int f dE
+            # mu = int v g dE / (2 int f dE): g = tau v (-df/dE) gives q <tau> / m
+            return float((v * g).sum() * dE) / (2 * nf) * 1e4          # cm^2/Vs
+        mu = solve(pol, elastic)
+        each = []
+        for f in mechanisms:
+            if isinstance(f, _Polar):
+                each.append(solve([f], []))
+            else:
+                each.append(self.mobility(f)["mobility_cm2Vs"])
+        return dict(mobility_cm2Vs=mu, tau_s=mu * 1e-4 * self.m / QE, each=each,
+                    energy_step_eV=dE)
+
+
+class _Polar:
+    """Polar optical phonon scattering of a `Subband` (see
+    `Subband.polar_optical`)."""
+
+    def __init__(self, sb, hw, inv_eps_p, N, screening):
+        self.sb, self.hw, self.N, self.screening = sb, hw, N, screening
+        self.C = sb.m * QE ** 2 * (hw * QE / HBAR) / (8 * math.pi * HBAR ** 2) * inv_eps_p
+        # H(q) is smooth in log q: a cubic spline on 1200 points from
+        # 1e-6 to 1e3 1/nm (checked against the direct sum to 1e-9)
+        from scipy.interpolate import CubicSpline
+        lq = np.linspace(math.log(1e-6), math.log(1e3), 1200)
+        self._H = CubicSpline(lq, sb.form_factor_ee(np.exp(lq)))
+
+    def H(self, q_nm):
+        q = np.asarray(q_nm, float)
+        return self._H(np.log(np.clip(q, 1e-6, 1e3)))
+
+    def angular(self, k, kp):
+        """int_0^2pi dtheta H(q) s(q) / q and the same with cos(theta), for
+        wave numbers k and k' (1/m, arrays); q = |k - k'|."""
+        sb = self.sb
+        k = np.asarray(k, float)[:, None]
+        kp = np.asarray(kp, float)[:, None]
+        # theta = t0 sinh(u): 1/q is sharp near theta = 0 on the scale
+        # t0 = |k - k'| / sqrt(k k'); in u it is smooth
+        t0 = np.clip(np.abs(k - kp) / np.sqrt(np.maximum(k * kp, 1e-300)), 1e-12, math.pi)
+        x, wx = np.polynomial.legendre.leggauss(sb._th.size)
+        umax = np.arcsinh(math.pi / t0)
+        u = 0.5 * (x[None, :] + 1.0) * umax
+        th = t0 * np.sinh(u)
+        wt = 2 * (0.5 * wx[None, :] * umax) * t0 * np.cosh(u)          # 2 x int_0^pi
+        q = np.sqrt(np.maximum((k - kp) ** 2 + 4 * k * kp * np.sin(th / 2) ** 2, 1e-300))
+        H = self.H(q * 1e-9)
+        if self.screening:
+            H = H / sb._eps_q(q.ravel()).reshape(q.shape) ** 2
+        base = H / q * wt
+        return base.sum(1), (base * np.cos(th)).sum(1)
+
+    def _sums(self, E):
+        sb = self.sb
+        k = sb.k(E)
+        I0a, I1a = self.angular(k, sb.k(E + self.hw))
+        em = E > self.hw
+        I0e = np.zeros(E.size)
+        I1e = np.zeros(E.size)
+        if em.any():
+            I0e[em], I1e[em] = self.angular(k[em], sb.k(E[em] - self.hw))
+        return I0a, I1a, I0e, I1e, em
+
+    def _f0(self, E):
+        sb = self.sb
+        return 0.5 * (1 - np.tanh(0.5 * (E - sb.fermi) / sb.kT))
+
+    def __call__(self, E, quantum=False):
+        if not quantum:
+            raise ValueError("polar optical phonons are inelastic: there is no transport "
+                             "rate; use Subband.mobility, which solves the Boltzmann "
+                             "equation, or quantum=True for the out-scattering rate")
+        E = np.atleast_1d(np.asarray(E, float))
+        I0a, _, I0e, _, em = self._sums(E)
+        N = self.N
+        fa, fe = self._f0(E + self.hw), self._f0(E - self.hw)
+        return self.C * (I0a * ((N + 1) * fa + N * (1 - fa))
+                         + np.where(em, I0e * (N * fe + (N + 1) * (1 - fe)), 0.0))
+
+    def _operator(self, E, f0, n_sub):
+        """Out-scattering rate and the in-scattering coefficients of g at
+        E - hbar w (cm) and E + hbar w (cp), on the grid E."""
+        I0a, I1a, I0e, I1e, em = self._sums(E)
+        N, C = self.N, self.C
+        fa, fe = self._f0(E + self.hw), self._f0(E - self.hw)
+        So = C * (I0a * ((N + 1) * fa + N * (1 - fa))
+                  + np.where(em, I0e * (N * fe + (N + 1) * (1 - fe)), 0.0))
+        cm = C * I1e * (N * (1 - f0) + (N + 1) * f0)
+        cp = C * I1a * ((N + 1) * (1 - f0) + N * f0)
+        return So, cm, cp
+

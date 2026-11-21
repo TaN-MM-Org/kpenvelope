@@ -354,6 +354,95 @@ def quality_mesh(regions: dict, h=None, min_angle: float = 25.0, max_points: int
     return mesh
 
 
+def recovered_hessian(mesh: Mesh, values):
+    """Second derivatives of a field given on the nodes of a mesh (new in
+    0.28.0): at every node, a least-squares quadratic through the values on
+    the node's neighbors and their neighbors (two rings of edges, at least
+    six nodes), weighted by 1 / (1 + (d / d_mean)^2). Returns (N, 3) arrays
+    (d2/dx2, d2/dxdz, d2/dz2) per node, in units of values per nm^2. Exact
+    for quadratics on any mesh."""
+    import scipy.sparse as sp
+    P, T = mesh.points, mesh.triangles
+    u = np.asarray(values, float)
+    N = P.shape[0]
+    if u.shape != (N,):
+        raise ValueError("one value per node")
+    e = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+    A = sp.csr_matrix((np.ones(2 * len(e)), (np.r_[e[:, 0], e[:, 1]], np.r_[e[:, 1], e[:, 0]])),
+                      shape=(N, N))
+    A = ((A + sp.identity(N)) > 0).astype(float)
+    A2 = (A @ A).tocsr()
+    A2.sum_duplicates()
+    cnt = np.diff(A2.indptr)
+    K = int(cnt.max())
+    idx = np.full((N, K), -1, int)
+    for i in range(N):
+        nb = A2.indices[A2.indptr[i]:A2.indptr[i + 1]]
+        idx[i, :nb.size] = nb
+    ok = idx >= 0
+    j = np.where(ok, idx, 0)
+    dx = np.where(ok, P[j, 0] - P[:, None, 0], 0.0)
+    dz = np.where(ok, P[j, 1] - P[:, None, 1], 0.0)
+    d2 = dx * dx + dz * dz
+    dm = np.sqrt(np.maximum((d2 * ok).sum(1) / np.maximum(ok.sum(1) - 1, 1), 1e-300))
+    s_ = dm[:, None]
+    X = np.stack([np.ones_like(dx), dx / s_, dz / s_, 0.5 * (dx / s_) ** 2,
+                  (dx / s_) * (dz / s_), 0.5 * (dz / s_) ** 2], 2)
+    w = np.where(ok, 1.0 / (1.0 + d2 / s_ ** 2), 0.0)
+    y = np.where(ok, u[j], 0.0)
+    XtW = X * w[:, :, None]
+    G = np.einsum("nki,nkj->nij", XtW, X)
+    r = np.einsum("nki,nk->ni", XtW, y)
+    G = G + 1e-12 * np.eye(6)[None] * np.trace(G, axis1=1, axis2=2)[:, None, None]
+    c = np.linalg.solve(G, r[:, :, None])[:, :, 0]
+    return np.stack([c[:, 3], c[:, 4], c[:, 5]], 1) / (dm ** 2)[:, None]
+
+
+def size_from_solution(mesh: Mesh, values, tolerance, h_min, h_max, grading=0.3):
+    """A size field h(x, z) for `quality_mesh` that puts small triangles
+    where the field `values` (on the nodes of `mesh`) curves (new in
+    0.28.0): the error of linear interpolation over a triangle of size h is
+    about h^2 |lambda| / 8 with lambda the largest eigenvalue of the
+    second derivatives (`recovered_hessian`), so h = sqrt(8 tolerance /
+    |lambda|), kept between h_min and h_max and limited to grow by at most
+    `grading` (nm per nm) from node to node. tolerance is in the units of
+    values (for the potential, volts). Returns a function of (x, z)
+    arrays: the nodes' sizes interpolated linearly (nearest node outside
+    the mesh)."""
+    from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+    if not (tolerance > 0 and 0 < h_min <= h_max and grading > 0):
+        raise ValueError("tolerance > 0, 0 < h_min <= h_max and grading > 0")
+    Hs = recovered_hessian(mesh, values)
+    a, b, c = Hs[:, 0], Hs[:, 1], Hs[:, 2]
+    lam = 0.5 * np.abs(a + c) + np.sqrt(0.25 * (a - c) ** 2 + b * b)
+    with np.errstate(divide="ignore"):
+        h = np.sqrt(8.0 * tolerance / np.maximum(lam, 1e-300))
+    h = np.clip(h, h_min, h_max)
+    # grading: h_i <= h_j + grading |x_i - x_j| along every edge
+    T = mesh.triangles
+    e = np.unique(np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), 1),
+                  axis=0)
+    L = np.hypot(*(mesh.points[e[:, 0]] - mesh.points[e[:, 1]]).T)
+    for _ in range(200):
+        h0 = h.copy()
+        np.minimum.at(h, e[:, 0], h[e[:, 1]] + grading * L)
+        np.minimum.at(h, e[:, 1], h[e[:, 0]] + grading * L)
+        if np.array_equal(h, h0):
+            break
+    lin = LinearNDInterpolator(mesh.points, h)
+    near = NearestNDInterpolator(mesh.points, h)
+
+    def size(x, z):
+        x = np.asarray(x, float)
+        z = np.asarray(z, float)
+        v = lin(x, z)
+        bad = ~np.isfinite(v)
+        if np.any(bad):
+            v = np.where(bad, near(x, z), v)
+        return v
+    return size
+
+
 @dataclasses.dataclass(frozen=True)
 class MeshRegion:
     """What a region of the mesh is made of: a semiconductor (material, with
@@ -399,7 +488,7 @@ class MeshDevice(Device):
                  doping=None, density_floor_cm3: float = 1.0,
                  driving_force: str = "field", tunnel_barriers=(),
                  temperature_model: str = "mobility", band_gap_temperature=None,
-                 heat_model: str = "joule", quantum=None):
+                 heat_model: str = "joule", quantum=None, thermoelectric: str = "boltzmann"):
         try:
             import scipy.sparse  # noqa: F401
         except ImportError as e:      # pragma: no cover
@@ -472,8 +561,11 @@ class MeshDevice(Device):
         self.eh = h_e
         self.gpsi = np.bincount(inv, eps_t[tt] * dd, nE) / h_e
         self.earea = np.bincount(inv, np.where(semi_t[tt], dd, 0.0), nE)
-        if (np.any(self.earea < -1e-9 * np.abs(self.earea).max())
-                or np.any(self.gpsi < -1e-9 * np.abs(self.gpsi).max())):
+        # a dual face counts as negative when it is so against the edge's
+        # own length (a right angle on a straight boundary gives a face of
+        # zero, which rounding makes -1e-10 nm or so)
+        if (np.any(self.earea < -1e-7 * h_e)
+                or np.any(self.gpsi * h_e < -1e-7 * h_e * float(np.max(eps_t)))):
             warnings.warn("some edges have a negative dual face (obtuse triangles at a "
                           "boundary); refine the mesh there", RuntimeWarning, stacklevel=2)
         sn = np.concatenate([s_[0] for s_ in sub_t])
@@ -633,7 +725,7 @@ class MeshDevice(Device):
         self._setup_heterojunctions()
         self._setup_band_to_band()
         self._setup_tunnel_barriers(tunnel_barriers)
-        self._set_heat_model(heat_model)
+        self._set_heat_model(heat_model, thermoelectric)
         self._setup_lattice(temperature_model, band_gap_temperature, self.node_region)
         self._setup_quantum(quantum)
 
