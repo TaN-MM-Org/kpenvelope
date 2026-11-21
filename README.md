@@ -48,7 +48,8 @@ only looks right.
   wavefunctions, with electrons moving between its levels: acoustic and
   polar optical phonons (by an exact solution of the Boltzmann
   equation), alloy disorder, interface roughness and charged impurities,
-  with the material numbers you give (also in the app).
+  screened by all the levels together, with the material numbers you
+  give (also in the app).
 - Leakage and band gaps that change with temperature, so a leaky
   device can heat itself into runaway.
 - Shaped devices: films, recesses, field plates, and curved or slanted
@@ -62,8 +63,10 @@ only looks right.
   anneals.
 
 **An app** that runs many of these calculations in your web browser,
-with no code: charges, electrons, error bars, data fits, transistors with
-heat, runaway and quantum channels, tunnel diodes, and process steps.
+with no code: charges, electrons and their mobility, error bars, data
+fits, transistors with heat, runaway, quantum channels and the quantum
+current of short channels, tunnel diodes, and process steps with
+simulated implants, plasma etching and oxide stress.
 
 ## Install
 
@@ -176,7 +179,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  69 worked examples, each with the output it prints, and three
+  70 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the

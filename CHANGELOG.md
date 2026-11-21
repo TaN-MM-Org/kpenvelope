@@ -4,6 +4,59 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.30.0 (2026-11-21)
+
+The app catches up with the library, and the levels of a 2D gas screen
+charges and roughness together. The examples print what they printed
+before; example 70 is new.
+
+### Added
+
+- `Subbands(..., screening="full")`: the static dielectric matrix of all
+  pairs of subbands (Ando, Fowler and Stern 1982), with the Lindhard
+  polarization of every pair at the temperature (Maldague's integral),
+  for the ionized impurities and the roughness. New methods `pairs`,
+  `polarization` and `screened`.
+- The app, Transistor tab: the current at one bias with the electrons
+  as waves (NEGF) for short transistors, next to the ordinary current and
+  the ballistic limit, ballistic or with scattering at the rate of the
+  tab's mobility; the Fermi-Dirac heat per electron with the Peltier
+  heat (on by default when Peltier heat is ticked).
+- The app, Process steps: `implant ranges=simulate` (the Monte Carlo of
+  the ions), `plasmaetch` (a reactive gas and ions together), and
+  `oxidize ... mode=2d viscosity=` (the oxide flows; the summary gives
+  the largest stress) with `stress_volume=` and `temperature=`; a note
+  when part of an implant's dose leaves the picture or lands in a mask.
+- The app, Electrons tab: the mobility uses the full screening.
+
+### Changed
+
+- The app's mobility with donors or roughness is lower than in 0.29.0
+  (by a fifth to a quarter in example 70), because the full
+  screening hides charges and bumps less than one Thomas-Fermi number.
+- A mobility typed in the Transistor tab without a source is listed as
+  your own number instead of being credited to the paper of the default.
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; scattering in coupled mode space; NEGF
+  on triangle meshes; interface phonon modes in the lifetimes; the
+  plasma's chemistry; the oxide's shape following its flow, and
+  elasticity; better electronic stopping for implants; tunnel paths that
+  bend with the field; tunneling and heat inside one Newton solve; the
+  hot-electron model's limit at zero relaxation time (a property of the
+  model). The app does not offer meshes, NEGF holes, coupled modes or 3D.
+
+### Checks (tests)
+
+7 new tests (394 in all; docs/checks.md has the tolerances): the pair
+polarization against a finite difference of the Hamiltonian and against
+a direct 2D integral; the screened elements against a separate solve on
+the grid; the app's oxide flow, simulated implant and plasma etch
+against the library; the app's quantum current against the ballistic
+limit; the dense-heat option and the mobility's source. All 70
+documented examples were rerun.
+
 ## 0.29.0 (2026-11-21)
 
 Electrons of a 2D gas can scatter between its levels, and the app finds
