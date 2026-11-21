@@ -26,7 +26,7 @@ import numpy as np
 
 from ..driftdiffusion import (Contact, Transport, cv_curve, cv_curve_quantum,
                               iv_curve)
-from ..electrons import solve_electrons
+from ..electrons import KB as KB_EV, solve_electrons
 from ..interfaces import StackLayer, interface_charges
 from ..linecharge import (PUBLISHED_CONSTRAINTS, combine_line_charge,
                           plan_holography)
@@ -278,6 +278,110 @@ def run_electrons(spec):
             "converged": r.converged, "warnings": warn,
             "window": list(win),
             "interfaces": [c.z for c in ic]}
+
+
+def run_mobility(spec):
+    """Mobility of the electron layer of the Electrons tab (new in 0.29.0):
+    the subbands of its exact (quantum) region, scattered within and between
+    them (`kpenvelope.scattering.Subbands`) by the mechanisms ticked in
+    spec["scattering"]: "polar" (GaN's polar optical phonons, the
+    package's cited Barker-Ilegems set; only for a GaN channel), "donors"
+    (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
+    corr_nm, source} at the boundary next to the electrons, "acoustic"
+    {deformation_eV, density, velocity, source}. Numbers you type need
+    their source."""
+    from ..device import column_states
+    from ..phonons import GAN_BARKER1973
+    from ..scattering import Subbands
+    layers = build_layers(spec)
+    ic, warn = _charges(layers, spec)
+    phi = _num(spec, "surface_barrier", None, -2.0, 10.0, "the surface barrier (eV)")
+    dz = _num(spec, "dz", 0.2, 0.02, 5.0, "the grid step (nm)")
+    win = _window(layers, spec)
+    if (win[1] - win[0]) / dz > 2500:
+        raise SpecError("The quantum region is too large for this grid step; "
+                        "make it thinner or the step larger.")
+    T = _num(spec, "temperature", 300.0, 1.0, 1500.0)
+    sc = spec.get("scattering") or {}
+    r = solve_electrons(layers, phi_B=phi, temperature_K=T, interfaces=ic,
+                        dz=dz, quantum_window=win, classical_outside=True)
+    if not r.sheet_quantum_cm2 > 1e9:
+        raise SpecError("There are almost no free electrons in the exact region, "
+                        "so there is no electron layer to find a mobility for.")
+    inw = (r.z >= win[0] - 1e-9) & (r.z <= win[1] + 1e-9)
+    z = r.z[inw]
+    edges = np.cumsum([0.0] + [L.thickness for L in layers])
+    lay = np.clip(np.searchsorted(edges, z, side="right") - 1, 0, len(layers) - 1)
+    mass = np.array([layers[i].material.me for i in lay])
+    hz = z[1] - z[0]
+    E, p2, w, psi = column_states(z, r.ec[inw], mass, 8, z[0] - hz, z[-1] + hz,
+                                  e_max=12 * KB_EV * T, signed=True)
+    if E.size == 0:
+        raise SpecError("No electron level lies near the filling level.")
+    # the levels that hold at least 0.5 percent of the electrons (at most five)
+    occ = np.logaddexp(0.0, -E / (KB_EV * T))
+    keep = np.flatnonzero(occ >= 0.005 * occ.sum())[:5]
+    E, p2, psi = E[keep], p2[:, keep], psi[:, keep]
+    peak = int(np.argmax(p2[:, 0]))
+    ch = layers[lay[peak]]
+    sb = Subbands(z, psi, E, ch.material.me, ch.material.eps_r, fermi=0.0,
+                  temperature_K=T, weights=w)
+    mechs, names = [], []
+    if sc.get("polar"):
+        if not (ch.material.name == "GaN" or ch.material.name.startswith("GaN")
+                or getattr(ch.material, "name", "") == algan(0.0).name):
+            raise SpecError("Polar optical phonons need the phonon numbers of the "
+                            "electrons' layer; the app has them only for GaN.")
+        ph = GAN_BARKER1973
+        mechs.append(sb.polar_optical(ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp))
+        names.append("polar optical phonons (GaN, " + ph.reference.split(";")[0] + ")")
+    if sc.get("donors"):
+        prof = r.donors_ionized[inw] * 1e21
+        if np.any(prof > 0):
+            mechs.append(sb.impurities(profile_cm3=prof))
+            names.append("ionized donors in the layers")
+    rough = sc.get("roughness")
+    if rough:
+        src = str(rough.get("source", "")).strip()
+        if not src:
+            raise SpecError("Please say where your roughness numbers come from.")
+        rms = _num(rough, "rms_nm", lo=0.0, hi=5.0, what="the roughness height (nm)")
+        corr = _num(rough, "corr_nm", lo=0.01, hi=100.0,
+                    what="the roughness correlation length (nm)")
+        # the layer boundary nearest the electrons' peak, and its band step
+        zb = np.array([e_ for e_ in edges[1:-1] if win[0] < e_ < win[1]])
+        if zb.size == 0:
+            raise SpecError("No layer boundary lies in the exact region.")
+        zi = float(zb[np.argmin(np.abs(zb - z[peak]))])
+        k = int(np.searchsorted(edges, zi))
+        step = abs(layers[k].material.ec - layers[k - 1].material.ec)
+        mechs.append(sb.roughness(zi, step, rms, corr))
+        names.append(f"interface roughness ({src})")
+    ac = sc.get("acoustic")
+    if ac:
+        src = str(ac.get("source", "")).strip()
+        if not src:
+            raise SpecError("Please say where your acoustic phonon numbers come from.")
+        mechs.append(sb.acoustic(_num(ac, "deformation_eV", lo=0.0, hi=100.0,
+                                      what="the deformation potential (eV)"),
+                                 _num(ac, "density", lo=100.0, hi=30000.0,
+                                      what="the mass density (kg/m3)"),
+                                 _num(ac, "velocity", lo=100.0, hi=30000.0,
+                                      what="the sound velocity (m/s)")))
+        names.append(f"acoustic phonons ({src})")
+    if not mechs:
+        raise SpecError("Tick at least one way the electrons scatter.")
+    res = sb.mobility(*mechs)
+    lt = sb.lifetimes(*mechs)
+    return {"mobility_cm2Vs": res["mobility_cm2Vs"],
+            "each": [{"name": nm, "mobility_cm2Vs": m} for nm, m in zip(names, res["each"])],
+            "subbands": [{"energy_eV": float(e), "sheet_cm2": float(n_),
+                          "mobility_cm2Vs": float(m), "quantum_lifetime_s": q}
+                         for e, n_, m, q in zip(E, res["sheets_cm2"], res["subbands"],
+                                                lt["quantum_s"])],
+            "sheet_cm2": float(res["sheets_cm2"].sum()),
+            "sheet_all_cm2": float(r.sheet_quantum_cm2), "warnings": warn,
+            "channel": ch.label}
 
 
 def _transport(spec, n_layers):
@@ -1572,7 +1676,7 @@ ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "design": run_design, "cross": run_cross,
            "transistor": run_transistor, "lag": run_lag, "rf": run_rf,
            "breakdown": run_breakdown, "pulse": run_pulse, "runaway": run_runaway,
-           "process": run_process}
+           "process": run_process, "mobility": run_mobility}
 
 
 def _plain(e):

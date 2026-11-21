@@ -171,6 +171,20 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <div id="outElectrons"></div>
     <canvas id="cvBand" aria-label="Band diagram"></canvas>
     <div class="readout" id="roBand"></div>
+    <h3>How easily the electrons move (mobility) <span class="help" title="The electron layer has several energy levels. Electrons are knocked from one direction to another, and from one level to another, by vibrations of the crystal and by bumps and charges. The app works out how far they get between knocks, for every level together. Leave a box empty to leave that effect out.">?</span></h3>
+    <label style="color:var(--ink)"><input type="checkbox" id="moPolar" checked> Crystal vibrations of GaN (polar optical phonons; numbers from Barker and Ilegems 1973, shipped with the app) <span class="help" title="The main limit at room temperature. Only for electrons in GaN.">?</span></label>
+    <label style="color:var(--ink)"><input type="checkbox" id="moDonors"> Charged donor atoms in the layers (no extra numbers needed)</label>
+    <div class="grid2">
+      <div><label for="moRms">Interface roughness: height (nm)</label><input id="moRms" type="number" step="0.05" min="0"></div>
+      <div><label for="moCorr">Roughness: length between bumps (nm)</label><input id="moCorr" type="number" step="0.1" min="0"></div>
+      <div><label for="moRsrc">Where the roughness numbers come from</label><input id="moRsrc" type="text"></div>
+      <div><label for="moD">Acoustic vibrations: deformation potential (eV)</label><input id="moD" type="number" step="0.1" min="0"></div>
+      <div><label for="moRho">Mass density (kg/m³)</label><input id="moRho" type="number" step="10" min="0"></div>
+      <div><label for="moV">Sound velocity (m/s)</label><input id="moV" type="number" step="10" min="0"></div>
+      <div><label for="moAsrc">Where the acoustic numbers come from</label><input id="moAsrc" type="text"></div>
+    </div>
+    <p><button id="runMobility">Find the mobility</button></p>
+    <div id="outMobility"></div>
   </div>
 
   <div class="panel" id="p-errors" role="tabpanel">
@@ -657,6 +671,19 @@ $("runElectrons").onclick=()=>busy($("runElectrons"),$("outElectrons"),async()=>
     {x:sel.map(i=>d-r.z[i]),y:sel.map(i=>Math.max(r.n_cm3[i],1e10)),color:"#e5534b",label:"Electrons (per cm³)",right:true}],
     {xlabel:"Depth below the surface (nm)",ylabel:"Energy (eV); 0 = filling level",y2:true,logy2:true,y2label:"Electrons per cm³",vlines:r.interfaces.map(z=>d-z),hline:0});
   $("roBand").dataset.z=JSON.stringify(sel.map(i=>[d-r.z[i],r.ec[i],r.n_cm3[i]]));
+});
+$("runMobility").onclick=()=>busy($("runMobility"),$("outMobility"),async()=>{
+  const sc={polar:$("moPolar").checked, donors:$("moDonors").checked};
+  if($("moRms").value!==""||$("moCorr").value!=="") sc.roughness={rms_nm:$("moRms").value,corr_nm:$("moCorr").value,source:$("moRsrc").value};
+  if($("moD").value!==""||$("moRho").value!==""||$("moV").value!=="") sc.acoustic={deformation_eV:$("moD").value,density:$("moRho").value,velocity:$("moV").value,source:$("moAsrc").value};
+  const r=await call("mobility",{scattering:sc}); const out=$("outMobility");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  LAST={name:"mobility",cols:["level_eV","electrons_per_cm2","mobility_cm2_per_Vs"],rows:r.subbands.map(b=>[b.energy_eV,b.sheet_cm2,b.mobility_cm2Vs])};
+  out.innerHTML=warnings(r)+`<div class="big">${fmt(r.mobility_cm2Vs)} <small>cm²/Vs</small></div>`+
+   `<div class="summary"><b>In short:</b> with the effects you chose, the electrons of this layer move with this mobility. Each effect alone would allow:</div>`+
+   `<table><tr><th>Effect</th><th>Mobility alone (cm²/Vs)</th></tr>${r.each.map(e=>`<tr><td>${esc(e.name)}</td><td>${e.mobility_cm2Vs==null?"(no effect)":fmt(e.mobility_cm2Vs)}</td></tr>`).join("")}</table>`+
+   `<h3>Per energy level</h3><table><tr><th>Level (meV from the filling level)</th><th>Electrons per cm²</th><th>Mobility (cm²/Vs)</th></tr>${r.subbands.map(b=>`<tr><td>${fmt(1000*b.energy_eV)}</td><td>${sci(b.sheet_cm2)}</td><td>${fmt(b.mobility_cm2Vs)}</td></tr>`).join("")}</table>`+
+   `<p class="note">The levels shown hold ${(100*r.sheet_cm2/r.sheet_all_cm2).toFixed(1)}% of the electrons of the exact region (each level left out holds less than 0.5%). Effects not included: the vibrations of the interface itself, hot electrons, and anything you left empty. Electrons do move between levels here.</p>`;
 });
 hover($("cvBand"),$("roBand"),i=>{ const a=JSON.parse($("roBand").dataset.z||"[]")[i]; return a?`At ${fmt(a[0])} nm deep: an electron needs ${fmt(a[1])} eV; ${sci(a[2])} electrons per cm³`:""; });
 
