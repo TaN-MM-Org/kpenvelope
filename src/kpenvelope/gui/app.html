@@ -173,7 +173,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
     <div class="readout" id="roBand"></div>
     <h3>How easily the electrons move (mobility) <span class="help" title="The electron layer has several energy levels. Electrons are knocked from one direction to another, and from one level to another, by vibrations of the crystal and by bumps and charges. The app works out how far they get between knocks, for every level together. Leave a box empty to leave that effect out.">?</span></h3>
     <label style="color:var(--ink)"><input type="checkbox" id="moPolar" checked> Crystal vibrations of GaN (polar optical phonons; numbers from Barker and Ilegems 1973, shipped with the app) <span class="help" title="The main limit at room temperature. Only for electrons in GaN.">?</span></label>
-    <label style="color:var(--ink)"><input type="checkbox" id="moDonors"> Charged donor atoms in the layers (no extra numbers needed)</label>
+    <label style="color:var(--ink)"><input type="checkbox" id="moDonors"> Charged donor atoms in the layers (no extra numbers needed) <span class="help" title="The electrons gather around each charge and partly hide it (screening), and the same for the bumps of the interface. All the levels take part, also by mixing with one another, and the hiding gets weaker for sharp, short-range bumps.">?</span></label>
     <div class="grid2">
       <div><label for="moRms">Interface roughness: height (nm)</label><input id="moRms" type="number" step="0.05" min="0"></div>
       <div><label for="moCorr">Roughness: length between bumps (nm)</label><input id="moCorr" type="number" step="0.1" min="0"></div>
@@ -351,13 +351,22 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div class="fetCustom hidden"><label for="fetSubK">Its heat conductivity at 300 K (W/m/K)</label><input id="fetSubK" type="text" inputmode="decimal"></div>
       <div class="fetCustom hidden"><label for="fetSubSrc">Where that comes from</label><input id="fetSubSrc" type="text"></div>
       <div style="grid-column:1/-1"><label><input type="checkbox" id="fetFullT"> Let the band gap and the leakage follow the temperature <span class="help" title="Normally only the mobility feels the heat. Ticking this lets the temperature also shrink the band gap (cited Varshni numbers of each layer) and change how many carriers there are, so leakage grows as the device warms. A leaky device can then heat itself into runaway. The gap change is shared evenly between the two bands, an assumption.">?</span></label></div>
-      <div style="grid-column:1/-1"><label><input type="checkbox" id="fetPelt"> Include Peltier and Thomson heat <span class="help" title="Besides the ordinary heat of the current, carriers carry heat with them: a contact or a junction can warm or cool where they cross it (Peltier), and current along a temperature difference adds or takes heat (Thomson). The total stays the same; only where the heat appears changes. In the dense electron layer the heat each electron carries uses a simple form that comes out too small.">?</span></label></div>
+      <div style="grid-column:1/-1"><label><input type="checkbox" id="fetPelt"> Include Peltier and Thomson heat <span class="help" title="Besides the ordinary heat of the current, carriers carry heat with them: a contact or a junction can warm or cool where they cross it (Peltier), and current along a temperature difference adds or takes heat (Thomson). The total stays the same; only where the heat appears changes.">?</span></label></div>
+      <div style="grid-column:1/-1"><label><input type="checkbox" id="fetDense" checked> With Peltier heat on: use the full heat per electron where electrons crowd together <span class="help" title="Where electrons are packed tightly, as in the channel, each one carries more heat than the simple textbook form says (a few times more where they are packed most tightly, and the simple form can even get the sign wrong). Ticked, the app uses the full form for both the heat and the small current that a temperature difference drives. Unticked, it uses the simple form, as earlier versions of the app did.">?</span></label></div>
     </div>
     <p><button class="primary" id="runFet">Work out the currents</button> <span class="note">About 10 to 60 seconds.</span></p>
     <div id="outFet"></div>
     <canvas id="cvFet" class="hidden" aria-label="Transistor current"></canvas>
     <div class="grid2"><div><label for="fetShow">Picture of the last point</label><select id="fetShow"><option value="n">Where the electrons are</option><option value="temp">Temperature</option><option value="ec">Energy an electron needs</option><option value="te">Electron temperature where electrons are (needs the energy loss time)</option></select></div></div>
     <canvas id="cvFetMap" class="hidden" style="height:320px" aria-label="Transistor cross-section"></canvas>
+    <h3>Electrons as waves (short transistors only) <span class="help" title="In a very short transistor, electrons can cross the channel without bumping into anything, and some slip through the top of the gate's energy hill. This works out the current at one pair of voltages that way, and shows it next to the ordinary current and the most a channel can carry without any bumping (the ballistic limit). The two gaps and the gate together must be 600 nm or less.">?</span></h3>
+    <div class="grid2">
+      <div><label for="qtVg">Gate voltage (V)</label><input id="qtVg" type="text" inputmode="decimal" value="-1"></div>
+      <div><label for="qtVd">Drain voltage (V, small)</label><input id="qtVd" type="text" inputmode="decimal" value="0.05"></div>
+    </div>
+    <label style="color:var(--ink)"><input type="checkbox" id="qtScat"> Let the electrons bump into things, at the rate that gives the mobility above (slower) <span class="help" title="Without bumping the electrons fly straight through. With it, they lose their direction now and then, at the rate that would give the mobility you typed. A long channel needs this.">?</span></label>
+    <p><button id="runQt">Work out the wave current</button> <span class="note">About 5 seconds, or a minute with bumping.</span></p>
+    <div id="outQt"></div>
     <h3>Speed: how fast it can switch (f<sub>T</sub> and f<sub>max</sub>) <span class="help" title="The app nudges the gate and drain voltages up and down at frequencies from 100 MHz to 3 THz and works out how much current gain and power gain are left. fT is where the current gain falls to 1, fmax where the power gain does. fmax needs the gate's own resistance.">?</span></h3>
     <div class="grid2">
       <div><label for="rfG">Gate voltage (V)</label><input id="rfG" type="text" inputmode="decimal" value="-3"></div>
@@ -414,7 +423,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
 
   <div class="panel" id="p-process" role="tabpanel">
     <p class="lead">Build a cross-section from process steps.</p>
-    <p>Start from a wafer and apply steps in order: put down films (deposit), remove material (etch), grow oxide (oxidize), shoot in dopants (implant) and spread them by heating (anneal). The app shows the shape and the doping that result. It works on a grid of small square cells, so curved edges look like fine stairs.</p>
+    <p>Start from a wafer and apply steps in order: put down films (deposit), remove material (etch, or plasmaetch with a gas and ions together), grow oxide (oxidize), shoot in dopants (implant) and spread them by heating (anneal). The app shows the shape and the doping that result. It works on a grid of small square cells, so curved edges look like fine stairs.</p>
     <div class="grid2">
       <div><label for="prW">Width (nm)</label><input id="prW" type="text" inputmode="decimal" value="1000"></div>
       <div><label for="prH">Height of the picture (nm)</label><input id="prH" type="text" inputmode="decimal" value="400"></div>
@@ -423,7 +432,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="prTop">Top of the wafer (nm from the bottom)</label><input id="prTop" type="text" inputmode="decimal" value="300"></div>
       <div><label for="prSrc">Where your process numbers come from</label><input id="prSrc" type="text" placeholder="for example: my etch-rate calibration"></div>
     </div>
-    <label for="prRecipe">Steps, one per line <span class="help" title="deposit material=SiN thickness=50 mode=conformal (or mode=directional; from=… to=… limits it to a window; donors=… or acceptors=… per cm³ for an epitaxial layer). etch SiN=1 GaN=0.2 time=60 mode=isotropic (each material's rate in nm/s; a material not listed is not etched, so it acts as a mask; from/to limits it). With mode=flux the rate also depends on how much of the sky each spot sees: deep, narrow openings etch and fill more slowly; exponent=1 is a gas at rest, a large exponent (100 or more) a straight ion beam; sticking=0.1 (for example) lets nine in ten particles bounce off and land elsewhere, which makes narrow openings more even. deposit … mode=flux works the same way. implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900 (dose per cm², range and straggle in nm, from your range calculation or SIMS). anneal time=60 temperature=1300 D0=1e-4 Ea=3 (diffusivity D0 exp(-Ea/kT) in cm²/s and eV). oxidize material=Si oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44 (Deal-Grove: B in nm²/s, B/A in nm/s; 'consumed' is the part of the oxide made from the material below). Add mode=2d to let the oxidant spread sideways through the oxide, so oxide also grows under the edge of a mask that sits on a thin oxide (the bird's beak).">?</span></label>
+    <label for="prRecipe">Steps, one per line <span class="help" title="deposit material=SiN thickness=50 mode=conformal (or mode=directional; from=… to=… limits it to a window; donors=… or acceptors=… per cm³ for an epitaxial layer). etch SiN=1 GaN=0.2 time=60 mode=isotropic (each material's rate in nm/s; a material not listed is not etched, so it acts as a mask; from/to limits it). With mode=flux the rate also depends on how much of the sky each spot sees: deep, narrow openings etch and fill more slowly; exponent=1 is a gas at rest, a large exponent (100 or more) a straight ion beam; sticking=0.1 (for example) lets nine in ten particles bounce off and land elsewhere, which makes narrow openings more even. deposit … mode=flux works the same way. implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900 (dose per cm², range and straggle in nm, from your range calculation or SIMS). anneal time=60 temperature=1300 D0=1e-4 Ea=3 (diffusivity D0 exp(-Ea/kT) in cm²/s and eV). oxidize material=Si oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44 (Deal-Grove: B in nm²/s, B/A in nm/s; 'consumed' is the part of the oxide made from the material below). Add mode=2d to let the oxidant spread sideways through the oxide, so oxide also grows under the edge of a mask that sits on a thin oxide (the bird's beak); with mode=2d, viscosity=1e12 (Pa·s) lets the new oxide flow like a very thick liquid, and stress_volume=0.025 temperature=1273 slows the growth where the oxide is squeezed. implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 target_Z=14 target_mass=28.09 atoms=5e22 species=acceptor dose=1e13 follows each ion through the wafer's atoms to find where they stop, instead of using a range you type (the stopping it uses can be off by tens of percent for light ions). plasmaetch neutrals=1e18 ions=1e16 stick_Si=0.2 yield_Si=5 atoms_Si=5e22 time=10 etches with a reactive gas and an ion beam together (fluxes per cm² per second): the bottom of a deep opening, which sees less gas, etches more slowly.">?</span></label>
     <textarea id="prRecipe" rows="7" style="width:100%;font-family:monospace">deposit material=SiN thickness=50 mode=conformal
 etch SiN=1 time=60 mode=directional from=100 to=900
 implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900
@@ -862,7 +871,7 @@ function fetSpec(){ return {gate_length:$("fetLg").value,gap_sg:$("fetSG").value
   heating:$("fetHeat").checked,substrate:$("fetSub").value,substrate_um:$("fetSubT").value,pitch_um:$("fetPitch").value,boundary:$("fetTbr").value,
   substrate_k:$("fetSubK").value,substrate_source:$("fetSubSrc").value,
   contact_res:$("fetRc").value,passivation:$("fetPas").value,passivation_eps:$("fetPasEps").value,plate:$("fetPlate").value,tau_e:$("fetTau").value,
-  hot_coupled:$("fetHotC").checked,thermionic:$("fetTE").checked,quantum:$("fetQ").checked,full_temp:$("fetFullT").checked,peltier:$("fetPelt").checked}; }
+  hot_coupled:$("fetHotC").checked,thermionic:$("fetTE").checked,quantum:$("fetQ").checked,full_temp:$("fetFullT").checked,peltier:$("fetPelt").checked,dense_heat:$("fetDense").checked}; }
 $("runFet").onclick=()=>busy($("runFet"),$("outFet"),async()=>{
   const r=await call("transistor",{device:{barrier:$("devBarrier").value},transistor:fetSpec()}); const out=$("outFet");
   if(r.error){ out.innerHTML=msg("err",r.error); ["cvFet","cvFetMap"].forEach(c=>$(c).classList.add("hidden")); return; }
@@ -965,6 +974,18 @@ $("runRu").onclick=()=>busy($("runRu"),$("outRu"),async()=>{
   $("cvRu").classList.remove("hidden");
   plot($("cvRu"),[{x:r.voltages,y:r.hottest,color:"#e5534b",label:"Hottest point (K)",dots:true}],{xlabel:"Drain voltage (V)",ylabel:"Temperature (K)",vlines:r.runaway!==null?[r.runaway]:[]});
 });
+$("runQt").onclick=()=>busy($("runQt"),$("outQt"),async()=>{
+  const r=await call("quantum",Object.assign(fetBase(),{quantum_transport:{gate:$("qtVg").value,drain:$("qtVd").value,scattering:$("qtScat").checked}}));
+  const out=$("outQt");
+  if(r.error){ out.innerHTML=msg("err",r.error); return; }
+  LAST={name:"wave_current",cols:["gate_V","drain_V","wave_A_per_mm","ordinary_A_per_mm","ballistic_limit_A_per_mm"],rows:[[r.gate,r.drain,r.negf,r.drift_diffusion,r.ballistic]]};
+  const how=r.scattering_time_s?`bumping into something every ${sci(r.scattering_time_s)} s on average`:"flying straight through";
+  const note=r.scattering_time_s?"With bumping, the wave current falls below the ballistic limit, the more so the longer the channel."
+    :"Without bumping, the wave current sits close to the ballistic limit; it can be a little higher where electrons slip through the top of the gate's hill.";
+  out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> at ${fmt(r.gate)} V on the gate and ${fmt(r.drain)} V on the drain, electrons treated as waves and ${how} carry <b>${fmt(r.negf)} A per mm</b>.</div>`+
+   `<table><tr><th>How the current is worked out</th><th>A per mm</th></tr><tr><td>Electrons as waves</td><td>${fmt(r.negf)}</td></tr><tr><td>Ordinary model (mobility and top speed)</td><td>${fmt(r.drift_diffusion)}</td></tr><tr><td>Most the channel can carry with no bumping (ballistic limit)</td><td>${fmt(r.ballistic)}</td></tr></table>`+
+   `<p class="note">${note} The ordinary model caps the speed at the top speed instead, so in a short channel the two can differ a lot. ${r.subbands} energy level${r.subbands>1?"s":""} of the channel were used.</p>`+srcList(r);
+});
 /* ---------------- process steps ---------------- */
 let PROC=null;
 const PCOL=["#8b6f47","#4c9be8","#e0a33a","#7fbf7f","#c76fd8","#e5534b","#5ac8c8","#a0a0a0"];
@@ -978,6 +999,8 @@ $("runProc").onclick=()=>busy($("runProc"),$("outProc"),async()=>{
   if(r.donor_dose>0) sum+=` Donors: ${sci(r.donor_dose)} per cm² on average over the width.`;
   if(r.acceptor_dose>0) sum+=` Acceptors: ${sci(r.acceptor_dose)} per cm² on average.`;
   if(r.oxide_exact!=null) sum+=` The thickest oxide grown is ${fmt(r.oxide_exact)} nm (the cells round it to the cell size).`;
+  if(r.stress_GPa!=null) sum+=` The oxide is squeezed hardest (${fmt(r.stress_GPa)} GPa) where it pushes against a corner.`;
+  if(r.notes&&r.notes.length) sum+=` Implants: ${r.notes.map(esc).join("; ")}.`;
   out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> ${sum}</div>`+
     `<p class="small">Areas: ${Object.entries(r.areas).map(a=>`${esc(a[0])} ${sci(a[1])} nm²`).join(", ")}</p>`+srcList(r);
   LAST={name:"process_thickness",cols:["material","thickness_at_center_nm","area_nm2"],rows:r.materials.map(m=>[m,r.thickness_center[m],r.areas[m]])};

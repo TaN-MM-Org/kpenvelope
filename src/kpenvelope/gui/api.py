@@ -289,7 +289,8 @@ def run_mobility(spec):
     (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
     corr_nm, source} at the boundary next to the electrons, "acoustic"
     {deformation_eV, density, velocity, source}. Numbers you type need
-    their source."""
+    their source. The donors and the roughness are screened by the
+    dielectric matrix of all the levels (screening="full", since 0.30.0)."""
     from ..device import column_states
     from ..phonons import GAN_BARKER1973
     from ..scattering import Subbands
@@ -325,7 +326,7 @@ def run_mobility(spec):
     peak = int(np.argmax(p2[:, 0]))
     ch = layers[lay[peak]]
     sb = Subbands(z, psi, E, ch.material.me, ch.material.eps_r, fermi=0.0,
-                  temperature_K=T, weights=w)
+                  temperature_K=T, weights=w, screening="full")
     mechs, names = [], []
     if sc.get("polar"):
         if not (ch.material.name == "GaN" or ch.material.name.startswith("GaN")
@@ -1102,7 +1103,15 @@ def _transistor_device(spec, with_traps=False):
     mu = _num(t, "mobility", 1704.0, 1.0, 1e5, "the electron mobility (cm²/Vs)")
     gamma = _num(t, "mobility_temperature", 2.35, 0.0, 5.0,
                  "how fast the mobility falls with temperature")
-    src = str(t.get("mobility_source") or "").strip() or TRANSISTOR_SOURCES["mobility"]
+    src = str(t.get("mobility_source") or "").strip()
+    if not src:
+        if mu == 1704.0 and gamma == 2.35:
+            src = TRANSISTOR_SOURCES["mobility"]
+        else:
+            # the user's own numbers: say so rather than naming a paper that
+            # does not hold them
+            src = (f"{mu:g} cm²/Vs falling as (T/300 K)^-{gamma:g}: your own numbers "
+                   "(no source given)")
     one = _q(layers, _C("schottky", barrier=surface), _C("zero-field"),
              temperature_K=T, interfaces=ic, dz=0.5)
     ns = one.sheet(max(0.0, top - 150.0), top)
@@ -1144,6 +1153,11 @@ def _transistor_device(spec, with_traps=False):
     if t.get("peltier"):
         extra["heat_model"] = "thermoelectric"
         extra_src.append(TRANSISTOR_SOURCES["peltier"])
+        if t.get("dense_heat"):
+            # the heat each electron carries in its Fermi-Dirac form (right
+            # for the dense channel electrons; needs Fermi-Dirac statistics,
+            # the device's default)
+            extra["thermoelectric"] = "fermi-dirac"
     if t.get("thermionic"):
         extra["heterojunctions"] = "thermionic"
         extra_src.append(TRANSISTOR_SOURCES["thermionic"])
@@ -1305,6 +1319,47 @@ def run_transistor(spec):
     if thermal and max(out["tmax"]) > _TOO_HOT:
         out["warnings"] = out["warnings"] + [_too_hot_note(max(out["tmax"]))]
     return out
+
+
+def run_quantum(spec):
+    """The current at one bias with the channel electrons treated as waves
+    (non-equilibrium Green's functions, `Device.negf`), next to the
+    drift-diffusion current and the ballistic limit (new in 0.30.0). Only
+    for short transistors (source to drain at most 600 nm): longer ones take
+    too long here and need scattering to settle."""
+    t = dict(spec.get("transistor") or {})
+    q = spec.get("quantum_transport") or {}
+    span = sum(_num(t, k, d) for k, d in (("gap_sg", 1000.0), ("gate_length", 250.0),
+                                          ("gap_gd", 1250.0)))
+    if span > 600.0:
+        raise SpecError("The quantum current is worked out for short transistors only: "
+                        "make the two gaps and the gate together at most 600 nm "
+                        f"(they are {span:g} nm now).")
+    t["quantum"] = True
+    dev, info = _transistor_device(dict(spec, transistor=t))
+    vg = _num(q, "gate", 0.0, -20.0, 5.0, "the gate voltage")
+    vd = _num(q, "drain", 0.05, 0.0, 2.0, "the drain voltage")
+    bias = {"gate": vg, "drain": vd}
+    dd = dev.solve(bias)
+    kw = {}
+    if q.get("scattering"):
+        # the scattering time that gives the tab's mobility: tau = mu m / q
+        from ..electrons import M0
+        from ..nitride import QE as _QE
+        m = info["layers"][0].material.me
+        kw["scattering_time"] = info["mobility"] * 1e-4 * m * M0 / _QE
+    try:
+        st = dev.negf(bias, guess=dd, dx=0.5, **kw)
+    except RuntimeError as e:
+        raise SpecError("The wave calculation did not settle at this bias. Tick "
+                        "'with scattering', or move the gate or drain voltage a little. "
+                        f"({e})".split(" (NEGF")[0])
+    top, _ = dev.ballistic_current(st)
+    return {"negf": st.negf["current"], "drift_diffusion": dd.current["drain"],
+            "ballistic": float(top), "gate": vg, "drain": vd,
+            "scattering_time_s": kw.get("scattering_time"),
+            "subbands": len(st.negf["modes"]), "iterations": st.negf["iterations"],
+            "sources": info["sources"], "warnings": info["warn"]}
 
 
 def run_rf(spec):
@@ -1536,7 +1591,13 @@ _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thicknes
                  "'implant species=donor dose=1e13 range=30 straggle=15 from=100 to=900', "
                  "'anneal time=60 temperature=1300 D0=1e-4 Ea=3', 'oxidize material=Si "
                  "oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44' (add mode=2d for "
-                 "oxidation that reaches under mask edges)")
+                 "oxidation that reaches under mask edges, and viscosity=1e12 to let the "
+                 "oxide flow; stress_volume=0.025 temperature=1273 slows growth where it "
+                 "is squeezed), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
+                 "target_Z=14 target_mass=28.09 atoms=5e22 species=acceptor dose=1e13' "
+                 "(the depth profile from a simulation of the ions), 'plasmaetch "
+                 "neutrals=1e18 ions=1e16 stick_Si=0.2 yield_Si=5 atoms_Si=5e22 time=10' "
+                 "(ions and a reactive gas together)")
 
 
 def _flux_size(st, k):
@@ -1573,6 +1634,8 @@ def run_process(spec):
     if len(lines) > 40:
         raise SpecError("At most 40 steps.")
     oxide_x = None
+    sim_notes = []
+    flow_oxide = None
     for k, ln in enumerate(lines, 1):
         words = ln.split()
         kind, args = words[0].lower(), {}
@@ -1599,6 +1662,7 @@ def run_process(spec):
             win = (num("from", 0.0, 0.0, W), num("to", W, 0.0, W))
             if win[1] <= win[0]:
                 raise SpecError(f"Step {k}: 'to' must be larger than 'from'.")
+        before = float(st.donors.sum() + st.acceptors.sum())
         try:
             if kind == "deposit":
                 mat = args.get("material")
@@ -1624,12 +1688,44 @@ def run_process(spec):
                 st.etch(rates, num("time", lo=1e-12), mode=args.get("mode", "isotropic"),
                         window=win, exponent=num("exponent", 1.0, 1.0, 1e4),
                         sticking=num("sticking", 1.0, 1e-6, 1.0))
+            elif kind == "implant" and args.get("ranges") == "simulate":
+                # the depth profile from a Monte Carlo run of the ions (ZBL
+                # potential, Lindhard-Scharff stopping); the target's atoms
+                # and atom density are yours
+                from .. import bca
+                sp = args.get("species", "donor")
+                tgt = bca.Target((bca.Element(int(num("target_Z", lo=1, hi=118)),
+                                              num("target_mass", lo=0.5, hi=400.0)),),
+                                 num("atoms", lo=1e20, hi=1e24), src)
+                n_ions = int(num("ions", 1000, 100, 20000))
+                rr = bca.simulate(int(num("ion_Z", lo=1, hi=118)), num("ion_mass", lo=0.5, hi=400.0),
+                                  num("energy", lo=10.0, hi=1e7), tgt, n_ions=n_ions,
+                                  tilt_deg=num("tilt", 0.0, 0.0, 89.0), seed=0)
+                st.implant(rr.implant(sp, num("dose", lo=1e-30), 0.0, window=win,
+                                      activation=num("activation", 1.0, 0.0, 1.0)))
+                sim_notes.append(f"step {k}: simulated range {rr.projected_range:.1f} nm, "
+                                 f"spread {rr.straggle:.1f} nm ({n_ions} ions, "
+                                 f"{100 * rr.backscattered / rr.n_ions:.1f}% bounced back)")
             elif kind == "implant":
                 sp = args.get("species", "donor")
                 st.implant(Implant(sp, num("dose", lo=1e-30), num("range", lo=0.0),
                                    num("straggle", lo=1e-6), src, 0.0,
                                    lateral_straggle_nm=num("lateral", 0.0, 0.0) or None,
                                    window=win, activation=num("activation", 1.0, 0.0, 1.0)))
+            elif kind == "plasmaetch":
+                # ions and a reactive gas together: per material its sticking,
+                # ion yield and atom density as stick_X=, yield_X=, atoms_X=
+                from ..process import EtchKinetics
+                stick = {a[6:]: num(a, lo=0.0, hi=1.0) for a in args if a.startswith("stick_")}
+                yld = {a[6:]: num(a, lo=0.0) for a in args if a.startswith("yield_")}
+                atoms = {a[6:]: num(a, lo=1e18) for a in args if a.startswith("atoms_")}
+                if not stick or set(stick) != set(atoms):
+                    raise SpecError(f"Step {k}: give stick_X=, yield_X= and atoms_X= for "
+                                    "each material X that the gas etches.")
+                kin = EtchKinetics(num("neutrals", lo=0.0), num("ions", lo=0.0),
+                                   num("sites", 1e15, 1e10, 1e18), stick, yld, atoms, src)
+                _flux_size(st, k)
+                st.plasma_etch(kin, num("time", lo=1e-12))
             elif kind == "anneal":
                 st.anneal(Anneal(num("time", lo=1e-12), num("temperature", lo=1.0),
                                  num("D0", lo=1e-300), num("Ea", lo=0.0), src,
@@ -1637,13 +1733,33 @@ def run_process(spec):
             elif kind == "oxidize":
                 mat, ox = args.get("material", "Si"), args.get("oxide", "SiO2")
                 omode = args.get("mode", "column")
+                flow = {}
+                if "viscosity" in args:
+                    if omode != "2d":
+                        raise SpecError(f"Step {k}: the oxide's flow needs mode=2d.")
+                    flow["viscosity"] = {ox: num("viscosity", lo=1e3, hi=1e25)}
+                    flow_oxide = ox
+                    if "stress_volume" in args:
+                        flow["stress_volume_nm3"] = num("stress_volume", lo=0.0, hi=1.0)
+                        flow["temperature_K"] = num("temperature", lo=300.0, hi=2000.0)
                 oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
                                      num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
-                                     src, mode=omode)
+                                     src, mode=omode, **flow)
                 if omode == "2d":
                     oxide_x = None           # cell counts, not the closed form
             else:
                 raise SpecError(f"Step {k}: unknown step '{kind}' ({_PROCESS_HELP}).")
+            if kind == "implant":
+                # how much of the dose stayed in the semiconductor of the
+                # picture (a mask takes some; ions that go deeper than the
+                # bottom of the picture are lost)
+                width = (win[1] - win[0]) if win else W
+                want = num("dose") * num("activation", 1.0) * width / W
+                got = (float(st.donors.sum() + st.acceptors.sum()) - before) * (h * 1e-7) ** 2 / (W * 1e-7)
+                if want > 0 and got < 0.9 * want:
+                    sim_notes.append(f"step {k}: only {100 * got / want:.0f}% of the dose "
+                                     "stayed in the semiconductor of the picture (the rest "
+                                     "went into a mask or past its bottom)")
         except SpecError:
             raise
         except ValueError as e:
@@ -1666,7 +1782,20 @@ def run_process(spec):
             "donor_dose": float(st.donors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
             "acceptor_dose": float(st.acceptors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
             "oxide_exact": None if oxide_x is None else float(np.max(oxide_x)),
-            "steps": len(lines), "sources": [src], "warnings": []}
+            "steps": len(lines), "sources": [src], "warnings": [],
+            "notes": sim_notes,
+            "stress_GPa": _oxide_stress(st, flow_oxide)}
+
+
+def _oxide_stress(st, ox):
+    """the most compressive stress in the oxide that flowed (GPa), or None"""
+    S = getattr(st, "oxide_stress", None)
+    if S is None or ox is None:
+        return None
+    m = st.mat == ox
+    if not m.any():
+        return None
+    return float(min(np.nanmin(S["sxx"][m]), np.nanmin(S["szz"][m]))) / 1e9
 
 
 ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
@@ -1676,7 +1805,7 @@ ACTIONS = {"options": lambda spec: options(), "charges": run_charges,
            "design": run_design, "cross": run_cross,
            "transistor": run_transistor, "lag": run_lag, "rf": run_rf,
            "breakdown": run_breakdown, "pulse": run_pulse, "runaway": run_runaway,
-           "process": run_process, "mobility": run_mobility}
+           "process": run_process, "mobility": run_mobility, "quantum": run_quantum}
 
 
 def _plain(e):
