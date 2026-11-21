@@ -671,7 +671,7 @@ _H2M = HBAR ** 2 / (2.0 * M0 * QE) * 1e18            # hbar^2 / 2 m0, eV nm^2
 _G2D = M0 * QE / (math.pi * HBAR ** 2) * 1e-18      # m0 / (pi hbar^2), per eV per nm^2
 
 
-def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None):
+def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None, signed=False):
     """Eigenstates of -(hbar^2/2) d/dz (1/m) d/dz + E_c on the nodes z
     (nm, increasing, any spacing), with psi = 0 at z_left < z[0] and
     z_right > z[-1] (new in 0.24.0). ec in eV, mass in m0 (both per node;
@@ -679,7 +679,9 @@ def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None):
     energies (eV, lowest first) and psi^2 per node (1/nm, normalized so that
     sum(w psi^2) = 1 with w the node's share of the column, the box
     method). With e_max, every state below e_max (eV) instead of the
-    lowest n_states."""
+    lowest n_states. signed=True (new in 0.29.0) also returns psi itself
+    (1/sqrt(nm), sum(w psi^2) = 1), as a fourth result, for overlaps
+    between states (`kpenvelope.scattering.Subbands`)."""
     from scipy.linalg import eigh_tridiagonal
     z = np.asarray(z, float)
     zz = np.concatenate([[z_left], z, [z_right]])
@@ -696,6 +698,8 @@ def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None):
     if e_max is not None:
         lo = float(np.min(diag) - np.sum(np.abs(off))) - 1.0      # below every state
         if not float(e_max) > lo:
+            if signed:
+                return np.zeros(0), np.zeros((z.size, 0)), w, np.zeros((z.size, 0))
             return np.zeros(0), np.zeros((z.size, 0)), w
         E, U = eigh_tridiagonal(diag, off, select="v", select_range=(lo, float(e_max)))
         if E.size > n_states:
@@ -704,6 +708,8 @@ def column_states(z, ec, mass, n_states, z_left, z_right, e_max=None):
         k = int(min(n_states, z.size))
         E, U = eigh_tridiagonal(diag, off, select="i", select_range=(0, k - 1))
     psi2 = U ** 2 / w[:, None]
+    if signed:
+        return E, psi2, w, U / np.sqrt(w)[:, None]
     return E, psi2, w
 
 
