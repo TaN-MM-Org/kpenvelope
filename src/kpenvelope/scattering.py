@@ -34,7 +34,7 @@ import numpy as np
 from .electrons import EPS0, HBAR, KB, M0
 from .nitride import QE
 
-__all__ = ["Subband"]
+__all__ = ["Subband", "Subbands", "interface_modes"]
 
 
 def _gauss_theta(n):
@@ -515,6 +515,33 @@ class _Polar:
 
 
 # ------------------------------------------------------------ many subbands
+def interface_modes(below, above):
+    """Interface phonons of one interface between two isotropic polar
+    materials, each (phonon_eV, eps_static, eps_high) with
+    eps(w) = eps_high (w^2 - w_LO^2) / (w^2 - w_TO^2) and w_TO from
+    Lyddane-Sachs-Teller: the energies (eV) where eps_1 + eps_2 = 0 (a
+    quadratic in w^2) and the coupling of each, 4 / (w d(eps_1 + eps_2)/dw),
+    the weight of its pole in -Im 2 / (eps_1 + eps_2) in the units where a
+    bulk LO phonon has 1/eps_high - 1/eps_static. Roots at a TO frequency
+    (where both sides are the same material) are not modes."""
+    (L1, e01, ei1), (L2, e02, ei2) = ((float(v) for v in m) for m in (below, above))
+    T1, T2 = L1 * L1 * ei1 / e01, L2 * L2 * ei2 / e02             # squared
+    a = ei1 + ei2
+    b = -(ei1 * (L1 * L1 + T2) + ei2 * (L2 * L2 + T1))
+    c = ei1 * L1 * L1 * T2 + ei2 * L2 * L2 * T1
+    disc = max(b * b - 4 * a * c, 0.0)
+    out = []
+    for x in ((-b - math.sqrt(disc)) / (2 * a), (-b + math.sqrt(disc)) / (2 * a)):
+        scale = max(L1, L2) ** 2
+        if x <= 0 or min(abs(x - T1), abs(x - T2)) < 1e-9 * scale:
+            continue
+        w = math.sqrt(x)
+        dD = sum(ei * 2 * w * (L * L - Tt) / (x - Tt) ** 2
+                 for L, Tt, ei in ((L1, T1, ei1), (L2, T2, ei2)))
+        out.append((w, 4.0 / (w * dD)))
+    return out
+
+
 def _pair(z, q, a, b):
     """sum_ij a_i b_j exp(-q |z_i - z_j|) for every q (1/nm), by the two
     one-sided recursions."""
@@ -980,7 +1007,81 @@ class Subbands:
         T = self.T if temperature_K is None else float(temperature_K)
         return _PolarMany(self, float(phonon_eV),
                           1.0 / (EPS0 * eps_high) - 1.0 / (EPS0 * eps_static),
-                          1.0 / math.expm1(float(phonon_eV) / (KB * T)), bool(screening))
+                          1.0 / math.expm1(float(phonon_eV) / (KB * T)), bool(screening),
+                          temperature_K=T)
+
+    def interface_phonons(self, z_interface, below, above, temperature_K=None,
+                          screening=False):
+        """Polar optical phonons of a heterostructure with one interface at
+        z_interface (nm) between two polar materials (new in 0.31.0), in
+        the dielectric continuum model, for isotropic media: below and
+        above are (phonon_eV, eps_static, eps_high) of the material at
+        z < z_interface and at z > z_interface (hbar w_LO and the two
+        permittivities; w_TO follows from Lyddane-Sachs-Teller). Returns
+        the list of modes, each a mechanism for `mobility` and
+        `lifetimes`:
+
+        * the half-space LO modes of each side, at that side's w_LO with
+          its bulk coupling (1/eps_high - 1/eps_static), seen only by the
+          part of the envelopes on that side, with the kernel
+          exp(-q |z - z'|) - exp(-q (|z - z_I| + |z' - z_I|)) (it vanishes
+          at the interface);
+        * the interface modes at the roots of eps_1(w) + eps_2(w) = 0
+          (two for two single-oscillator materials), with the kernel
+          exp(-q (|z - z_I| + |z' - z_I|)) on both sides and the coupling
+          4 / (w d(eps_1 + eps_2)/dw).
+
+        This is the split of -Im of the Coulomb potential of a charge near
+        the interface, (e^2 / 2 eps_0 q) [exp(-q |z - z'|) / eps_1 +
+        (eps_1 - eps_2) / (eps_1 (eps_1 + eps_2)) exp(-q (|z| + |z'|))]
+        on one side and 2 / (eps_1 + eps_2) exp(-q |z - z'|) across,
+        into its poles (N. Mori and T. Ando, Phys. Rev. B 40, 6175 (1989)).
+        With the same material on both sides the modes add up to the bulk
+        LO phonon of `polar_optical`; far from the interface the half-space
+        mode of the electrons' side is the bulk one. The mobility solves
+        the Boltzmann equation with all the modes on one energy grid; mode
+        energies are moved to the nearest grid point (at most half a step,
+        `mobility` returns the energies used)."""
+        zI = float(z_interface)
+        T = self.T if temperature_K is None else float(temperature_K)
+        mats = []
+        for m in (below, above):
+            hw, es, ei = (float(v) for v in m)
+            if not (hw > 0 and es > ei > 0):
+                raise ValueError("each side needs phonon_eV > 0 and eps_static > eps_high > 0")
+            mats.append((hw, es, ei))
+        from scipy.interpolate import CubicSpline
+        lq = np.linspace(math.log(1e-6), math.log(1e3), 1200)
+        q = np.exp(lq)
+        pr = self.pairs()
+        A = np.stack([self.w * self.psi[:, k] * self.psi[:, l] for k, l in pr], 1)
+        index = {p: a for a, p in enumerate(pr)}
+        F_all = _sheet_transforms(self.z, q, A, np.array([zI]))[:, :, 0]      # (nq, P)
+
+        def spline_form(vals):
+            spl = [CubicSpline(lq, vals[:, a]) for a in range(len(pr))]
+
+            def form(i, j, q_nm):
+                x = np.log(np.clip(np.asarray(q_nm, float), 1e-6, 1e3))
+                return spl[index[(min(i, j), max(i, j))]](x)
+            return form
+
+        def bose(hw):
+            return 1.0 / math.expm1(hw / (KB * T))
+        modes = []
+        for side, (hw, es, ei) in zip(("below", "above"), mats):
+            mask = self.z < zI if side == "below" else self.z > zI
+            Am = A * mask[:, None]
+            H = np.stack([_pair(self.z, q, Am[:, a], Am[:, a]) for a in range(len(pr))], 1)
+            Fm = _sheet_transforms(self.z, q, Am, np.array([zI]))[:, :, 0]
+            modes.append(_PolarMany(self, hw, (1.0 / ei - 1.0 / es) / EPS0, bose(hw),
+                                    bool(screening), spline_form(H - Fm * Fm),
+                                    f"half-space LO {side}", T))
+        G = spline_form(F_all * F_all)
+        for w, C in interface_modes(mats[0], mats[1]):
+            modes.append(_PolarMany(self, w, C / EPS0, bose(w), bool(screening), G,
+                                    f"interface {1000 * w:.1f} meV", T))
+        return modes
 
     # --------------------------------------------------------- results
     def _elastic_matrices(self, mechanisms, E):
@@ -1048,13 +1149,33 @@ class Subbands:
         if not mechanisms:
             raise ValueError("give at least one mechanism")
         pol = [f for f in mechanisms if isinstance(f, _PolarMany)]
-        if len({p.hw for p in pol}) > 1:
-            raise ValueError("one phonon energy at a time")
+        parts = {id(f): [f] for f in mechanisms}
         if pol:
-            hw = pol[0].hw
+            # one energy grid for every phonon: its step divides the energy
+            # of the mode that scatters most at the Fermi level (steps of at
+            # most kT / 10 and a quarter of it, or 1 / n_energy of it) and
+            # is at most half the lowest energy; a mode between two grid
+            # energies is split between them so that its weight and its
+            # mean energy stay the same (the error is second order in the
+            # step)
+            Er = np.array([max(self.fermi, float(self.E.min()) + self.kT)])
+            ref = max(pol, key=lambda p: float(p.out_rate(Er).sum()))
+            hw = ref.hw
             n_sub = (max(4, int(math.ceil(hw / (self.kT / 10)))) if n_energy is None
                      else int(n_energy))
+            n_sub = max(n_sub, int(math.ceil(2 * hw / min(p.hw for p in pol))))
             dE = hw / n_sub
+            for p in pol:
+                x = p.hw / dE
+                m_ = int(math.floor(x + 1e-9))
+                t = x - m_
+                if abs(t) < 1e-9 or abs(t - 1) < 1e-9:
+                    m_ = int(round(x))
+                    parts[id(p)] = [p if abs(m_ * dE - p.hw) < 1e-15 else p.at_energy(m_ * dE)]
+                else:
+                    parts[id(p)] = [p.at_energy(m_ * dE, 1 - t),
+                                    p.at_energy((m_ + 1) * dE, t)]
+            steps = {id(g): int(round(g.hw / dE)) for f in pol for g in parts[id(f)]}
         else:
             hw, n_sub = 0.0, 0
             dE = self.kT / (20 if n_energy is None else float(n_energy))
@@ -1070,7 +1191,6 @@ class Subbands:
         edges = (E0 + (np.arange(m_)[:, None] * dE + offs[None, :])).ravel()
         lo, hi = edges[:-1], edges[1:]
         nE = lo.size
-        shift = n_sub * K
         n = self.n
         kT, F = self.kT, self.fermi
 
@@ -1106,7 +1226,7 @@ class Subbands:
             import scipy.sparse.linalg as spl
             diag = np.zeros((n, nE))
             rows, cols, vals = [], [], []
-            for f in mechs:
+            for f in [g for m in mechs for g in parts[id(m)]]:
                 if id(f) not in cache:
                     cache[id(f)] = blocks(f)
                 d_, r_, c_, v_ = cache[id(f)]
@@ -1144,6 +1264,7 @@ class Subbands:
                     for j in range(n):
                         if isinstance(f, _PolarMany):
                             N, C = f.N, f.C
+                            shift = steps[id(f)] * K
                             # emission to j at E - hw
                             L, Em = region(max(self.E[i], self.E[j] + f.hw))
                             if np.any(L > 0):
@@ -1211,14 +1332,27 @@ class _Isotropic:
 
 
 class _PolarMany:
-    def __init__(self, sb, hw, inv_eps_p, N, screening):
+    def __init__(self, sb, hw, inv_eps_p, N, screening, form=None, name="bulk LO",
+                 temperature_K=None):
         self.sb, self.hw, self.N, self.screening = sb, hw, N, screening
+        self.inv_eps_p = inv_eps_p
         self.C = sb.m * QE ** 2 * (hw * QE / HBAR) / (8 * math.pi * HBAR ** 2) * inv_eps_p
+        self.form = sb.form_factor if form is None else form
+        self.name = name
+        self.T = sb.T if temperature_K is None else float(temperature_K)
+
+    def at_energy(self, hw, share=1.0):
+        """a share of this mode's spectral weight (w times the coupling)
+        placed at the energy hw (eV), with the phonon number at hw, so
+        detailed balance holds on an energy grid whose step divides hw"""
+        return _PolarMany(self.sb, float(hw), share * self.inv_eps_p * self.hw / float(hw),
+                          1.0 / math.expm1(float(hw) / (KB * self.T)), self.screening,
+                          self.form, self.name, self.T)
 
     def _I(self, i, j, ki, kj):
         sb = self.sb
         th, wt, q = sb._angles(ki, kj)
-        H = sb.form_factor(i, j, q * 1e-9)
+        H = self.form(i, j, q * 1e-9)
         if self.screening:
             H = H / sb._eps_q(q) ** 2
         base = H / q * wt
