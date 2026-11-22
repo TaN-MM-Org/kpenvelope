@@ -285,7 +285,11 @@ def run_mobility(spec):
     the subbands of its exact (quantum) region, scattered within and between
     them (`kpenvelope.scattering.Subbands`) by the mechanisms ticked in
     spec["scattering"]: "polar" (GaN's polar optical phonons, the
-    package's cited Barker-Ilegems set; only for a GaN channel), "donors"
+    package's cited Barker-Ilegems set; only for a GaN channel),
+    "interface_phonons" {lo_meV, eps_static, eps_high, source} (since
+    0.31.0, in place of "polar": the polar phonons of the heterostructure,
+    GaN on its side of the boundary next to the electrons, your numbers on
+    the other, and the interface modes between them), "donors"
     (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
     corr_nm, source} at the boundary next to the electrons, "acoustic"
     {deformation_eV, density, velocity, source}. Numbers you type need
@@ -328,14 +332,49 @@ def run_mobility(spec):
     sb = Subbands(z, psi, E, ch.material.me, ch.material.eps_r, fermi=0.0,
                   temperature_K=T, weights=w, screening="full")
     mechs, names = [], []
-    if sc.get("polar"):
+    iface = sc.get("interface_phonons")
+    if sc.get("polar") or iface:
         if not (ch.material.name == "GaN" or ch.material.name.startswith("GaN")
                 or getattr(ch.material, "name", "") == algan(0.0).name):
             raise SpecError("Polar optical phonons need the phonon numbers of the "
                             "electrons' layer; the app has them only for GaN.")
         ph = GAN_BARKER1973
-        mechs.append(sb.polar_optical(ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp))
-        names.append("polar optical phonons (GaN, " + ph.reference.split(";")[0] + ")")
+        gan_ph = (ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp)
+        ref = "GaN, " + ph.reference.split(";")[0]
+    if iface:
+        # the vibrations of the heterostructure: the GaN side, the other
+        # side of the boundary next to the electrons (your numbers), and
+        # the interface modes between them
+        src = str(iface.get("source", "")).strip()
+        if not src:
+            raise SpecError("Please say where the barrier's vibration numbers come from.")
+        other = (_num(iface, "lo_meV", lo=1.0, hi=500.0,
+                      what="the barrier's LO phonon energy (meV)") / 1000.0,
+                 _num(iface, "eps_static", lo=1.0, hi=100.0,
+                      what="the barrier's static permittivity"),
+                 _num(iface, "eps_high", lo=1.0, hi=100.0,
+                      what="the barrier's high-frequency permittivity"))
+        if not other[1] > other[2]:
+            raise SpecError("The barrier's static permittivity must be larger than its "
+                            "high-frequency one.")
+        zb = np.array([e_ for e_ in edges[1:-1] if win[0] < e_ < win[1]])
+        if zb.size == 0:
+            raise SpecError("No layer boundary lies in the exact region.")
+        zi = float(zb[np.argmin(np.abs(zb - z[peak]))])
+        below_is_gan = z[peak] < zi
+        modes = sb.interface_phonons(zi, gan_ph if below_is_gan else other,
+                                     other if below_is_gan else gan_ph)
+        for m in modes:
+            mechs.append(m)
+            if m.name.startswith("half-space"):
+                side_gan = (m.name.endswith("below")) == below_is_gan
+                names.append(f"vibrations of the GaN side ({ref})" if side_gan
+                             else f"vibrations of the barrier side ({src})")
+            else:
+                names.append(f"vibrations of the interface itself at {m.name.split()[1]} meV")
+    elif sc.get("polar"):
+        mechs.append(sb.polar_optical(*gan_ph))
+        names.append("polar optical phonons (" + ref + ")")
     if sc.get("donors"):
         prof = r.donors_ionized[inw] * 1e21
         if np.any(prof > 0):
@@ -382,7 +421,7 @@ def run_mobility(spec):
                                                 lt["quantum_s"])],
             "sheet_cm2": float(res["sheets_cm2"].sum()),
             "sheet_all_cm2": float(r.sheet_quantum_cm2), "warnings": warn,
-            "channel": ch.label}
+            "channel": ch.label, "interface": bool(iface)}
 
 
 def _transport(spec, n_layers):
@@ -1342,12 +1381,19 @@ def run_quantum(spec):
     bias = {"gate": vg, "drain": vd}
     dd = dev.solve(bias)
     kw = {}
+    if q.get("scattering") and q.get("mixing"):
+        raise SpecError("Electrons that change level along the channel are worked out "
+                        "without bumping only: untick one of the two.")
     if q.get("scattering"):
         # the scattering time that gives the tab's mobility: tau = mu m / q
         from ..electrons import M0
         from ..nitride import QE as _QE
         m = info["layers"][0].material.me
         kw["scattering_time"] = info["mobility"] * 1e-4 * m * M0 / _QE
+    if q.get("mixing"):
+        # the lowest four states of every column, joined along the channel
+        # (coupled mode space, new in 0.31.0 in the app)
+        kw["coupled_modes"] = 4
     try:
         st = dev.negf(bias, guess=dd, dx=0.5, **kw)
     except RuntimeError as e:
@@ -1358,7 +1404,9 @@ def run_quantum(spec):
     return {"negf": st.negf["current"], "drift_diffusion": dd.current["drain"],
             "ballistic": float(top), "gate": vg, "drain": vd,
             "scattering_time_s": kw.get("scattering_time"),
-            "subbands": len(st.negf["modes"]), "iterations": st.negf["iterations"],
+            "mixing": bool(kw.get("coupled_modes")),
+            "subbands": kw.get("coupled_modes") or len(st.negf["modes"]),
+            "iterations": st.negf["iterations"],
             "sources": info["sources"], "warnings": info["warn"]}
 
 
