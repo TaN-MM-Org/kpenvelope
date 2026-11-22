@@ -181,7 +181,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  72 worked examples, each with the output it prints, and three
+  73 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -210,10 +210,11 @@ The full list is in [How it is checked](https://github.com/TaN-MM-Org/kpenvelope
 
 The main gaps, in plain terms:
 
-- Quantum transport is one band per subband, one carrier at a time, on
-  rectangular grids. Carriers can change subband only without
-  scattering, and the scattering is one simple model (Buttiker probes
-  with one scattering time), not phonons. Without scattering, long
+- Quantum transport is one band per subband and one carrier at a time.
+  It runs on rectangular grids and on meshes, and carriers can change
+  subband with or without scattering, but the scattering is one simple
+  model (Buttiker probes with one scattering time), not phonons. Without
+  scattering, long
   access regions, high drain voltages or small dips along the channel
   can keep it from settling.
 - With velocity saturation, the hot-electron model does not turn into

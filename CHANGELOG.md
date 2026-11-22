@@ -4,6 +4,45 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.32.0 (2026-11-22)
+
+Electrons in coupled mode space can now scatter, quantum transport runs
+on meshes, and the app's wave current can mix levels and scatter at
+once. The examples print what they printed before; example 73 is new.
+
+### Added
+
+- `Device.negf(coupled_modes=..., scattering_time=...)`: Buttiker probes
+  in coupled mode space, one per column (`negf.Slab(eta=...)`,
+  `negf._SlabProbes`).
+- `MeshDevice.negf` and `MeshDevice.ballistic_current`, on the
+  QuantumChannel's lines (uncoupled, with probes, and with coupled modes
+  where every line has the same samples).
+- The app: the wave current with both "change level" and "bump into
+  things" ticked.
+
+### Changed
+
+- `slab_transport` returns `probe_F` (None without probes).
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; the confined phonons of thin layers and
+  several interfaces; a shipped plasma rate set and negative ions; the
+  oxide's shape following its flow, and elasticity; better electronic
+  stopping; tunnel paths that bend; tunneling and heat inside one Newton
+  solve; the hot-electron model at zero relaxation time. The app has no
+  meshes, NEGF holes, plasma chemistry or 3D.
+
+### Checks (tests)
+
+3 new tests (402 in all; docs/checks.md has the tolerances), and three
+earlier ones changed with the behavior (a mesh's NEGF and coupled
+modes with scattering are no longer refused, in the library and the app):
+the slab's probes against the chain's, current conservation with modes
+that mix, coupled against uncoupled probes in a channel, NEGF on a mesh
+against the tensor grid. All 73 documented examples were rerun.
+
 ## 0.31.0 (2026-11-22)
 
 The vibrations of an interface join the mobility, a model of the
