@@ -1191,11 +1191,44 @@ class MeshDevice(Device):
         weight[nd] = (nqn > 1e-6 * np.maximum(nmax, 1e-300)) & (np.abs(lam) < qc.max_shift)
         return target, weight, dict(subbands=sub, sheet_cm2=sheets, top_share=top_share)
 
-    def ballistic_current(self, *a, **k):
-        raise ValueError("ballistic_current is for devices on tensor grids (Device)")
+    # NEGF on the mesh's lines (new in 0.32.0): `Device.negf` with the
+    # QuantumChannel's columns sampled on the lines (the band edge linear
+    # along a line inside each triangle, the material as in the quantum
+    # channel), and the density carried back to the nodes as the quantum
+    # channel carries its own
+    def _negf_columns(self, lo, hi):
+        out = []
+        for k, r in enumerate(self._qruns):
+            if lo < r["x"] < hi:
+                out.append(dict(x=r["x"], z=r["z"], zl=r["zl"], zr=r["zr"], run=k,
+                                mass=r["mat"].dot(self.me_node)))
+        xs = [c["x"] for c in out]
+        if len(set(xs)) != len(xs):
+            raise ValueError("negf needs one QuantumChannel run per line (a single "
+                             "channel along z)")
+        return out
 
-    def negf(self, *a, **k):
-        raise ValueError("negf is for devices on tensor grids (Device)")
+    def _negf_band(self, c, psi, holes):
+        r = self._qruns[c["run"]]
+        at = r["wa"] * psi[r["a"]] + r["wb"] * psi[r["b"]]
+        Ec = r["mat"].dot(self._ec0_real()) - at
+        return -(Ec - r["mat"].dot(self._eg_real())) if holes else Ec
+
+    def _negf_nodes(self, cols):
+        return self._qmap["nodes"].copy()
+
+    def _negf_density(self, cols, ncol):
+        vals = [np.zeros(r["z"].size) for r in self._qruns]
+        cover = [np.zeros(r["z"].size) for r in self._qruns]
+        for c, n_ in zip(cols, ncol):
+            vals[c["run"]] = np.asarray(n_, float)
+            cover[c["run"]] = np.ones(len(n_))
+        nd = self._qmap["nodes"]
+        dens = self._line_values(vals)
+        # the nodes that lie between two lines that carry NEGF columns (or on
+        # one): the rest keep their drift-diffusion level
+        keep = self._line_values(cover) > 1 - 1e-9
+        return nd[keep], np.maximum(dens[keep], 0.0)
 
     def _node_field(self, psi):
         bt = self._bt

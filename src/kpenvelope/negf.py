@@ -691,7 +691,7 @@ class Slab:
     one across (default mass), as for holes with an in-plane mass of their
     own."""
 
-    def __init__(self, U, mass, a, z, zl, zr, n_modes=None, mass_x=None):
+    def __init__(self, U, mass, a, z, zl, zr, n_modes=None, mass_x=None, eta=None):
         U = np.asarray(U, float)
         m = np.broadcast_to(np.asarray(mass, float), U.shape).astype(float)
         mx = m if mass_x is None else np.broadcast_to(np.asarray(mass_x, float),
@@ -746,6 +746,18 @@ class Slab:
         self.DR = np.diag(self.Ez[-1]) + V[-1].T @ ((2 * tR)[:, None] * V[-1])
         self.CR = -V[-1].T @ (tR[:, None] * V[-1])
         self.Nx, self.Nz = Nx, Nz
+        if eta is None:
+            self.eta = None
+        else:
+            e = np.broadcast_to(np.asarray(eta, float), (Nx,)).astype(float)
+            if np.any(e < 0):
+                raise ValueError("probe broadening must be >= 0")
+            self.eta = e if np.any(e > 0) else None
+
+    def _probe_eta(self, E):
+        """(nE, Nx, M): each column's probe broadening on each of its modes,
+        above that mode's own bottom only (as in `Chain`)."""
+        return np.where(E[:, None, None] > self.Ez[None, :, :], self.eta[None, :, None], 0.0)
 
     def band_bottoms(self):
         """The leads' subband bottoms (eV): eigenvalues of D + 2 C."""
@@ -771,6 +783,10 @@ class Slab:
         A = [z - self.Dt[j][None] for j in range(Nx)]
         A[0] = A[0] - SL
         A[-1] = A[-1] - SR
+        if self.eta is not None:
+            etaE = self._probe_eta(E)
+            for j in range(Nx):
+                A[j] = A[j] + 0.5j * etaE[:, j, :, None] * I[None]
         # left- and right-connected Green's functions
         gl = [None] * Nx
         gl[0] = np.linalg.inv(A[0])
@@ -793,6 +809,19 @@ class Slab:
             cN[j] = gl[j] @ self.Ct[j][None] @ cN[j + 1]
         T = np.real(np.trace(GL @ cN[0] @ GR @ np.conj(np.swapaxes(cN[0], 1, 2)),
                              axis1=1, axis2=2))
+        self._last = dict(gl=gl, gr=gr, A=A, c0=c0, cN=cN, GL=GL, GR=GR, E=E)
+        Atot = None
+        if self.eta is not None:
+            # the whole spectral function on each column's modes, 2 Im of
+            # the diagonal of G_jj (for the energy grid)
+            Atot = np.empty((nE, Nx, M))
+            for j in range(Nx):
+                S = A[j]
+                if j > 0:
+                    S = S - self.Ct[j - 1].T[None] @ gl[j - 1] @ self.Ct[j - 1][None]
+                if j < Nx - 1:
+                    S = S - self.Ct[j][None] @ gr[j + 1] @ self.Ct[j].T[None]
+                Atot[:, j] = -2.0 * np.imag(np.diagonal(np.linalg.inv(S), axis1=1, axis2=2))
         PL = np.empty((nE, Nx, M))
         PR = np.empty((nE, Nx, M))
         dens = None if weights is None else np.zeros((Nx, self.Nz))
@@ -806,7 +835,7 @@ class Slab:
                             + np.tensordot(weights[1], Q, axes=1))
                 Vj = self.V[j]
                 dens[j] = np.einsum("km,mn,kn->k", Vj, S, Vj) / self.w
-        return dict(E=E, T=T, PL=PL, PR=PR, density=dens)
+        return dict(E=E, T=T, PL=PL, PR=PR, density=dens, Atot=Atot)
 
     def node_spectral(self, E, eta=1e-9):
         """AL, AR on the nodes (nE, Nx, Nz), one energy at a time (for
@@ -821,9 +850,130 @@ class Slab:
         return AL, AR
 
 
+def _slab_blocks(slab, E):
+    """Every block G_jq (j >= q) of a slab with probes, one column q at a
+    time: yields (q, list of G_jq for j = q..Nx-1), each (nE, M, M)."""
+    L = slab._last
+    gl, gr, A = L["gl"], L["gr"], L["A"]
+    Nx = slab.Nx
+    Ct = slab.Ct
+    for q in range(Nx):
+        S = A[q]
+        if q > 0:
+            S = S - Ct[q - 1].T[None] @ gl[q - 1] @ Ct[q - 1][None]
+        if q < Nx - 1:
+            S = S - Ct[q][None] @ gr[q + 1] @ Ct[q].T[None]
+        G = [np.linalg.inv(S)]
+        for j in range(q + 1, Nx):
+            G.append(gr[j] @ Ct[j - 1].T[None] @ G[-1])
+        yield q, G
+
+
+class _SlabProbes:
+    """Buttiker probes on a Slab (new in 0.32.0): one probe per column,
+    joined to every mode of the column above that mode's bottom with the
+    broadening eta (the projection of a probe on every node of the column),
+    with one Fermi level that makes the column's net probe current zero, as
+    `_Probes` does for a chain. T_pq = Tr[Gamma_p G_pq Gamma_q G_pq^+] for
+    every pair of columns is formed from the blocks of G (Nx^2 M^3 work per
+    energy) and the levels are found by Newton's method with the full
+    Jacobian (Nx x Nx)."""
+
+    def __init__(self, slab, E, w, NS, ND, kT, my):
+        sol = slab.solve(E)
+        self.slab, self.E, self.w, self.kT = slab, E, w, kT
+        self.NS, self.ND = NS, ND
+        L = slab._last
+        Nx = slab.Nx
+        eta = slab._probe_eta(E)                                  # (nE, Nx, M)
+        self.eta = eta
+        GL, GR = L["GL"], L["GR"]
+        nE = E.size
+        Tpq = np.zeros((nE, Nx, Nx))
+        TpS = np.zeros((nE, Nx))
+        TpD = np.zeros((nE, Nx))
+        for q, G in _slab_blocks(slab, E):
+            for k, Gjq in enumerate(G):
+                j = q + k
+                a2 = np.abs(Gjq) ** 2
+                if j != q:
+                    v = np.einsum("em,emn,en->e", eta[:, j], a2, eta[:, q])
+                    Tpq[:, j, q] = v
+                    Tpq[:, q, j] = v
+                if q == 0:
+                    # G_j0 Gamma_L G_j0^+
+                    TpS[:, j] = np.real(np.einsum("em,emk,ekl,eml->e", eta[:, j], Gjq, GL,
+                                                  np.conj(Gjq)))
+                if j == Nx - 1:
+                    # G_(N-1) q = G_q(N-1)^T: Gamma_q G_q(N-1) Gamma_R G_q(N-1)^+
+                    Gq = np.swapaxes(Gjq, 1, 2)
+                    TpD[:, q] = np.real(np.einsum("em,emk,ekl,eml->e", eta[:, q], Gq, GR,
+                                                  np.conj(Gq)))
+        self.T, self.Tpq, self.TpS, self.TpD = sol["T"], Tpq, TpS, TpD
+        self.sol = sol
+        self.act = np.any(eta > 0, axis=(0, 2))
+        self.pref = math.sqrt(my * kT / (2.0 * math.pi * 2.0 * _H2M))
+
+    def occ(self, F):
+        F_, D_ = _fm12((F[None, :] - self.E[:, None]) / self.kT)
+        return self.pref * F_, self.pref * D_ / self.kT
+
+    def currents(self, F):
+        Np, _ = self.occ(F)
+        out = (self.Tpq.sum(2) * Np - np.einsum("epq,eq->ep", self.Tpq, Np)
+               + self.TpS * (Np - self.NS[:, None]) + self.TpD * (Np - self.ND[:, None]))
+        return (out * self.w[:, None]).sum(0)
+
+    def solve(self, F0, tol=1e-9, max_iter=80):
+        F = np.array(F0, float)
+        mid = 0.5 * (self.NS + self.ND)[:, None]
+        gross = ((self.Tpq.sum(2) + self.TpS + self.TpD) * mid * self.w[:, None]).sum(0)
+        Rmax = float(np.max(gross)) + 1e-300
+        for it in range(max_iter):
+            R = np.where(self.act, self.currents(F), 0.0)
+            if float(np.max(np.abs(R))) < 1e-10 * Rmax:
+                return F, it
+            _, dN = self.occ(F)
+            J = (np.diag(((self.Tpq.sum(2) + self.TpS + self.TpD) * dN * self.w[:, None]).sum(0))
+                 - np.einsum("e,epq,eq->pq", self.w, self.Tpq, dN))
+            off = ~self.act
+            J[off, :] = 0.0
+            J[off, off] = 1.0
+            dF = np.clip(np.linalg.solve(J, -R), -0.1, 0.1)
+            F = F + dF
+            if float(np.max(np.abs(dF))) < tol:
+                return F, it + 1
+        R = np.where(self.act, self.currents(F), 0.0)
+        if float(np.max(np.abs(R))) < 1e-6 * Rmax:
+            return F, max_iter
+        raise RuntimeError("the Buttiker probes' Fermi levels did not settle")
+
+    def density(self, F):
+        """(Nx, Nz) node density of the probes' electrons (sum over energies
+        with the weights, before the 2 / (2 pi a) prefactor)."""
+        slab = self.slab
+        Np, _ = self.occ(F)
+        wq = self.eta * (Np * self.w[:, None])[:, :, None]               # (nE, Nx, M)
+        S = [np.zeros((slab.M, slab.M)) for _ in range(slab.Nx)]
+        for q, G in _slab_blocks(slab, self.E):
+            for k, Gjq in enumerate(G):
+                j = q + k
+                # G_jq diag(w_q) G_jq^+ summed over energies, and the mirror
+                # block G_qj = G_jq^T for j > q
+                S[j] += np.real(np.einsum("emk,ek,enk->mn", Gjq, wq[:, q], np.conj(Gjq)))
+                if j != q:
+                    S[q] += np.real(np.einsum("ekm,ek,ekn->mn", Gjq, wq[:, j],
+                                              np.conj(Gjq)))
+        dens = np.zeros((slab.Nx, slab.Nz))
+        for j in range(slab.Nx):
+            Vj = slab.V[j]
+            dens[j] = np.einsum("km,mn,kn->k", Vj, S[j], Vj) / slab.w
+        return dens
+
+
 def slab_transport(slab: Slab, FS: float, FD: float, kT: float, mass_y: float = None,
                    energy_step: float = None, emax_kT: float = 30.0, rtol: float = 1e-4,
-                   energies=None):
+                   energies=None, probe_guess=None):
     """Density (nm^-3, (Nx, Nz)) and current per width (A/nm) of a Slab
     whose third direction (the width) is free with one mass mass_y (default
     the mean of the masses), filled from a source at FS (x = 0 side) and a
@@ -838,19 +988,52 @@ def slab_transport(slab: Slab, FS: float, FD: float, kT: float, mass_y: float = 
         s = slab.solve(E)
         NS = _n1((FS - E) / kT, my, kT)
         ND = _n1((FD - E) / kT, my, kT)
-        d = (s["PL"] * NS[:, None, None] + s["PR"] * ND[:, None, None]).reshape(E.size, -1)
+        if slab.eta is not None:
+            # with probes every state can be filled: refine on all of them
+            d = (s["Atot"] * _n1((max(FS, FD) - E) / kT, my, kT)[:, None, None]).reshape(
+                E.size, -1)
+        else:
+            d = (s["PL"] * NS[:, None, None] + s["PR"] * ND[:, None, None]).reshape(E.size, -1)
         cur = s["T"] * np.abs(NS - ND) + s["T"] * (NS + ND) * 1e-3
         return np.concatenate([d, cur[:, None]], axis=1)
     if energies is None:
-        E, w = _adaptive_grid(f, slab.band_bottoms(), top, step, rtol)
+        bottoms = list(slab.band_bottoms())
+        if slab.eta is not None:
+            bottoms.append(float(np.min(slab.Ez)))
+        E, w = _adaptive_grid(f, bottoms, top, step, rtol)
     else:
         E = np.asarray(energies, float)
         w = np.gradient(E) if E.size > 1 else np.ones(1)
     if E.size == 0:
-        return dict(n=np.zeros((Nx, Nz)), I=0.0, E=E, T=np.zeros(0))
+        return dict(n=np.zeros((Nx, Nz)), I=0.0, E=E, T=np.zeros(0), probe_F=None)
     NS = _n1((FS - E) / kT, my, kT)
     ND = _n1((FD - E) / kT, my, kT)
     s = slab.solve(E, weights=(NS * w, ND * w))
     pref = 2.0 / (2.0 * math.pi * slab.a)
     I = _G0 * float(np.sum(s["T"] * (NS - ND) * w))
-    return dict(n=pref * s["density"], I=I, E=E, T=s["T"])
+    if slab.eta is None:
+        return dict(n=pref * s["density"], I=I, E=E, T=s["T"], probe_F=None)
+    # with probes: their Fermi levels, the electrons they hold, the
+    # current they carry into the drain, and the states the cut at each
+    # mode's bottom leaves out (added back as for a chain)
+    pr = _SlabProbes(slab, E, w, NS, ND, kT, my)
+    if probe_guess is None:
+        probe_guess = FS + (FD - FS) * np.linspace(0.0, 1.0, Nx)
+    Fp, _ = pr.solve(probe_guess)
+    Np, _ = pr.occ(Fp)
+    n = pref * (s["density"] + pr.density(Fp))
+    I_D = I + _G0 * float(np.sum((pr.TpD * (Np - ND[:, None])).sum(1) * w))
+    I_S = I + _G0 * float(np.sum((pr.TpS * (NS[:, None] - Np)).sum(1) * w))
+    for j in range(Nx):
+        e_ = float(slab.eta[j])
+        if e_ <= 0:
+            continue
+        key = (round(my, 3), round(slab.a, 9), e_, round(kT, 9))
+        C = _DC_CACHE.get(key)
+        if C is None:
+            if len(_DC_CACHE) > 256:
+                _DC_CACHE.clear()
+            C = _DC_CACHE[key] = _DensityCorrection(key[0], slab.a, e_, kT)
+        dc = C((Fp[j] - slab.Ez[j]) / kT)                               # (M,) 1/nm^2
+        n[j] += (slab.V[j] ** 2 / slab.w[:, None]) @ dc
+    return dict(n=n, I=I_D, I_source=I_S, E=E, T=s["T"], probe_F=Fp)

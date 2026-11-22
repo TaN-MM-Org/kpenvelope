@@ -100,7 +100,7 @@ from .linecharge import (PUBLISHED_CONSTRAINTS, Constraint,
                          line_charge_error_from_density, plan_holography,
                          plan_sum_rule)
 
-__version__ = "0.31.0"
+__version__ = "0.32.0"
 __all__ = [
     "WurtziteParameters", "demo_single_band", "gan_rinke2008",
     "aln_rinke2008", "assemble_hamiltonian", "solve_subbands",

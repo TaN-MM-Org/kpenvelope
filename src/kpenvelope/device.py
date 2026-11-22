@@ -3913,17 +3913,16 @@ class Device:
         lo, hi = sorted([0.5 * (es.x0 + es.x1), 0.5 * (ed.x0 + ed.x1)])
         psi, fn, _, _ = self._unpack(state._x)
         self._use_q(state)
-        Ec = self._ec0_real() - psi
         kT = KB * self.T
         bias = dict(state.internal or state.bias)
         FS, FD = -bias.get(source, 0.0), -bias.get(drain, 0.0)
-        cols = [c for c in self._qcols if lo < c["x"] < hi]
+        cols = self._negf_columns(lo, hi)
         if not cols:
             raise ValueError("no quantum columns between the source and the drain")
         levels, masses = [], []
         for col in cols:
-            nd = col["nodes"]
-            E, p2, w = column_states(col["z"], Ec[nd], col["mass"], self._qc.n_states,
+            E, p2, w = column_states(col["z"], self._negf_band(col, psi, False), col["mass"],
+                                     self._qc.n_states,
                                      col["zl"], col["zr"],
                                      e_max=float(max(FS, FD) + 40.0 * kT))
             levels.append(E)
@@ -3961,6 +3960,27 @@ class Device:
             if float(np.max(np.abs(d))) < tol:
                 return x, it + 1
         raise RuntimeError("Poisson's equation did not converge")
+
+    # ---------------------------- columns of the quantum transport (0.32.0)
+    def _negf_columns(self, lo, hi):
+        """the QuantumChannel's columns strictly between x = lo and hi, each
+        with its z nodes, walls and electron mass on the nodes"""
+        return [dict(c, mass=self.me_node[c["nodes"]]) if "mass" not in c else dict(c)
+                for c in self._qcols if lo < c["x"] < hi]
+
+    def _negf_band(self, c, psi, holes):
+        """the band edge of a column (the holes' counted downward)"""
+        nd = c["nodes"]
+        Ec = self._ec0_real()[nd] - psi[nd]
+        return -(Ec - self._eg_real()[nd]) if holes else Ec
+
+    def _negf_nodes(self, cols):
+        return np.concatenate([c["nodes"] for c in cols])
+
+    def _negf_density(self, cols, ncol):
+        """the device nodes the columns' densities set, and the density there"""
+        return (np.concatenate([c["nodes"] for c in cols]),
+                np.concatenate([np.asarray(n_, float) for n_ in ncol]))
 
     def negf(self, bias: dict, source: str = "source", drain: str = "drain",
              dx: float = 0.5, scattering_time: float = None, guess: DeviceState = None,
@@ -4002,9 +4022,17 @@ class Device:
         overlaps, so electrons change subband where the cross-section or the
         potential across the channel changes (R. Venugopal et al., J. Appl.
         Phys. 95, 292 (2004), doi:10.1063/1.1631754); with M equal to the number
-        of nodes in a column it is the real-space 2D problem. Ballistic only
-        (no scattering_time); the leads are solved by decimation
-        (`negf.lead_surface_green`).
+        of nodes in a column it is the real-space 2D problem; the leads are
+        solved by decimation (`negf.lead_surface_green`). Since 0.32.0 it
+        takes scattering_time too: one Buttiker probe per column, joined to
+        each of its modes above that mode's bottom, with one Fermi level
+        (`negf._SlabProbes`; its cost grows as the square of the number of
+        columns).
+
+        On a mesh (`MeshDevice`, since 0.32.0) the columns are the
+        QuantumChannel's lines through the mesh, and the density is carried
+        back to the nodes as the QuantumChannel carries its own;
+        coupled_modes needs the same samples on every line.
 
         carrier="holes" (new in 0.27.0): the same for the holes of the
         QuantumChannel (it needs `holes=(m_z, m_inplane, ...)`): one band,
@@ -4037,12 +4065,10 @@ class Device:
         if scattering_time is not None and not scattering_time > 0:
             raise ValueError("scattering_time must be > 0 (s)")
         if coupled_modes is not None:
-            if scattering_time is not None:
-                raise ValueError("coupled_modes is ballistic: no scattering_time")
             if not (isinstance(coupled_modes, int) and coupled_modes >= 1):
                 raise ValueError("coupled_modes must be an integer >= 1")
         lo, hi = sorted([0.5 * (es.x0 + es.x1), 0.5 * (ed.x0 + ed.x1)])
-        cols = [dict(c) for c in self._qcols if lo < c["x"] < hi]
+        cols = self._negf_columns(lo, hi)
         if len(cols) < 2:
             raise ValueError("no quantum columns between the source and the drain")
         cols = sorted(cols, key=lambda c: c["x"])
@@ -4065,7 +4091,7 @@ class Device:
         if holes:
             mz_h, mxy_h = float(self._qc.holes[0]), float(self._qc.holes[1])
             for c in cols:
-                c["mass"] = np.full(c["nodes"].size, mz_h)
+                c["mass"] = np.full(c["z"].size, mz_h)
         kT = KB * self.T
         eta = None if scattering_time is None else HBAR / scattering_time / QE
         nx = max(int(round((xc[-1] - xc[0]) / dx)), 2) + 1
@@ -4079,7 +4105,7 @@ class Device:
         try:
             x = st0._x.copy()
             target = self._check_bias(bias)
-            qnodes = np.concatenate([c["nodes"] for c in cols])
+            qnodes = self._negf_nodes(cols)
             hist = []
             probe_F = None
             beta = 0.3
@@ -4093,41 +4119,46 @@ class Device:
                 # subbands of every column: as many as the column with the
                 # most states below emax holds
                 K = 1
-                for c in cols:
-                    E, _, _ = column_states(c["z"], Ec[c["nodes"]], c["mass"], self._qc.n_states,
+                Ecc = [self._negf_band(c, psi, holes) for c in cols]
+                for c, U_ in zip(cols, Ecc):
+                    E, _, _ = column_states(c["z"], U_, c["mass"], self._qc.n_states,
                                             c["zl"], c["zr"], e_max=emax)
                     K = max(K, E.size)
-                K = min(K, min(c["nodes"].size for c in cols))
+                K = min(K, min(c["z"].size for c in cols))
                 Ei = np.empty((len(cols), K))
                 mi = np.empty((len(cols), K))
                 P2 = []
                 for k, c in enumerate(cols):
-                    E, p2, w = column_states(c["z"], Ec[c["nodes"]], c["mass"], K,
+                    E, p2, w = column_states(c["z"], Ecc[k], c["mass"], K,
                                              c["zl"], c["zr"])
                     c["w"] = w
                     Ei[k] = E
                     P2.append(p2)
                     mi[k] = (mxy_h if holes else
                              (w[:, None] * p2 * c["mass"][:, None]).sum(0))
-                ncol = [np.zeros(c["nodes"].size) for c in cols]
+                ncol = [np.zeros(c["z"].size) for c in cols]
                 modes, mode_I, trans = [], [], []
                 newF = []
                 if coupled_modes is not None:
                     # one slab: every column's band edge and mass on the
                     # common z nodes, interpolated along x
-                    nodes = np.array([c["nodes"] for c in cols])          # (ncol, Nz)
-                    Ug = np.array([np.interp(xs, xc, Ec[nodes[:, q]])
-                                   for q in range(nodes.shape[1])]).T
+                    Uc = np.array(Ecc)                                    # (ncol, Nz)
+                    Ug = np.array([np.interp(xs, xc, Uc[:, q])
+                                   for q in range(Uc.shape[1])]).T
                     if holes:
                         Mg = np.full(Ug.shape, mz_h)
                     else:
-                        Mg = np.array([np.interp(xs, xc, self.me_node[nodes[:, q]])
-                                       for q in range(nodes.shape[1])]).T
+                        Mc = np.array([c["mass"] for c in cols])
+                        Mg = np.array([np.interp(xs, xc, Mc[:, q])
+                                       for q in range(Mc.shape[1])]).T
                     slab = Slab(Ug, Mg, a, cols[0]["z"], cols[0]["zl"], cols[0]["zr"],
-                                n_modes=coupled_modes, mass_x=mxy_h if holes else None)
+                                n_modes=coupled_modes, mass_x=mxy_h if holes else None,
+                                eta=eta)
+                    guess_F = None if probe_F is None or not probe_F else probe_F[0]
                     r = slab_transport(slab, FS, FD, kT, energy_step=energy_step,
                                        emax_kT=emax_kT, rtol=energy_rtol,
-                                       mass_y=mxy_h if holes else None)
+                                       mass_y=mxy_h if holes else None,
+                                       probe_guess=guess_F)
                     cum = np.concatenate([np.zeros((1, slab.Nz)), np.cumsum(
                         0.5 * (r["n"][1:] + r["n"][:-1]) * a, axis=0)])
                     for k in range(len(cols)):
@@ -4138,7 +4169,7 @@ class Device:
                     modes.append(dict(x=xs, E=sg * slab.Ez, mass=Mg))
                     mode_I.append(sg * r["I"] * 1e6)
                     trans.append((sg * r["E"], r["T"]))
-                    newF.append(None)
+                    newF.append(r["probe_F"])
                 for i in range(K if coupled_modes is None else 0):
                     if float(np.min(Ei[:, i])) > emax:
                         break
@@ -4166,10 +4197,9 @@ class Device:
                 kq = 2 if holes else 1
                 dos_ = self.Nv if holes else self.Nc
                 fn_new = X[:, kq].copy()
-                for k, c in enumerate(cols):
-                    nd = c["nodes"]
-                    dens = np.maximum(ncol[k], 1e-30 * dos_[nd])
-                    fn_new[nd] = sg * (Ec[nd] + kT * self._inv_occ(dens / dos_[nd]))
+                nd, dens = self._negf_density(cols, ncol)
+                dens = np.maximum(dens, 1e-30 * dos_[nd])
+                fn_new[nd] = sg * (Ec[nd] + kT * self._inv_occ(dens / dos_[nd]))
                 X[:, kq] = fn_new
                 x1, _ = self._poisson_frozen(X.ravel(), target, Tn)
                 psi1 = x1.reshape(self.N, nv)[:, 0]
