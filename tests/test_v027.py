@@ -118,8 +118,9 @@ def test_device_negf_in_coupled_mode_space():
     # uncoupled result (0.45 percent with 6 modes, 0.7 percent with 12)
     assert c.negf["current"] == pytest.approx(u.negf["current"], rel=0.01)
     assert c.current["drain"] == -c.current["source"] == c.negf["current"]
-    with pytest.raises(ValueError, match="ballistic"):
-        dev.negf(b, coupled_modes=4, scattering_time=1e-13)
+    # (since 0.32.0 coupled modes also take scattering_time: test_v032)
+    with pytest.raises(ValueError, match="integer"):
+        dev.negf(b, coupled_modes=0)
 
 
 # ------------------------------------------------ quality mesh generator

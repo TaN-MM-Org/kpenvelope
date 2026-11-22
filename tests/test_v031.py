@@ -148,9 +148,6 @@ def test_app_interface_vibrations_and_level_changes():
     st = dev.negf(b, guess=dev.solve(b), dx=0.5, coupled_modes=4)
     assert r["negf"] == pytest.approx(st.negf["current"], rel=1e-12)
     assert r["mixing"] and r["subbands"] == 4
-    with pytest.raises(api.SpecError, match="without bumping"):
-        api.run_quantum(_spec(transistor=dict(S), quantum_transport={
-            "gate": -1, "drain": 0.05, "mixing": True, "scattering": True}))
 
 
 # ------------------------------------------------------- plasma chemistry

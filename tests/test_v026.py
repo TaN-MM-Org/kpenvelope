@@ -213,8 +213,9 @@ def test_quantum_channel_on_a_mesh_equals_the_tensor_grid():
     assert c.current["drain"] == pytest.approx(a.current["drain"], rel=1e-10)
     assert np.max(np.abs(a.psi.ravel() - c.psi)) < 1e-10
     assert np.max(np.abs(a.quantum_potential.ravel() - c.quantum_potential)) < 1e-10
-    with pytest.raises(ValueError, match="tensor grids"):
-        M.negf(b)
+    # since 0.32.0 the ballistic limit (and NEGF, see test_v032) work on
+    # the mesh's lines too
+    assert M.ballistic_current(c)[0] == pytest.approx(T.ballistic_current(a)[0], rel=1e-10)
 
 
 def test_quantum_channel_on_an_unstructured_mesh_converges():
