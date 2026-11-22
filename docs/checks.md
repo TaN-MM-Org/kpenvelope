@@ -358,10 +358,12 @@ the tests use:
   that of drift-diffusion with mu = q tau / m at a step of 1 nm (the
   uncoupled chains: 1.16 at that step, 1.06 at 0.5 nm), a check run once
   and not in the test suite because it takes two minutes.
-- NEGF on a mesh made from a tensor grid equals the tensor grid's with
-  probes (1e-6; measured 1e-15) and with two coupled modes (1e-6;
-  measured 1.2e-7), current and potential; the ballistic limit too
-  (1e-10).
+- NEGF on a mesh made from a tensor grid equals the tensor grid's, with
+  both self-consistent loops run to 1e-6 V: with probes (1e-8; measured
+  2e-15) and with two coupled modes (1e-8; measured 5e-10), current and
+  potential; the ballistic limit too (1e-10). At the default tolerance
+  of 1e-4 V the two loops can stop up to about 1e-6 apart (seen on one
+  CI machine).
 
 **Interface phonons, a plasma model, levels that mix in the app (new in 0.31.0)**
 
