@@ -49,16 +49,18 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.31.0) has the library's features of 0.24.0 to 0.31.0
+- The app (since 0.32.0) has the library's features of 0.24.0 to 0.32.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
   only, no heat), with the four lowest levels joined along the channel
-  if you ask (then without scattering), the Fermi-Dirac heat per
+  if you ask (with or without scattering; with both, on a 1 nm step
+  along the channel), the Fermi-Dirac heat per
   electron, simulated implant ranges, plasma etching and oxide flow in
   the process recipe, and the mobility of the electron layer with the
   interface vibrations of the boundary next to the electrons (GaN on its
   side, your numbers on the other). It does not offer the triangle and
-  adaptive meshes, the NEGF of holes (its transistor is an electron
+  adaptive meshes (its transistor is built on a rectangular grid), the
+  NEGF of holes (its transistor is an electron
   device), the plasma chemistry (the recipe takes the fluxes; the
   library's `GlobalPlasma` gives them), the separate lifetimes of
   `Subband`, or 3D devices; use the library for those.
@@ -305,7 +307,11 @@ The limits of each part of the package, in detail. The
   (since 0.27.0), so on a mesh made from a tensor grid the result
   differs from the tensor grid's where a band step lies inside the
   window (the tensor grid gives the node on the step wholly to the layer
-  above). `negf` and `ballistic_current` are for tensor grids only. Each
+  above). Since 0.32.0 `negf` and `ballistic_current` also run on a
+  mesh, on the QuantumChannel's lines (each line a column; the density
+  goes back to the nodes as the QuantumChannel's does; coupled modes only
+  where every line has the same samples, as on a mesh made from a tensor
+  grid). Each
   node is filled with its own electron quasi-Fermi level, which is the
   Schroedinger-Poisson density wherever that level does not change along
   the column, as in equilibrium and along a channel; where it does (a
@@ -331,11 +337,18 @@ The limits of each part of the package, in detail. The
   do not change subband; the transverse direction is free with one mass
   per subband, and the leads continue the end columns' potential. Since
   0.27.0 `coupled_modes` lets electrons change subband (coupled mode
-  space, or the full 2D problem with all modes), but only without
-  scattering, only when every column between the contacts has the same
-  z nodes, and at a cost that grows as the cube of the number of modes
-  (in the transistor of example 57, about 40 s with 6 modes and 150 s
-  with 12 on one core of our test machine). The chains are fed at their ends from the source and drain
+  space, or the full 2D problem with all modes), only when every column
+  between the contacts has the same z nodes, and at a cost that grows as
+  the cube of the number of modes (in the transistor of example 57, about
+  40 s with 6 modes and 150 s with 12 on one core of our test machine).
+  Since 0.32.0 they take scattering too: one Buttiker probe per column,
+  joined to each of its modes above that mode's bottom, with one Fermi
+  level for the column (a probe on every node of a column with one level,
+  seen in the mode basis). Its cost grows as the square of the number of
+  columns (every block of G is formed): about 1.5 minutes for four modes
+  over 90 columns in example 73. The uncoupled chains have one probe per
+  subband and site instead, so the two pictures differ a little (1.4
+  percent in example 73, 0.6 percent in a uniform channel). The chains are fed at their ends from the source and drain
   Fermi levels: access regions between a contact and the window (a
   contact on top of a barrier) are not in the quantum part. Without
   scattering, states in a dip of a subband below both leads' band

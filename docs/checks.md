@@ -343,6 +343,26 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Scattering in coupled mode space, NEGF on meshes (new in 0.32.0)**
+
+- A slab with one mode whose columns all have the same mode (a potential
+  that changes along x only) is a chain: with probes, the current
+  (1e-6; measured 2e-7, the decimation of the slab's leads against the
+  chain's exact lead), the density (1e-6; measured 1e-7) and the probes'
+  levels (1e-8; measured 2e-10) agree. The current into the drain equals
+  the current out of the source with one mode (1e-9; measured 7e-11)
+  and with two modes that mix (1e-8).
+- A uniform 2DEG channel 60 nm long: two coupled modes with probes and
+  the uncoupled subbands with theirs give the same current (2 percent;
+  measured 0.6). The resistance added from 60 to 120 nm is 1.09 times
+  that of drift-diffusion with mu = q tau / m at a step of 1 nm (the
+  uncoupled chains: 1.16 at that step, 1.06 at 0.5 nm), a check run once
+  and not in the test suite because it takes two minutes.
+- NEGF on a mesh made from a tensor grid equals the tensor grid's with
+  probes (1e-6; measured 1e-15) and with two coupled modes (1e-6;
+  measured 1.2e-7), current and potential; the ballistic limit too
+  (1e-10).
+
 **Interface phonons, a plasma model, levels that mix in the app (new in 0.31.0)**
 
 - Interface modes: the energies equal those of

@@ -33,7 +33,8 @@ lifetimes and mobility of a 2D gas; 66 to 68 polar optical phonons,
 meshes that adapt to the solution, and thermoelectric currents of a
 degenerate gas; 69 a gas of several subbands that scatter into each
 other; 70 the screening of all its pairs of levels; 71 the vibrations of
-an interface; 72 a plasma's chemistry feeding an etch.
+an interface; 72 a plasma's chemistry feeding an etch; 73 electrons that
+change subband and scatter.
 
 ### 1. Energy levels and what they are made of
 
@@ -2821,8 +2822,8 @@ is the full 2D problem. Two modes are too few here (the second and higher
 subbands carry current too); with four the current is within 0.2 percent
 of the 22 uncoupled chains, so in this transistor, whose channel changes
 slowly along x, subband mixing hardly matters. It matters where the
-cross-section changes over a few nanometers. Coupled modes are ballistic
-only. Numbers illustrative.
+cross-section changes over a few nanometers. Since 0.32.0 coupled modes
+take scattering too (example 73). Numbers illustrative.
 
 ### 63. Holes in quantum transport
 
@@ -3336,6 +3337,59 @@ flux over the atom density is 1.1 nm/s at 300 W and 17 nm/s at 1000 W,
 so the open surface and the bottom of the opening etch alike (to within
 a cell). All numbers of the chemistry are illustrative: the package
 ships no rate set.
+
+### 73. Electrons that change subband and scatter (new in 0.32.0)
+
+```python
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, Surface, QuantumChannel
+from kpenvelope.electrons import M0
+from kpenvelope.nitride import QE
+
+# the transistor of example 62, its electrons now scattered (Buttiker
+# probes with the time tau that gives a mobility of 1500 cm^2/Vs), with
+# every subband on its own and with four modes that can mix
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"),
+          StackLayer(algan(0.25), 20.0, name="barrier")]
+contacts = [Electrode("source", "ohmic", 0, 50, implant_depth=30, implant_donors=1e20),
+            Electrode("gate", "schottky", 85, 115, barrier=1.0),
+            Electrode("drain", "ohmic", 150, 200, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 200.0, contacts, Mobility(1500.0, "illustrative"),
+             Surface("pinned", barrier=1.0), dx_fine=5, dx_max=50, dz_fine=0.5, dz_max=50,
+             quantum=QuantumChannel((270.0, 319.5), x_range=(55, 145)))
+tau = 1500e-4 * algan(0.0).me * M0 / QE
+bias = {"gate": -1.0, "drain": 0.05}
+dd = dev.solve(bias)
+ball = dev.negf(bias, guess=dd, dx=1.0, coupled_modes=4)
+sep = dev.negf(bias, guess=dd, dx=1.0, scattering_time=tau)
+mix = dev.negf(bias, guess=dd, dx=1.0, scattering_time=tau, coupled_modes=4)
+print(f"tau = {tau:.3e} s")
+print(f"four modes, no scattering:      {ball.negf['current']:.4f} A/mm")
+print(f"every subband on its own, tau:  {sep.negf['current']:.4f} A/mm")
+print(f"four modes that mix, tau:       {mix.negf['current']:.4f} A/mm "
+      f"({100 * (mix.negf['current'] / sep.negf['current'] - 1):+.2f} %)")
+print(f"drift-diffusion:                {dd.current['drain']:.4f} A/mm")
+```
+
+```
+tau = 1.706e-13 s
+four modes, no scattering:      1.1690 A/mm
+every subband on its own, tau:  0.6427 A/mm
+four modes that mix, tau:       0.6517 A/mm (+1.39 %)
+drift-diffusion:                1.6314 A/mm
+```
+
+Coupled mode space now takes `scattering_time`: every column of the
+slab gets one Buttiker probe, joined to each of its modes, whose Fermi
+level makes the column's net probe current zero. Electrons are then
+scattered and can still move from one subband into another. With the
+scattering time that gives 1500 cm^2/Vs the current falls to about 55
+percent of the ballistic one. Letting four modes mix changes it by 1.4
+percent against the subbands each on its own (whose probes act on each
+subband separately), so here, as in example 62, mixing matters little.
+Drift-diffusion with 1500 cm^2/Vs and no top speed carries more than
+even the ballistic channel. The step along the channel is 1 nm to keep
+the run near two minutes. Numbers illustrative.
 
 ## Tutorials
 

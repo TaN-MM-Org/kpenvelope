@@ -634,6 +634,18 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Scattering in coupled mode space, NEGF on meshes (new in 0.32.0)**
+
+- `Device.negf(..., coupled_modes=M, scattering_time=tau)` -- coupled
+  mode space with Buttiker probes: one probe per column, joined to each
+  of its modes above that mode's bottom, with one Fermi level (example
+  73). `negf.Slab(..., eta=None)` takes the probes' broadening, and
+  `negf.slab_transport` then returns the probes' levels (`probe_F`) and
+  the current at both ends (`I`, `I_source`).
+- `MeshDevice.negf` and `MeshDevice.ballistic_current` -- the same as
+  on a tensor grid, on the QuantumChannel's lines through the mesh.
+- The app: the wave current can let levels mix and scatter at once.
+
 **Interface phonons, a plasma model, levels that mix in the app (new in 0.31.0)**
 
 - `Subbands.interface_phonons(z_interface, below, above,
