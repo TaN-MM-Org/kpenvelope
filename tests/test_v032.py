@@ -82,10 +82,10 @@ def test_negf_on_a_mesh_equals_the_tensor_grid():
          for k, m, d in (("b1", bar, 1e-4), ("w", g, 1e-3), ("b2", bar, 1e-4))}
     M = MeshDevice(mesh, R, el, con, quantum=qc)
     b = {"drain": 0.05, "gate": -0.3}
+    # the self-consistent loops are run to 1e-6 V, so that both stop on the
+    # same answer (at the default 1e-4 V the two can stop 1e-6 apart)
     for kw in (dict(scattering_time=1e-13), dict(coupled_modes=2)):
-        a = T.negf(b, guess=T.solve(b), dx=2.0, **kw)
-        c = M.negf(b, guess=M.solve(b), dx=2.0, **kw)
-        # (measured 1e-15 with probes and 1e-7 with coupled modes, whose
-        # self-consistent loops stop at their tolerance)
-        assert c.negf["current"] == pytest.approx(a.negf["current"], rel=1e-6)
-        assert np.max(np.abs(a.psi.ravel() - c.psi)) < 1e-6
+        a = T.negf(b, guess=T.solve(b), dx=2.0, tol=1e-6, **kw)
+        c = M.negf(b, guess=M.solve(b), dx=2.0, tol=1e-6, **kw)
+        assert c.negf["current"] == pytest.approx(a.negf["current"], rel=1e-8)
+        assert np.max(np.abs(a.psi.ravel() - c.psi)) < 1e-8
