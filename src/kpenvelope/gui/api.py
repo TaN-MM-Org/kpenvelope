@@ -1381,9 +1381,6 @@ def run_quantum(spec):
     bias = {"gate": vg, "drain": vd}
     dd = dev.solve(bias)
     kw = {}
-    if q.get("scattering") and q.get("mixing"):
-        raise SpecError("Electrons that change level along the channel are worked out "
-                        "without bumping only: untick one of the two.")
     if q.get("scattering"):
         # the scattering time that gives the tab's mobility: tau = mu m / q
         from ..electrons import M0
@@ -1394,8 +1391,12 @@ def run_quantum(spec):
         # the lowest four states of every column, joined along the channel
         # (coupled mode space, new in 0.31.0 in the app)
         kw["coupled_modes"] = 4
+    # with both bumping and mixing levels every column is joined to every
+    # other through the bumps: a coarser step along the channel keeps it to
+    # a few minutes
+    step = 1.0 if (kw.get("scattering_time") and kw.get("coupled_modes")) else 0.5
     try:
-        st = dev.negf(bias, guess=dd, dx=0.5, **kw)
+        st = dev.negf(bias, guess=dd, dx=step, **kw)
     except RuntimeError as e:
         raise SpecError("The wave calculation did not settle at this bias. Tick "
                         "'with scattering', or move the gate or drain voltage a little. "
