@@ -184,7 +184,8 @@ read the results on the right:
   density as one big number, and the lowest energy levels. Since 0.29.0
   it also finds the mobility of the electron layer, all its levels
   together; since 0.30.0 the charges and the roughness are screened by
-  all the levels together (the dielectric matrix).
+  all the levels together (the dielectric matrix), and since 0.31.0
+  the vibrations of the barrier and of the boundary can be included.
 - **How sure?**: how sure the electron density is, from the errors you
   give for each composition, thickness and the surface barrier, with a
   bar chart of where the error comes from (or a spread of random
@@ -232,7 +233,8 @@ read the results on the right:
   with the hot electrons; electrons can cross the barrier step by
   thermionic emission; and a thermal runaway button raises the drain
   voltage until no steady temperature is left. Since 0.24.0 the channel electrons can be
-  treated as quantum states. Since 0.30.0 the Peltier heat can take the
+  treated as quantum states. Since 0.31.0 the wave current can let
+  electrons change level along the channel. Since 0.30.0 the Peltier heat can take the
   full (Fermi-Dirac) heat per electron of the crowded channel, and for a
   short transistor (gaps and gate at most 600 nm together) the tab gives
   the current at one bias with the electrons treated as waves (NEGF,
@@ -631,6 +633,38 @@ example) gives its inputs, units and conventions.
   tunneling in the I-V sweep, and in the Transistor tab the full
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
+
+**Interface phonons, a plasma model, levels that mix in the app (new in 0.31.0)**
+
+- `Subbands.interface_phonons(z_interface, below, above,
+  temperature_K=None, screening=False)` -- the polar phonons of a
+  heterostructure with one interface, in the dielectric continuum model
+  for isotropic materials, each side given as (phonon_eV, eps_static,
+  eps_high): the half-space LO modes of the two sides and the interface
+  modes where eps_1(w) + eps_2(w) = 0, each with its coupling and form
+  factor (N. Mori and T. Ando, Phys. Rev. B 40, 6175 (1989)). Returns a
+  list of mechanisms for `mobility` and `lifetimes` (each has `name` and
+  `hw`). `Subbands.mobility` now takes phonons of several energies on one
+  energy grid, splitting a mode between the two nearest grid energies so
+  that its weight and mean energy are kept (example 71).
+- `kpenvelope.scattering.interface_modes(below, above)` -- the energies
+  (eV) and couplings of the interface modes of one interface.
+- `kpenvelope.plasma` -- `Species(name, mass_amu, charge=0, wall=0,
+  wall_products=None)`, `Reaction(reactants, products, A, reference, b=0,
+  C=0, energy_eV=0, elastic=False)` with k = A T_e^b exp(-C / T_e),
+  `GlobalPlasma(species, reactions, radius_m, length_m, power_W, feed,
+  pump_m3_s, h, h_source, gas_temperature_K=300)` and its `solve()`: the
+  densities, electron temperature, pressure, the ion (Bohm) and neutral
+  fluxes and the ions' energy at a floating wall, from a volume-averaged
+  model with your rates (the balances are those of M. A. Lieberman and
+  A. J. Lichtenberg, Principles of Plasma Discharges and Materials
+  Processing, 2nd ed., Wiley, 2005). `fluxes_cm2(result, neutral, ion)`
+  gives the two fluxes for `process.EtchKinetics`; `SCCM` converts flows
+  (example 72).
+- The app: in the Electrons tab, the mobility with the vibrations of the
+  barrier and of the boundary (your barrier numbers and their source); in
+  the Transistor tab, the wave current with the four lowest levels joined
+  along the channel.
 
 **Screening by every pair of subbands, the app catches up (new in 0.30.0)**
 

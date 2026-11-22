@@ -24,11 +24,17 @@ The limits of each part of the package, in detail. The
   charges). Acoustic phonons are in the
   equipartition limit (elastic; too fast below the Bloch-Gruneisen
   temperature). Polar optical phonons (since 0.28.0) are bulk LO phonons
-  of one energy, without dispersion, without the interface and confined
-  modes of the heterostructure (the dielectric continuum model of
-  `kpenvelope.phonons` has those, not coupled to the rates), without hot
-  phonons, unscreened by default (static screening, the option, is an
-  upper bound: at the phonon frequency screening is weaker); with them
+  of one energy, without dispersion; since 0.31.0
+  `Subbands.interface_phonons` has the modes of one interface between two
+  materials (the half-space LO modes of each side and the interface
+  modes), for isotropic materials with one oscillator each (wurtzite's
+  small anisotropy and the two-mode behavior of alloys such as AlGaN are
+  left out), not the confined modes of a thin barrier or several
+  interfaces; its mode energies are split between the two nearest points
+  of the energy grid (the error is second order in the step: 3e-4 at the
+  default step in example 71). There are no hot phonons. The phonons
+  are unscreened by default (static screening, the option, is an upper
+  bound: at the phonon frequency screening is weaker); with them
   the mobility comes from the exact solution of the linearized Boltzmann
   equation (of all the subbands together with `Subbands`), which takes
   energy steps of a fraction of the phonon energy and stops at 40 kT
@@ -43,15 +49,19 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.30.0) has the library's features of 0.24.0 to 0.30.0
+- The app (since 0.31.0) has the library's features of 0.24.0 to 0.31.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
-  only, uncoupled modes, no heat), the Fermi-Dirac heat per electron,
-  simulated implant ranges, plasma etching and oxide flow in the
-  process recipe, and the mobility of the electron layer. It does not
-  offer the triangle meshes and adaptive meshes, the NEGF of holes or
-  coupled modes, the separate scattering lifetimes of `Subband`, or the
-  3D devices; use the library for those.
+  only, no heat), with the four lowest levels joined along the channel
+  if you ask (then without scattering), the Fermi-Dirac heat per
+  electron, simulated implant ranges, plasma etching and oxide flow in
+  the process recipe, and the mobility of the electron layer with the
+  interface vibrations of the boundary next to the electrons (GaN on its
+  side, your numbers on the other). It does not offer the triangle and
+  adaptive meshes, the NEGF of holes (its transistor is an electron
+  device), the plasma chemistry (the recipe takes the fluxes; the
+  library's `GlobalPlasma` gives them), the separate lifetimes of
+  `Subband`, or 3D devices; use the library for those.
 - The default filling of both self-consistent loops is still the
   parabolic one, kept so that earlier results do not change. It treats
   every state as a parabola with one mass taken from a single small
@@ -229,7 +239,11 @@ The limits of each part of the package, in detail. The
   junction. Both models are coupled by repeated solves, not inside
   Newton's method, also when they run with self-heating, hot electrons
   or a set lattice temperature (since 0.23.0), so a solve with tunneling
-  and heat repeats the heated solve several times.
+  and heat repeats the heated solve several times (in the tunnel diode of
+  examples 45 and 48, one to five rounds per voltage and about a second
+  per self-heated point). Putting the nonlocal rates inside Newton's
+  method needs their derivatives along every path, many more rate
+  evaluations than these few rounds, so it was not done.
 - Temperature: with `temperature_model="full"` the lattice temperature
   sets kT, the densities of states, the gap (Varshni's form, with your
   split of the change between the bands), trap emission, the Richardson
@@ -331,7 +345,12 @@ The limits of each part of the package, in detail. The
   ungated channel; `scattering_time` adds Buttiker probes, which settle
   it. The
   probes relax momentum and energy at one rate (no phonon spectrum, no
-  separate energy relaxation); their broadening is cut at the local band
+  separate energy relaxation). Real phonon self-energies were not added:
+  a phonon that turns an electron's direction moves energy between its
+  motion along the channel and across the width, which the closed-form
+  sum over the width (each chain carries one energy along x) cannot
+  follow, so it needs the width's wave numbers on a grid, a different
+  and much larger calculation. The probes' broadening is cut at the local band
   bottom and the lost states near it are added back from an infinite
   uniform chain (exact there, approximate where the band changes fast).
   The probe resistance matches the Drude value q^2 n tau / m to about 1
@@ -366,9 +385,16 @@ The limits of each part of the package, in detail. The
   cross-section repeats as its mirror image at both sides. Their cost
   grows as the square of the number of surface cells. Ion-enhanced
   etching (`plasma_etch`, since 0.26.0) uses one first-order site balance
-  per face with your fluxes and coefficients; the plasma itself (the
-  gas-phase chemistry that sets the fluxes, the ion energy and angle
-  distributions, charging) is not modeled, and ions do not bounce.
+  per face with your fluxes and coefficients, and ions do not bounce.
+  The fluxes can come from `plasma.GlobalPlasma` (since 0.31.0), a
+  volume-averaged model of the plasma: positive ions only (no negative
+  ions), a Maxwellian electron energy distribution, one gas temperature
+  you give, neutral wall losses in the low-pressure (kinetic) limit, and
+  every rate coefficient, threshold, wall probability and the ions'
+  edge-to-center ratio h from you, with their sources (the package ships
+  none: the published sets it found could not be checked here). The ion
+  energy and angle distributions at the wafer and charging are not
+  modeled; the ions arrive with the floating-wall energy.
   Oxidation follows Deal and Grove, column by column or (mode="2d") with
   the oxidant diffusing in two dimensions; mode="2d" can also solve the
   oxide's slow viscous flow and stress (since 0.26.0, `stokes`: Newtonian,

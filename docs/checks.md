@@ -343,6 +343,35 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Interface phonons, a plasma model, levels that mix in the app (new in 0.31.0)**
+
+- Interface modes: the energies equal those of
+  `phonons.single_interface_modes` for the same isotropic materials
+  (1e-9; measured to the last digit), and each coupling equals the area
+  of its peak in -Im 2 / (eps_1 + eps_2) with a small damping (1.5e-3;
+  measured 5e-4 and 8e-4 at a damping of 1e-5 eV, ten times less than
+  at 1e-4 eV). The same
+  material on both sides gives one mode at w_LO with the bulk coupling
+  (1e-12).
+- The sum over the modes equals the potential of a point charge solved
+  on a grid across the interface with damped permittivities, -Im of it
+  integrated over the frequency (1e-3; measured 2.8e-4 at a damping of
+  1e-4 eV, and 1.5e-4 at half of it in a separate run).
+- Mobility: the same material on both sides gives the bulk phonon's
+  mobility (1e-10; measured 4e-16), an interface far from the gas gives
+  it too (1e-8; measured 3e-16), the operator keeps detailed balance with
+  four modes of different energies (1e-10), and a four times finer grid
+  agrees (1e-3; measured 7e-5).
+- Plasma: a gas with one ion against the particle and power balances
+  written out by hand and solved separately (1e-10; measured 2e-14); a
+  molecule that breaks up against the atoms' balance in closed form and
+  the count of atoms fed and pumped out (1e-10); the fluxes against
+  n vbar / 4 and h n u_B (1e-12); reactions that do not keep the charge
+  are refused.
+- The app: the mobility with GaN's own numbers on the barrier side
+  equals the bulk one (1e-10); the wave current with levels that mix
+  equals `Device.negf(coupled_modes=4)` (1e-12).
+
 **Screening by every pair of subbands, the app catches up (new in 0.30.0)**
 
 - The long-wavelength polarization of every pair equals the density

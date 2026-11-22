@@ -32,7 +32,8 @@ subband, holes in quantum transport, a quality mesh, and scattering
 lifetimes and mobility of a 2D gas; 66 to 68 polar optical phonons,
 meshes that adapt to the solution, and thermoelectric currents of a
 degenerate gas; 69 a gas of several subbands that scatter into each
-other; 70 the screening of all its pairs of levels.
+other; 70 the screening of all its pairs of levels; 71 the vibrations of
+an interface; 72 a plasma's chemistry feeding an etch.
 
 ### 1. Energy levels and what they are made of
 
@@ -3227,6 +3228,114 @@ electrons' wavelength (the Lindhard form, where Thomas-Fermi stays
 constant). Here the full form hides less than one Thomas-Fermi number
 does, so both mobilities come out lower, by about a fifth to a quarter.
 The roughness numbers and the charge sheet are illustrative.
+
+### 71. Vibrations of the interface (new in 0.31.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subbands
+
+# the 2DEG of example 69 (three levels), scattered by GaN's bulk polar
+# phonons, and by the phonons of the heterostructure: GaN below the
+# interface at 300 nm, a barrier above it whose numbers are illustrative
+# (LO 112 meV, permittivities 8.5 and 4.6)
+gan, bar = algan(0.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(bar, 25.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 324.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 324.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, bar.me)
+E, p2, w, psi = column_states(z, r.ec[win], mass, 3, z[0] - 0.1, z[-1] + 0.1, signed=True)
+gan_ph = (ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp)
+barrier = (0.112, 8.5, 4.6)
+sb = Subbands(z, psi, E, gan.me, ph.eps0_perp, fermi=0.0, weights=w)
+bulk = sb.mobility(sb.polar_optical(*gan_ph))["mobility_cm2Vs"]
+modes = sb.interface_phonons(300.0, gan_ph, barrier)
+res = sb.mobility(*modes)
+print(f"bulk GaN phonons: {bulk:.0f} cm^2/Vs")
+for m, mu in zip(modes, res["each"]):
+    print(f"  {m.name:22s} {1000 * m.hw:6.1f} meV  alone {mu:9.0f} cm^2/Vs")
+print(f"all modes of the heterostructure: {res['mobility_cm2Vs']:.0f} cm^2/Vs")
+```
+
+```
+bulk GaN phonons: 1235 cm^2/Vs
+  half-space LO below      92.5 meV  alone      1945 cm^2/Vs
+  half-space LO above     112.0 meV  alone    127048 cm^2/Vs
+  interface 74.0 meV       74.0 meV  alone     36358 cm^2/Vs
+  interface 103.9 meV     103.9 meV  alone      5210 cm^2/Vs
+all modes of the heterostructure: 1285 cm^2/Vs
+```
+
+Near the boundary between GaN and the barrier the polar vibrations are
+not those of bulk GaN. Each side vibrates on its own (the half-space
+modes, which vanish at the boundary), and two new vibrations live on the
+boundary itself, at the energies where the two permittivities add up to
+zero. `interface_phonons` returns all four, each with its own coupling
+and its own form factor, and `mobility` solves the Boltzmann equation
+with all of them at once. The GaN side scatters most, the upper
+interface mode clearly adds to it, and the lower interface mode and the
+barrier's own vibrations matter much less. Here the heterostructure's phonons allow about 4 percent
+more mobility than bulk GaN phonons, with these illustrative barrier
+numbers. With GaN on both sides the modes add up to the bulk result
+exactly (a test checks this).
+
+### 72. From the plasma's chemistry to the etch (new in 0.31.0)
+
+```python
+from kpenvelope.plasma import SCCM, GlobalPlasma, Reaction, Species, fluxes_cm2
+from kpenvelope.process import EtchKinetics, Structure
+
+# a molecular gas X2 that electrons ionize and break into atoms X; every
+# rate, threshold, the wall sticking of X and the edge-to-center ratio h
+# are illustrative; a cylinder of 15 cm radius and 30 cm length
+ill = "illustrative"
+X2, X = Species("X2", 70.9), Species("X", 35.45, wall=0.1, wall_products={"X2": 0.5})
+X2p = Species("X2+", 70.9, charge=1, wall_products={"X2": 1})
+reactions = [
+    Reaction(("e", "X2"), ("e", "e", "X2+"), 1e-14, ill, b=0.5, C=12.0, energy_eV=11.5),
+    Reaction(("e", "X2"), ("e", "X", "X"), 5e-14, ill, C=3.0, energy_eV=2.5),
+    Reaction(("e", "X2"), ("e", "X2"), 3e-14, ill, b=1.0, elastic=True)]
+for power in (300.0, 1000.0):
+    pl = GlobalPlasma([X2, X, X2p], reactions, 0.15, 0.30, power, {"X2": 30 * SCCM},
+                      pump_m3_s=0.05, h=0.3, h_source=ill)
+    r = pl.solve()
+    neutral, ion = fluxes_cm2(r, "X", "X2+")
+    print(f"{power:6.0f} W: Te {r['Te_eV']:.2f} eV, n_e {r['ne']:.2e} m^-3, "
+          f"{1e3 * r['pressure_Pa'] / 133.322:.1f} mTorr, X flux {neutral:.2e}, "
+          f"ion flux {ion:.2e} cm^-2 s^-1, ions hit with {r['ion_energy_eV']['X2+']:.0f} eV")
+    # those fluxes etch a 40 nm opening in silicon (surface numbers illustrative)
+    st = Structure(120.0, 0.0, 160.0, 2.0, "Si", 120.0)
+    st.etch({"Si": 1.0}, 40.0, mode="directional", window=(40, 80))
+    kin = EtchKinetics(neutral, ion, 1e15, {"Si": 0.2}, {"Si": 5.0}, {"Si": 5e22}, ill)
+    top0, bot0 = st.thickness("Si", 10.0), st.thickness("Si", 60.0)
+    st.plasma_etch(kin, 5.0)
+    print(f"        in 5 s the open surface etches {top0 - st.thickness('Si', 10.0):.0f} nm, "
+          f"the bottom of the opening {bot0 - st.thickness('Si', 60.0):.0f} nm")
+```
+
+```
+   300 W: Te 2.35 eV, n_e 2.03e+16 m^-3, 13.1 mTorr, X flux 3.24e+18, ion flux 1.09e+15 cm^-2 s^-1, ions hit with 13 eV
+        in 5 s the open surface etches 6 nm, the bottom of the opening 6 nm
+  1000 W: Te 4.62 eV, n_e 2.25e+17 m^-3, 16.4 mTorr, X flux 5.48e+18, ion flux 1.69e+16 cm^-2 s^-1, ions hit with 25 eV
+        in 5 s the open surface etches 78 nm, the bottom of the opening 78 nm
+```
+
+`GlobalPlasma` balances, averaged over the chamber, the creation and
+loss of every species (in the gas, at the walls and through the pump)
+and the electrons' energy (power in; ionization, excitation, elastic
+collisions and the wall out). It gives the electron temperature and
+density, the pressure, the flux of each neutral and ion to the wafer and
+the energy the ions bring. Those fluxes go straight into `EtchKinetics`.
+Here the gas is plentiful and the ions set the rate: yield times ion
+flux over the atom density is 1.1 nm/s at 300 W and 17 nm/s at 1000 W,
+so the open surface and the bottom of the opening etch alike (to within
+a cell). All numbers of the chemistry are illustrative: the package
+ships no rate set.
 
 ## Tutorials
 
