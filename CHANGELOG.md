@@ -4,6 +4,50 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.31.0 (2026-11-22)
+
+The vibrations of an interface join the mobility, a model of the
+plasma's chemistry feeds the etch, and the app lets electrons change
+level in the wave current. The examples print what they printed before;
+examples 71 and 72 are new.
+
+### Added
+
+- `Subbands.interface_phonons`: the polar phonons of one interface
+  between two materials (half-space LO modes of each side and the
+  interface modes, Mori and Ando 1989), and `scattering.interface_modes`.
+  `Subbands.mobility` now solves the Boltzmann equation with phonons of
+  several energies on one grid.
+- `kpenvelope.plasma`: `Species`, `Reaction`, `GlobalPlasma` (a
+  volume-averaged model of an electropositive plasma with your rates:
+  densities, electron temperature, pressure, the ion and neutral fluxes
+  and the ions' energy), `fluxes_cm2` for `EtchKinetics`, and `SCCM`.
+- The app, Electrons tab: the mobility can count the vibrations of the
+  barrier and of the boundary (your barrier numbers, with their source).
+- The app, Transistor tab: the wave current can let electrons change
+  level along the channel (the four lowest, joined).
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF (they need the width's wave numbers on a
+  grid), scattering in coupled mode space, NEGF on triangle meshes; the
+  confined phonons of thin layers and several interfaces; any shipped
+  plasma rate set, negative ions; the oxide's shape following its flow,
+  and elasticity; better electronic stopping for implants; tunnel paths
+  that bend with the field; tunneling and heat inside one Newton solve
+  (one to five rounds per voltage in the tests); the hot-electron model's
+  limit at zero relaxation time (a property of the model).
+
+### Checks (tests)
+
+5 new tests (399 in all; docs/checks.md has the tolerances): the
+interface modes against the dielectric-continuum roots and the damped
+peak areas; the sum of the modes against a point charge's potential
+solved on a grid; the mobility with interface phonons against bulk
+(same material, far interface), detailed balance and grid convergence;
+the plasma against its balances written out by hand; the app's new
+options against the library. All 72 documented examples were rerun.
+
 ## 0.30.0 (2026-11-21)
 
 The app catches up with the library, and the levels of a 2D gas screen

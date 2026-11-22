@@ -47,7 +47,8 @@ only looks right.
 - Scattering lifetimes and mobility of a 2D gas from its own
   wavefunctions, with electrons moving between its levels: acoustic and
   polar optical phonons (by an exact solution of the Boltzmann
-  equation), alloy disorder, interface roughness and charged impurities,
+  equation, with the interface vibrations of a heterostructure if you
+  want them), alloy disorder, interface roughness and charged impurities,
   screened by all the levels together, with the material numbers you
   give (also in the app).
 - Leakage and band gaps that change with temperature, so a leaky
@@ -57,7 +58,8 @@ only looks right.
   meshes that can also refine where the solution changes fast.
 - Process steps that build the shape and the doping: deposition and
   etching (also with the shadowing of narrow openings, particles that
-  bounce, and etching driven by ions and a reactive gas together),
+  bounce, and etching driven by ions and a reactive gas together, with
+  the fluxes from a model of the plasma's chemistry),
   oxidation (also under mask edges, with the oxide's flow and stress),
   implants (with ranges from a Monte Carlo simulation of the ions) and
   anneals.
@@ -179,7 +181,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  70 worked examples, each with the output it prints, and three
+  72 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -218,8 +220,9 @@ The main gaps, in plain terms:
   drift-diffusion as its relaxation time goes to zero. That is how such
   models behave; the attempts to change it are described on the limits
   page, with the numbers.
-- Process steps stay simple in other ways. There is no model of the
-  plasma itself (you give the fluxes), growing oxide flows but its shape
+- Process steps stay simple in other ways. The plasma model is
+  averaged over the chamber, for positive ions only, with your rates
+  and wall factors; growing oxide flows but its shape
   follows a simple volume rule and there is no elasticity, the Monte
   Carlo implant ranges use a textbook electronic stopping that can be off
   by tens of percent for light ions, diffusion constants come from you,
@@ -229,16 +232,16 @@ The main gaps, in plain terms:
   but you run the loop of meshing and solving yourself.
 - Tunneling between bands follows straight paths in one direction, not
   paths that bend with the field. Models that depend on each other, such
-  as tunneling and heat, are solved by taking turns, which is slower than
-  solving them together.
+  as tunneling and heat, are solved by taking turns (one to five rounds
+  per voltage in the tests).
 - The heat carried by electrons, and their thermal diffusion, are by
   default in a simple form that comes out too small where the electrons
   are very dense; the Fermi-Dirac form is an option, still for one
   energy-independent scattering time.
-- The polar optical phonons of the scattering lifetimes are bulk ones
-  of one energy, without the interface modes of the heterostructure.
-  Screening by all the levels together is an option (static, and only
-  among the levels you pass).
+- The polar optical phonons of the scattering lifetimes are bulk ones,
+  or those of one interface between two materials (isotropic, one
+  oscillator each). Screening by all the levels together is an option
+  (static, and only among the levels you pass).
 - No material numbers without a source: where a number is missing, you
   supply it with its source.
 - There is no paid support. Questions and bug reports go to the
