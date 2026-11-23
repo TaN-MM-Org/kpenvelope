@@ -34,7 +34,8 @@ meshes that adapt to the solution, and thermoelectric currents of a
 degenerate gas; 69 a gas of several subbands that scatter into each
 other; 70 the screening of all its pairs of levels; 71 the vibrations of
 an interface; 72 a plasma's chemistry feeding an etch; 73 electrons that
-change subband and scatter.
+change subband and scatter; 74 springy oxide and a mask that bends; 75
+negative ions in a plasma.
 
 ### 1. Energy levels and what they are made of
 
@@ -3390,6 +3391,97 @@ subband separately), so here, as in example 62, mixing matters little.
 Drift-diffusion with 1500 cm^2/Vs and no top speed carries more than
 even the ballistic channel. The step along the channel is 1 nm to keep
 the run near two minutes. Numbers illustrative.
+
+### 74. Springy oxide and a mask that bends (new in 0.33.0)
+
+```python
+import numpy as np
+from kpenvelope.process import Structure
+
+# a small LOCOS: a 10 nm nitride mask on the left, on a 4 nm pad oxide,
+# oxidized with the illustrative constants of example 61; the oxide flows
+# (1e12 Pa s); then the oxide is also elastic (shear modulus 30 GPa) and
+# the mask is an elastic solid (100 GPa) instead of rigid; moduli and
+# viscosity illustrative
+for label, kw in (("viscous oxide, rigid mask", {}),
+                  ("Maxwell oxide, elastic mask",
+                   dict(shear_modulus={"SiO2": 3e10, "Si3N4": 1e11}))):
+    st = Structure(160.0, 0.0, 160.0, 2.0, "Si", 100.0)
+    st.deposit("SiO2", 4.0, mode="directional")
+    st.deposit("Si3N4", 10.0, mode="directional", window=(0, 80))
+    st.oxidize("Si", "SiO2", 0.5, 0.05, 1500.0, 0.44, "illustrative", mode="2d",
+               viscosity={"SiO2": 1e12}, **kw)
+    S, ox, nit = st.oxide_stress, st.mat == "SiO2", st.mat == "Si3N4"
+    sx = S["sxx"][nit]
+    mask = ("rigid, no stress" if np.all(np.isnan(sx)) else
+            f"sigma_xx from {np.nanmin(sx) / 1e9:+.2f} to {np.nanmax(sx) / 1e9:+.2f} GPa")
+    print(f"{label}: oxide {st.area('SiO2'):.0f} nm^2, under the mask edge "
+          f"{st.thickness('SiO2', 76):.0f} nm; most compressive in the oxide "
+          f"{min(np.nanmin(S['sxx'][ox]), np.nanmin(S['szz'][ox])) / 1e9:+.2f} GPa; "
+          f"mask {mask}")
+```
+
+```
+viscous oxide, rigid mask: oxide 2364 nm^2, under the mask edge 16 nm; most compressive in the oxide -6.93 GPa; mask rigid, no stress
+Maxwell oxide, elastic mask: oxide 2364 nm^2, under the mask edge 16 nm; most compressive in the oxide -3.73 GPa; mask sigma_xx from -12.83 to +9.10 GPa
+```
+
+With only a viscosity the oxide is a very thick liquid: its stress
+follows its flow at once, and the nitride mask is rigid, so it carries
+no stress at all. With `shear_modulus` the oxide is a Maxwell material:
+stress builds up over the time eta / G (here 33 s) and relaxes as the
+oxide flows, so it stays lower where new oxide keeps pushing in. A
+material with a modulus but no viscosity is an elastic solid: the mask
+now bends over the swelling oxide at its edge, squeezed on one side and
+stretched on the other. The shape is the same in both runs (the stress
+does not feed back here; with `stress_volume_nm3` it would). The
+numbers are illustrative.
+
+### 75. Negative ions in the plasma (new in 0.33.0)
+
+```python
+from kpenvelope.plasma import SCCM, GlobalPlasma, Reaction, Species
+
+# a gas A that electrons ionize and, with an attachment rate k_a, also
+# turn into negative ions, which the walls send back and which recombine
+# with positive ions in the gas; every number is illustrative. Strong
+# attachment is reached step by step, each solve starting from the last
+ill = "illustrative"
+A = Species("A", 40.0)
+Ap = Species("A+", 40.0, charge=1, wall_products={"A": 1})
+Am = Species("A-", 40.0, charge=-1)
+prev = None
+for k_a in (0.0, 1e-16, 3e-16, 1e-15):
+    rx = [Reaction(("e", "A"), ("e", "e", "A+"), 2.3e-14, ill, b=0.59, C=17.44,
+                   energy_eV=15.76),
+          Reaction(("e", "A"), ("A-",), k_a, ill),
+          Reaction(("A-", "A+"), ("A", "A"), 1e-13, ill),
+          Reaction(("e", "A"), ("e", "A"), 2.3e-14, ill, b=1.6, elastic=True)]
+    r = GlobalPlasma([A, Ap, Am], rx, 0.15, 0.30, 500.0, {"A": 20 * SCCM},
+                     pump_m3_s=0.05, h=0.3, h_source=ill).solve(guess=prev)
+    prev = r          # each solve starts from the one before
+    d = r["densities"]
+    print(f"k_a = {k_a:.0e} m^3/s: Te {r['Te_eV']:.2f} eV, n_e {r['ne']:.2e}, "
+          f"A- {d['A-']:.2e} m^-3 ({d['A-'] / r['ne']:.2f} per electron), "
+          f"ion flux {r['ion_flux']['A+'] * 1e-4:.2e} cm^-2 s^-1")
+```
+
+```
+k_a = 0e+00 m^3/s: Te 2.82 eV, n_e 2.60e+17, A- 0.00e+00 m^-3 (0.00 per electron), ion flux 2.03e+16 cm^-2 s^-1
+k_a = 1e-16 m^3/s: Te 3.43 eV, n_e 8.69e+16, A- 8.86e+16 m^-3 (1.02 per electron), ion flux 1.51e+16 cm^-2 s^-1
+k_a = 3e-16 m^3/s: Te 4.17 eV, n_e 2.92e+16, A- 1.11e+17 m^-3 (3.81 per electron), ion flux 1.34e+16 cm^-2 s^-1
+k_a = 1e-15 m^3/s: Te 5.88 eV, n_e 5.37e+15, A- 9.53e+16 m^-3 (17.76 per electron), ion flux 1.14e+16 cm^-2 s^-1
+```
+
+A species with `charge=-1` is a negative ion. The walls never see it:
+the sheath in front of them turns it back, so it is lost only in the gas
+(here by recombining with positive ions) and through the pump. The
+electrons are the positive ions less the negative ones. As attachment
+grows the plasma fills with negative ions, the few electrons left get
+hotter to keep up the ionization, and fewer positive ions reach the
+wafer. The strongly attaching case is reached in steps with `guess=`:
+started cold, the time integration loses its electrons before the
+plasma settles. All numbers are illustrative.
 
 ## Tutorials
 

@@ -343,6 +343,28 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Springy oxide, masks that bend, negative ions (new in 0.33.0)**
+
+- A uniform layer swelling at a constant rate: the Maxwell stress after
+  n steps equals 2 eta q (1 - chi^n), and an elastic solid's 2 G q t
+  (1e-10; measured 1e-13).
+- A step of oxide with a steady random source: after 60 steps the
+  Maxwell stress has settled on the viscous one, sxx, szz and sxz
+  (1e-10; measured 1.5e-13). This checks the old stress kept at the
+  corners and the edges: a first version, which took each corner's
+  effective viscosity and kept share as plain means of the cells around
+  it, settled 6 to 16 percent away from the viscous stress next to the
+  gas and the rigid silicon; each corner now takes the mean viscosity
+  times one minus the mean share kept.
+- The oxidation with an enormous modulus gives the viscous result (area
+  exact, stress 1e-9; measured 1e-11); with 30 GPa its stress is lower.
+- The app's elastic mask equals the library's (1e-12).
+- Negative ions: the densities and T_e equal the balances written out by
+  hand and solved separately (1e-9; measured 6e-14), n_e is the positive
+  less the negative ions, no negative ion reaches the wall, and a
+  strongly attaching gas (18 negative ions per electron) is reached in
+  steps from a guess.
+
 **Scattering in coupled mode space, NEGF on meshes (new in 0.32.0)**
 
 - A slab with one mode whose columns all have the same mode (a potential

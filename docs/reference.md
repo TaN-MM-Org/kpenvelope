@@ -634,6 +634,22 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Springy oxide, masks that bend, negative ions (new in 0.33.0)**
+
+- `Structure.stokes(..., shear_modulus={material: G}, dt=, history=)` --
+  Maxwell viscoelastic flow, one backward-Euler step dt at a time
+  (eta' = eta G dt / (eta + G dt) and the share eta / (eta + G dt) of the
+  old stress kept); a material with a modulus but no viscosity is an
+  elastic solid. The result has `tau` for the next step.
+- `Structure.oxidize(..., mode="2d", viscosity=..., shear_modulus=...)` --
+  the oxidation with that flow, the stress carried with the cells
+  (example 74).
+- `plasma.Species(charge=-1)` -- negative ions (no wall loss), electrons
+  from quasi-neutrality; `GlobalPlasma.solve(guess=result)` starts from a
+  nearby solution (example 75).
+- The app: `modulus=` and `modulus_X=` in the oxidize step of Process
+  steps; the summary gives the range of stress in each elastic solid.
+
 **Scattering in coupled mode space, NEGF on meshes (new in 0.32.0)**
 
 - `Device.negf(..., coupled_modes=M, scattering_time=tau)` -- coupled

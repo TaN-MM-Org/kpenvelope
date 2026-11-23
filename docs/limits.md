@@ -49,14 +49,14 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.32.0) has the library's features of 0.24.0 to 0.32.0
+- The app (since 0.33.0) has the library's features of 0.24.0 to 0.33.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
   only, no heat), with the four lowest levels joined along the channel
   if you ask (with or without scattering; with both, on a 1 nm step
   along the channel), the Fermi-Dirac heat per
-  electron, simulated implant ranges, plasma etching and oxide flow in
-  the process recipe, and the mobility of the electron layer with the
+  electron, simulated implant ranges, plasma etching, oxide flow,
+  springy oxide and masks that bend in the process recipe, and the mobility of the electron layer with the
   interface vibrations of the boundary next to the electrons (GaN on its
   side, your numbers on the other). It does not offer the triangle and
   adaptive meshes (its transistor is built on a rectangular grid), the
@@ -400,8 +400,12 @@ The limits of each part of the package, in detail. The
   etching (`plasma_etch`, since 0.26.0) uses one first-order site balance
   per face with your fluxes and coefficients, and ions do not bounce.
   The fluxes can come from `plasma.GlobalPlasma` (since 0.31.0), a
-  volume-averaged model of the plasma: positive ions only (no negative
-  ions), a Maxwellian electron energy distribution, one gas temperature
+  volume-averaged model of the plasma: positive ions and (since 0.33.0)
+  negative ions, which never reach the wall (the Bohm speed stays that of
+  an electropositive plasma, so your h must carry the change negative
+  ions make at the edge; strongly electronegative cases may need to be
+  reached in steps with `guess=`), a Maxwellian electron energy
+  distribution, one gas temperature
   you give, neutral wall losses in the low-pressure (kinetic) limit, and
   every rate coefficient, threshold, wall probability and the ions'
   edge-to-center ratio h from you, with their sources (the package ships
@@ -415,9 +419,15 @@ The limits of each part of the package, in detail. The
   fluid 1e4 times less viscous in place of a free surface) and slow the
   reaction where the stress normal to the interface is compressive. The
   shape still follows the volume rule (the new volume moves cells up or
-  into the nearest gas), not the flow; there is no elasticity (no stress
-  in a rigid mask), no stress dependence of the oxidant's diffusion or
-  of the viscosity, no dependence on crystal orientation, and the result
+  into the nearest gas), not the flow. Since 0.33.0 `shear_modulus`
+  makes the oxide viscoelastic (Maxwell, one relaxation time per
+  material, stepped in time between flow solves, with the stress carried
+  along when cells move and new oxide starting without stress) and a mask
+  with a modulus but no viscosity an elastic solid that bends and holds
+  stress; the elasticity is small-strain and linear, with one shear
+  modulus (no separate bulk modulus: the volume change is the oxide's
+  own source), and the cells still do not move with it. There is no
+  stress dependence of the oxidant's diffusion or of the viscosity, no dependence on crystal orientation, and the result
   is accurate to about a cell. Neither mode has the fast
   initial growth of thin dry oxides beyond what you give as a starting
   oxide. Shapes are made of square cells, so surfaces are staircases at
