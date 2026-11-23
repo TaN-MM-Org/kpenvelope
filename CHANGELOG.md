@@ -4,6 +4,61 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.35.0 (2026-11-23)
+
+Alloys with two vibrations and the air above the surface join the
+phonons of a stack, masks ride on the flowing oxide, and the app takes a
+plasma's chemistry. The examples print what they printed before,
+except example 77 (see Changed); examples 78 and 79 are new.
+
+### Added
+
+- `Subbands.layered_phonons` and `scattering.layer_modes`: a layer may be
+  a number (a permittivity without vibrations, such as 1.0 for air) or
+  {"eps_high", "lo_eV", "to_eV"} with several vibrations; the boundaries
+  may lie between grid points or outside the grid.
+- `Structure.oxidize(shape="flow")`: masks with a viscosity or a shear
+  modulus ride on the oxide under it. `Structure.oxidation_balance`: where
+  the oxide made went (whole cells, parts of cells, the end's rounding).
+- The app, Process steps: the plasma's chemistry (species, reactions,
+  chamber, feed) and `plasmaetch fluxes=plasma`; `viscosity_X=` for a
+  mask that flows.
+- The app, Electrons tab: a second vibration of the barrier, and the air
+  above the surface when every layer of the exact region counts.
+
+### Changed
+
+- `shape="flow"`: the oxide that flows back from the gas is taken off the
+  gas cell's fill (it was dropped), so the oxide made is kept exactly
+  until the end's rounding; with a springy oxide (`shear_modulus`) each
+  flow is solved over the step it moves the oxide (the first one was
+  solved over a step of zero, which gave a wrong first flow), and the last
+  step's stress is kept at the end instead of one more step. Example 77
+  prints 3680 nm^2 of oxide in place of 3672, and the top of the oxide
+  moves by one cell at two places.
+- The app's "every layer of the exact region" counts the air above the
+  surface (the mobility changes by about 1e-5 in the cases tried).
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; wurtzite's phonon anisotropy; a shipped
+  plasma rate set; masks pushed sideways by the oxide; better electronic
+  stopping; tunnel paths that bend; tunneling and heat inside one Newton
+  solve; the hot-electron model at zero relaxation time. The app has no
+  meshes, NEGF holes or 3D.
+
+### Checks (tests)
+
+6 new tests (418 in all; docs/checks.md has the tolerances): the surface
+phonon under air and the two modes of an alloy against their formulas,
+boundaries between grid points and outside the grid against closed forms,
+the sum rule with alloys and air; the mobility with air far away and a
+vibration without strength; the oxide's balance with rigid, flowing and
+elastic masks (which found three leaks and a wrong first flow, all
+fixed), masks lifted at both edges alike; the app's masks, alloy barrier,
+air and plasma chemistry against the library. All 79 documented examples
+were rerun.
+
 ## 0.34.0 (2026-11-23)
 
 The polar phonons of a whole stack of layers join the mobility, and the

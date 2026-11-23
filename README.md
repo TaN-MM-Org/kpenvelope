@@ -182,7 +182,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  77 worked examples, each with the output it prints, and three
+  79 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -223,10 +223,10 @@ The main gaps, in plain terms:
   models behave; the attempts to change it are described on the limits
   page, with the numbers.
 - Process steps stay simple in other ways. The plasma model is
-  averaged over the chamber, with your rates and wall factors; growing
-  oxide flows and can be springy, its free surface can follow the
-  flow, and masks can bend (but are still moved by a simple volume
-  rule), the Monte
+  averaged over the chamber, with your rates and wall factors (none are
+  shipped); growing oxide flows and can be springy, its free surface can
+  follow the flow, and masks that bend or flow ride on it (lifted, not
+  pushed sideways), the Monte
   Carlo implant ranges use a textbook electronic stopping that can be off
   by tens of percent for light ions, diffusion constants come from you,
   and the shapes are built from square cells.
@@ -242,9 +242,9 @@ The main gaps, in plain terms:
   are very dense; the Fermi-Dirac form is an option, still for one
   energy-independent scattering time.
 - The polar optical phonons of the scattering lifetimes are those of
-  bulk, of one interface or of a stack of layers, for isotropic
-  materials with one oscillator each (no alloy two-mode behavior, no
-  wurtzite anisotropy). Screening by all the levels together is an option
+  bulk, of one interface or of a stack of layers (alloys with two
+  vibrations and the air above the surface included), for isotropic
+  materials without damping (no wurtzite anisotropy). Screening by all the levels together is an option
   (static, and only among the levels you pass).
 - No material numbers without a source: where a number is missing, you
   supply it with its source.
