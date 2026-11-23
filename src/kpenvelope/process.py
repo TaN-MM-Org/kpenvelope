@@ -1055,7 +1055,8 @@ class Structure:
         self._flux_step([], float(time), face_rates=face_rates)
         self.log.append(("plasma_etch", kin.reference, time, "kinetics"))
 
-    def stokes(self, viscosity: dict, source=None, gas_ratio: float = 1e-4):
+    def stokes(self, viscosity: dict, source=None, gas_ratio: float = 1e-4,
+               shear_modulus: dict = None, dt: float = None, history: dict = None):
         """Slow viscous flow of the cross-section (new in 0.26.0), as of
         oxide during oxidation: eta lap(u) - grad(p) = 0 and div(u) = q on a
         staggered grid (velocities on the cell faces, pressure in the
@@ -1067,27 +1068,75 @@ class Structure:
         the rate at which new volume appears there (default none).
         Returns dict(u (nx+1, nz) and w (nx, nz+1) in nm/s, p (nx, nz) in Pa,
         and the stresses sxx, szz, sxz at the cell centers, Pa: tension
-        positive)."""
+        positive).
+
+        shear_modulus = {material: G in Pa} (new in 0.33.0) with dt (s) and
+        history (the "tau" of the previous call, or None to start from no
+        stress) makes those materials viscoelastic (Maxwell): the stress
+        tau = eta (grad u + grad u^T) relaxes with the time eta / G,
+        tau + (eta / G) d tau/dt = eta (grad u + grad u^T), taken one step
+        dt at a time (backward Euler: tau_new = eta' (grad u + grad u^T) +
+        chi tau_old, eta' = eta G dt / (eta + G dt), chi = eta / (eta + G
+        dt)). A material with a modulus but no viscosity is an elastic
+        solid (eta' = G dt, chi = 1): it deforms and keeps its stress
+        instead of being rigid. The result has "tau" (txx, tzz in the cells,
+        txz at the corners, Pa) for the next step."""
         import scipy.sparse as sp
         import scipy.sparse.linalg as spl
         nx, nz = self.mat.shape
         h = self.h * 1e-9                           # m
-        if not viscosity or any(not (v > 0 and math.isfinite(v)) for v in viscosity.values()):
+        viscosity = dict(viscosity or {})
+        shear = dict(shear_modulus or {})
+        if not (viscosity or shear) or any(not (v > 0 and math.isfinite(v))
+                                           for v in viscosity.values()):
             raise ValueError("viscosity must give each flowing material a value > 0 (Pa s)")
+        if any(not (v > 0 and math.isfinite(v)) for v in shear.values()):
+            raise ValueError("shear_modulus must give each material a value > 0 (Pa)")
+        if shear and not (dt is not None and dt > 0 and math.isfinite(dt)):
+            raise ValueError("a shear modulus needs the time step dt > 0 (s)")
         if not (0 < gas_ratio < 1):
             raise ValueError("gas_ratio must be between 0 and 1")
-        eta = np.zeros((nx, nz))
+        # the effective viscosity of each material over the step and the
+        # share of its old stress that it keeps
+        eff, keep = {}, {}
+        for m in set(viscosity) | set(shear):
+            ev, G = viscosity.get(m, math.inf), shear.get(m, math.inf)
+            if math.isinf(G):
+                eff[m], keep[m] = ev, 0.0
+            elif math.isinf(ev):
+                eff[m], keep[m] = G * dt, 1.0
+            else:
+                eff[m], keep[m] = ev * G * dt / (ev + G * dt), ev / (ev + G * dt)
+        eta = np.zeros((nx, nz))            # effective viscosity over the step
+        etav = np.zeros((nx, nz))           # the viscosity itself (inf: elastic)
+        chi = np.zeros((nx, nz))
+        solid = np.zeros((nx, nz), bool)    # elastic, no viscosity
         rigid = np.zeros((nx, nz), bool)
-        etag = gas_ratio * min(viscosity.values())
+        etag = gas_ratio * (min(viscosity.values()) if viscosity else min(eff.values()))
         for i in range(nx):
             for k in range(nz):
                 m = self.mat[i, k]
                 if m is None:
-                    eta[i, k] = etag
-                elif m in viscosity:
-                    eta[i, k] = viscosity[m]
+                    eta[i, k] = etav[i, k] = etag
+                elif m in eff:
+                    eta[i, k] = eff[m]
+                    etav[i, k] = viscosity.get(m, math.inf)
+                    chi[i, k] = keep[m]
+                    solid[i, k] = m not in viscosity
                 else:
                     rigid[i, k] = True
+        if history is None or not shear:
+            Txx = np.zeros((nx, nz))
+            Tzz = np.zeros((nx, nz))
+            Txz = np.zeros((nx + 1, nz + 1))
+        else:
+            Txx = np.nan_to_num(np.asarray(history["txx"], float))
+            Tzz = np.nan_to_num(np.asarray(history["tzz"], float))
+            Txz = np.nan_to_num(np.asarray(history["txz"], float))
+            if Txx.shape != (nx, nz) or Txz.shape != (nx + 1, nz + 1):
+                raise ValueError("history does not match the grid")
+        # the old stress each cell keeps (zero where nothing is kept)
+        Hxx, Hzz = chi * Txx, chi * Tzz
         q = np.zeros((nx, nz)) if source is None else np.asarray(source, float)
         if q.shape != (nx, nz):
             raise ValueError("source must have one value per cell")
@@ -1109,15 +1158,42 @@ class Structure:
             i = min(max(i, 0), nx - 1)
             return eta[i, k]
 
-        def etan(i, k):
-            """viscosity at the corner (x_i, z_k): mean of the cells around"""
+        def cmean(i, k, arr):
+            """mean of a cell array over the cells around the corner (x_i, z_k)"""
             vals = []
             for a in (i - 1, i):
                 for b in (k - 1, k):
                     if 0 <= b < nz:
                         aa = min(max(a, 0), nx - 1)
-                        vals.append(eta[aa, b])
+                        vals.append(arr[aa, b])
             return float(np.mean(vals)) if vals else 0.0
+
+        def cany(i, k, arr):
+            for a in (i - 1, i):
+                for b in (k - 1, k):
+                    if 0 <= b < nz and arr[min(max(a, 0), nx - 1), b]:
+                        return True
+            return False
+
+        def etan(i, k, arr=None):
+            """effective viscosity at the corner (x_i, z_k): the mean of the
+            cells' viscosities times one minus the mean share of old stress
+            kept there, so that a steady flow ends on the viscous stress of
+            the mean viscosity; next to an elastic solid, the mean of the
+            effective viscosities"""
+            if arr is not None:
+                return cmean(i, k, arr)
+            if not np.any(chi > 0):
+                return cmean(i, k, eta)
+            if cany(i, k, solid):
+                return cmean(i, k, eta)
+            return cmean(i, k, etav) * (1.0 - cmean(i, k, chi))
+        # the old shear stress each corner keeps
+        Hxz = np.zeros((nx + 1, nz + 1))
+        if np.any(chi > 0):
+            for i in range(nx + 1):
+                for k in range(nz + 1):
+                    Hxz[i, k] = etan(i, k, chi) * Txz[i, k]
         rows, cols, vals = [], [], []
         rhs = np.zeros(n_all)
 
@@ -1168,6 +1244,10 @@ class Structure:
                 # pressure
                 add(r, P(i, k), -1.0 / h)
                 add(r, P(i - 1, k), 1.0 / h)
+                # the old stress the cells and corners keep (a known force)
+                rhs[r] -= (Hxx[i, k] - Hxx[i - 1, k]) / h
+                top_ = Hxz[i, k + 1] if k + 1 < nz else 0.0
+                rhs[r] -= (top_ - Hxz[i, k]) / h
         # z momentum
         for i in range(nx):
             for k in range(nz + 1):
@@ -1181,6 +1261,7 @@ class Structure:
                     add(r, W(i, nz), e2)
                     add(r, W(i, nz - 1), -e2)
                     add(r, P(i, nz - 1), -1.0)
+                    rhs[r] -= Hzz[i, nz - 1]
                     continue
                 for (cc, sgn) in ((k, 1.0), (k - 1, -1.0)):
                     e2 = 2.0 * eta[i, cc] * inv
@@ -1201,6 +1282,10 @@ class Structure:
                     add(r, U(ic, k - 1), -sgn * en)
                 add(r, P(i, k), -1.0 / h)
                 add(r, P(i, k - 1), 1.0 / h)
+                rhs[r] -= (Hzz[i, k] - Hzz[i, k - 1]) / h
+                right_ = Hxz[i + 1, k] if i + 1 < nx else 0.0
+                left_ = Hxz[i, k] if i > 0 else 0.0
+                rhs[r] -= (right_ - left_) / h
         # continuity (scaled by eta / h to match the momentum rows)
         for i in range(nx):
             for k in range(nz):
@@ -1216,7 +1301,7 @@ class Structure:
                 rhs[r] = sc * q[i, k]
         A = sp.csr_matrix((vals, (rows, cols)), shape=(n_all, n_all))
         # scale: pressure unknowns by h / eta_ref, every row to order one
-        eref = max(viscosity.values())
+        eref = max(eff.values())
         cs = np.ones(n_all)
         cs[nu + nw:] = eref / h
         A = A @ sp.diags(cs)
@@ -1231,24 +1316,34 @@ class Structure:
         p = x[nu + nw:].reshape(nx, nz)
         dudx = (u[1:] - u[:-1]) / h
         dwdz = (w[:, 1:] - w[:, :-1]) / h
-        sxx = -p + 2.0 * eta * dudx
-        szz = -p + 2.0 * eta * dwdz
+        txx = 2.0 * eta * dudx + Hxx
+        tzz = 2.0 * eta * dwdz + Hzz
+        sxx = -p + txx
+        szz = -p + tzz
         # shear at the corners, then the mean of the four around each cell
         sc_ = np.zeros((nx + 1, nz + 1))
         for i in range(1, nx):
             for k in range(1, nz):
                 sc_[i, k] = etan(i, k) * ((u[i, k] - u[i, k - 1]) / h
-                                          + (w[i, k] - w[i - 1, k]) / h)
+                                          + (w[i, k] - w[i - 1, k]) / h) + Hxz[i, k]
         sxz = 0.25 * (sc_[:-1, :-1] + sc_[1:, :-1] + sc_[:-1, 1:] + sc_[1:, 1:])
+        # for the next step, also the shear at the still bottom (u = 0 there,
+        # half a cell below the first velocity), which the momentum rows use
+        hist_xz = sc_.copy()
+        for i in range(1, nx):
+            hist_xz[i, 0] = etan(i, 0) * 2.0 * u[i, 0] / h + Hxz[i, 0]
         p = np.where(rigid, np.nan, p)
         nanr = np.where(rigid, np.nan, 1.0)
         return dict(u=u * 1e9, w=w * 1e9, p=p, sxx=sxx * nanr, szz=szz * nanr,
-                    sxz=sxz * nanr, rigid=rigid)
+                    sxz=sxz * nanr, rigid=rigid,
+                    tau=dict(txx=np.where(rigid, 0.0, txx), tzz=np.where(rigid, 0.0, tzz),
+                             txz=hist_xz))
 
     def oxidize(self, material: str, oxide: str, B_nm2_s: float, B_over_A_nm_s: float,
                 time: float, consumed_fraction: float, reference: str,
                 mode: str = "column", viscosity: dict = None, stress_volume_nm3: float = None,
-                temperature_K: float = None, flow_every: int = 1):
+                temperature_K: float = None, flow_every: int = 1,
+                shear_modulus: dict = None):
         """Thermal oxidation by the Deal-Grove law (see the module notes):
         in every column whose top is `material`, or `oxide` lying directly
         on `material`, the oxide grows from its present thickness x0 to x
@@ -1273,7 +1368,15 @@ class Structure:
         (compression slows it: D.-B. Kao, J. P. McVittie, W. D. Nix and
         K. C. Saraswat, IEEE Trans. Electron Devices 35, 25 (1988)); V is
         yours, with its source. The shape still follows the volume rule
-        above (column lift, nearest gas); the flow sets the stress."""
+        above (column lift, nearest gas); the flow sets the stress.
+
+        shear_modulus={material: G in Pa} (new in 0.33.0, with viscosity)
+        makes the flow viscoelastic (Maxwell; see `stokes`): the stress
+        builds up over the relaxation time eta / G instead of at once, and
+        a material with a modulus but no viscosity (a nitride mask, say) is
+        an elastic solid that bends and holds stress instead of being
+        rigid. The stress is carried with the cells (new oxide starts
+        without stress)."""
         if not (B_nm2_s > 0 and B_over_A_nm_s > 0 and time > 0):
             raise ValueError("B, B/A and time must be > 0")
         if not (0 < consumed_fraction < 1):
@@ -1282,11 +1385,14 @@ class Structure:
             raise ValueError("oxidize needs a reference for B, B/A and the consumed fraction")
         if stress_volume_nm3 is not None and (viscosity is None or temperature_K is None):
             raise ValueError("stress_volume_nm3 needs viscosity and temperature_K")
+        if shear_modulus is not None and viscosity is None:
+            raise ValueError("shear_modulus needs viscosity (the oxide's flow)")
         if mode == "2d":
             return self._oxidize_2d(material, oxide, B_nm2_s, B_over_A_nm_s, time,
                                     consumed_fraction, reference, viscosity=viscosity,
                                     stress_volume=stress_volume_nm3,
-                                    temperature=temperature_K, flow_every=int(flow_every))
+                                    temperature=temperature_K, flow_every=int(flow_every),
+                                    shear_modulus=shear_modulus)
         if viscosity is not None:
             raise ValueError("viscous flow and stress need mode='2d'")
         if mode != "column":
@@ -1426,7 +1532,7 @@ class Structure:
         return li, lk, c
 
     def _oxidize_2d(self, material, oxide, B, BA, time, cf, reference, viscosity=None,
-                    stress_volume=None, temperature=None, flow_every=1):
+                    stress_volume=None, temperature=None, flow_every=1, shear_modulus=None):
         """Two-dimensional oxidation (new in 0.24.0): the oxidant diffuses
         through the oxide in two dimensions (`_oxidant`), each face where
         the material meets oxide or gas grows oxide at (B/A) c, c the
@@ -1450,6 +1556,21 @@ class Structure:
         kfac = None
         q_prev = None
         kT = None if temperature is None else 1.380649e-23 * float(temperature)
+        # viscoelastic memory (new in 0.33.0): the stress of the last flow
+        # solve, kept with the cells, and the time it was solved at
+        self._vehist = None
+        t_flow = 0.0
+
+        def flow(src):
+            nonlocal t_flow
+            if shear_modulus:
+                d_t = max(t - t_flow, 1e-300)
+                r_ = self.stokes(viscosity, source=src, shear_modulus=shear_modulus,
+                                 dt=d_t, history=self._vehist)
+                self._vehist = {k_: v_.copy() for k_, v_ in r_["tau"].items()}
+                t_flow = t
+                return r_
+            return self.stokes(viscosity, source=src)
         while t < time * (1 - 1e-12):
             # the oxide grown in front of each face but not yet in whole
             # cells: in place of the material consumed so far in the cell, and
@@ -1460,7 +1581,7 @@ class Structure:
                 # the viscous flow of the oxide that the new volume drives, and
                 # its stress normal to each reacting face (new in 0.26.0)
                 fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
-                self.oxide_stress = self.stokes(viscosity, source=np.where(fluid, q_prev, 0.0))
+                self.oxide_stress = flow(np.where(fluid, q_prev, 0.0))
                 if stress_volume is not None:
                     kfac = np.ones((4, nx, nz))
                     S = self.oxide_stress
@@ -1533,6 +1654,7 @@ class Structure:
                 for i, k in zip(*np.nonzero(done)):
                     e = acc[i, k] - h * h
                     self.mat[i, k] = oxide
+                    self._hist_new_cell(i, k)
                     self.donors[i, k] = self.acceptors[i, k] = 0.0
                     acc[i, k] = 0.0
                     # the rest goes on into the next material cell, away from
@@ -1556,6 +1678,8 @@ class Structure:
         # a cell more than half consumed at the end turns to oxide, and half a
         # cell of new volume or more is put in (the front passed the center)
         half = (acc >= 0.5 * h * h) & (self.mat == material)
+        for i, k in zip(*np.nonzero(half)):
+            self._hist_new_cell(i, k)
         self.mat[half] = oxide
         self.donors[half] = self.acceptors[half] = 0.0
         for q, i, k in zip(*np.nonzero(lift >= 0.5 * h * h)):
@@ -1563,7 +1687,7 @@ class Structure:
         if viscosity is not None and q_prev is not None:
             # the flow and stress of the final shape (with the last growth)
             fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
-            self.oxide_stress = self.stokes(viscosity, source=np.where(fluid, q_prev, 0.0))
+            self.oxide_stress = flow(np.where(fluid, q_prev, 0.0))
         self.log.append(("oxidize", material, oxide, B, BA, time, cf, reference, "2d"))
         top = np.zeros(nx)
         for i in range(nx):
@@ -1590,6 +1714,7 @@ class Structure:
                 g0, g1 = int(ia[a0, b0]), int(ib[a0, b0])
                 self.mat[g0, g1] = oxide
                 self.donors[g0, g1] = self.acceptors[g0, g1] = 0.0
+                self._hist_new_cell(g0, g1)
                 return
         # up the column from (a0, b0)
         b = b0
@@ -1599,8 +1724,24 @@ class Structure:
             raise ValueError("the oxide lifts material out of the domain; raise z_top")
         for arr in (self.mat, self.donors, self.acceptors):
             arr[a0, b0 + 1:b + 1] = arr[a0, b0:b].copy()
+        H = getattr(self, "_vehist", None)
+        if H is not None:
+            # the lifted cells take their stress with them
+            for key in ("txx", "tzz"):
+                H[key][a0, b0 + 1:b + 1] = H[key][a0, b0:b].copy()
+            for col in (a0, a0 + 1):
+                H["txz"][col, b0 + 1:b + 2] = H["txz"][col, b0:b + 1].copy()
         self.mat[a0, b0] = oxide
         self.donors[a0, b0] = self.acceptors[a0, b0] = 0.0
+        self._hist_new_cell(a0, b0)
+
+    def _hist_new_cell(self, i, k):
+        """new oxide starts without stress (viscoelastic memory, 0.33.0)"""
+        H = getattr(self, "_vehist", None)
+        if H is None:
+            return
+        H["txx"][i, k] = H["tzz"][i, k] = 0.0
+        H["txz"][i:i + 2, k:k + 2] = 0.0
 
     def implant(self, imp: "Implant"):
         """An `Implant` into the structure: its depth is measured from the

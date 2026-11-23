@@ -3,8 +3,8 @@
 discharge from the reactions you give, and the ion and neutral fluxes it
 sends to the wafer, for `process.EtchKinetics`.
 
-The model is a global (volume-averaged) model of an electropositive plasma
-in a cylinder of radius R and length L (volume V, wall area A). For every
+The model is a global (volume-averaged) model of a plasma (with negative
+ions too since 0.33.0) in a cylinder of radius R and length L (volume V, wall area A). For every
 heavy species s, in steady state,
 
     0 = sum_r nu_rs R_r + Q_s / V - n_s S / V - (wall loss)_s
@@ -25,6 +25,13 @@ positive ions. Losses to the wall:
   of a Maxwellian gas through a plane): the low-pressure limit, where a
   particle crosses the chamber without collisions. At higher pressure
   diffusion to the wall slows the loss and this overstates it.
+* a negative ion is held inside by the sheath (the wall is negative with
+  respect to the plasma), so it is lost only in the gas (detachment,
+  recombination with positive ions) and by the pump. Electrons follow from
+  quasi-neutrality, n_e = sum n_+ - sum n_-. With negative ions the
+  density profile and the Bohm speed at the edge change; here u_B stays
+  sqrt(e T_e / M) and h is yours, so h must carry that change (its
+  published forms for electronegative plasmas are fits as well).
 
 What a particle lost at the wall turns into (an ion comes back as its
 neutral, two atoms as a molecule) is given with each species.
@@ -70,7 +77,8 @@ SCCM = 2.686780111e25 * 1e-6 / 60.0
 @dataclasses.dataclass(frozen=True)
 class Species:
     """A heavy species: name, mass (atomic mass units), charge (0 for a
-    neutral, 1 for a positive ion), wall: the probability that a neutral
+    neutral, 1 for a positive ion, -1 for a negative ion: since 0.33.0;
+    negative ions never reach the wall), wall: the probability that a neutral
     reacts at the wall when it hits it (0 to 1; ions always do), and
     wall_products: what each particle lost at the wall comes back as
     ({name: number}, e.g. {"Ar": 1} for Ar+, {"Cl2": 0.5} for Cl)."""
@@ -86,8 +94,8 @@ class Species:
             raise ValueError("a species needs a name (not 'e')")
         if not (math.isfinite(self.mass_amu) and self.mass_amu > 0):
             raise ValueError("mass_amu must be > 0")
-        if self.charge not in (0, 1):
-            raise ValueError("charge must be 0 or 1 (negative ions are not modeled)")
+        if self.charge not in (-1, 0, 1):
+            raise ValueError("charge must be -1, 0 or 1")
         if not (0.0 <= self.wall <= 1.0):
             raise ValueError("wall must be between 0 and 1")
         if self.wall_products is None:
@@ -175,12 +183,12 @@ class GlobalPlasma:
             for n in s.wall_products:
                 if n not in self.idx:
                     raise ValueError(f"unknown wall product {n!r}")
-            if s.charge and not s.wall_products:
+            if s.charge == 1 and not s.wall_products:
                 raise ValueError(f"say what the ion {s.name} becomes at the wall")
             back = sum(self.sp[self.idx[n]].mass_amu * c for n, c in s.wall_products.items())
             if s.wall_products and abs(back - s.mass_amu) > 1e-6 * s.mass_amu:
                 raise ValueError(f"the wall products of {s.name} do not keep its mass")
-        if not any(s.charge for s in self.sp):
+        if not any(s.charge == 1 for s in self.sp):
             raise ValueError("there must be at least one positive ion")
         for v, nm in ((radius_m, "radius_m"), (length_m, "length_m"), (power_W, "power_W"),
                       (pump_m3_s, "pump_m3_s"), (gas_temperature_K, "gas_temperature_K")):
@@ -206,6 +214,8 @@ class GlobalPlasma:
             raise ValueError("feed some gas")
         self.M = np.array([s.mass_amu * AMU for s in self.sp])
         self.ion = np.array([s.charge == 1 for s in self.sp])
+        self.neg = np.array([s.charge == -1 for s in self.sp])
+        self.heavy_neutral = np.array([s.charge == 0 for s in self.sp])
         self.vbar = np.sqrt(8 * KB * self.Tg / (math.pi * self.M))
         self.gam = np.array([0.0 if s.charge else s.wall for s in self.sp])
         # where the wall sends what it takes: W[j, i] particles of j per
@@ -217,9 +227,14 @@ class GlobalPlasma:
                 self.W[self.idx[nm], i] += c
 
     # ------------------------------------------------------------ pieces
-    def _rates(self, n, Te):
-        """R_r for every reaction (m^-3 s^-1); n the heavy densities."""
-        ne = float(n[self.ion].sum())
+    def _ne(self, n):
+        """electrons from quasi-neutrality: positive ions less negative ions"""
+        return float(n[self.ion].sum() - n[self.neg].sum())
+
+    def _rates(self, n, Te, ne=None):
+        """R_r for every reaction (m^-3 s^-1); n the heavy densities, ne
+        the electrons (default: from quasi-neutrality)."""
+        ne = self._ne(n) if ne is None else ne
         out = np.empty(len(self.rx))
         for k, r in enumerate(self.rx):
             v = r.k(Te)
@@ -231,12 +246,22 @@ class GlobalPlasma:
     def _wall_rates(self, n, Te):
         """loss frequency (1/s) of every heavy species at the wall"""
         uB = np.sqrt(QE * Te / self.M)
-        nu = np.where(self.ion, self.h * uB, self.gam * self.vbar / 4.0) * self.A / self.V
+        # negative ions stay inside: the sheath at the wall turns them back
+        nu = np.where(self.ion, self.h * uB,
+                      np.where(self.neg, 0.0, self.gam * self.vbar / 4.0)) * self.A / self.V
         return nu, uB
 
     def residual(self, n, Te):
-        """dn/dt for every species and d(3/2 n_e T_e)/dt (eV m^-3 s^-1)"""
-        R = self._rates(n, Te)
+        """dn/dt for every species and d(3/2 n_e T_e)/dt (eV m^-3 s^-1),
+        the electrons from quasi-neutrality"""
+        dn, _, dE = self._balance(n, self._ne(n), Te)
+        return dn, dE
+
+    def _balance(self, n, ne, Te):
+        """dn/dt of the heavy species, of the electrons (made and lost in
+        reactions, pumped, and leaving with the positive ions at the wall)
+        and d(3/2 n_e T_e)/dt, for given electrons ne"""
+        R = self._rates(n, Te, ne)
         dn = self.feed / self.V - n * self.S / self.V
         for k, r in enumerate(self.rx):
             for nm in r.reactants:
@@ -264,62 +289,119 @@ class GlobalPlasma:
             eps_i = 0.5 * Te + 0.5 * Te * math.log(self.M[i] / (2 * math.pi * ME))
             wall_e += lost[i] * (2.0 * Te + eps_i)
         dE = heat - coll - wall_e
-        return dn, dE
+        made = np.array([r.products.count("e") - r.reactants.count("e") for r in self.rx])
+        dne = float(made @ R) - ne * self.S / self.V - float(lost[self.ion].sum())
+        return dn, dne, dE
 
     # ------------------------------------------------------------ solve
-    def solve(self, Te_guess=3.0, t_end=10.0, rtol=1e-10):
+    def _start_Te(self, n0):
+        """T_e at which the electrons the gas makes (with the feed's
+        neutral densities) balance those it loses to attachment, the wall
+        and the pump: the start of the time integration"""
+        from scipy.optimize import brentq
+        Mion = float(self.M[self.ion].min())
+
+        def bal(Te):
+            nu = 0.0
+            for r in self.rx:
+                if r.reactants.count("e") != 1 or r.elastic:
+                    continue
+                heavy = [nm for nm in r.reactants if nm != "e"]
+                if any(self.sp[self.idx[h_]].charge for h_ in heavy):
+                    continue
+                v = r.k(Te) * (r.products.count("e") - 1)
+                for h_ in heavy:
+                    v *= n0[self.idx[h_]]
+                nu += v
+            return nu - self.h * math.sqrt(QE * Te / Mion) * self.A / self.V - self.S / self.V
+        try:
+            return brentq(bal, 0.3, 100.0)
+        except ValueError:
+            return 3.0
+
+    def solve(self, Te_guess=None, t_end=10.0, rtol=1e-10, guess=None):
         """The steady state: time integration from a start (the feed alone,
         a small ion seed) until it settles, then Newton's method on the
         steady equations (in the logarithms of the densities and of T_e).
         Returns dict(Te_eV, densities (m^-3, by name), ne, pressure_Pa,
         ion_flux (m^-2 s^-1 at the wall, by ion), neutral_flux (by
-        neutral), ion_energy_eV (by ion, at a floating wall), residual)."""
+        neutral), ion_energy_eV (by ion, at a floating wall), residual).
+        guess: an earlier result (of a nearby set of conditions) to start
+        Newton's method from directly; the time integration is used when
+        that does not settle."""
         from scipy.integrate import solve_ivp
         from scipy.optimize import root
         n0 = np.maximum(self.feed / self.S, 1e10)
         n0 = np.where(self.ion, 1e-3 * n0.max() * 1e-3, n0)
-        y0 = np.concatenate([np.log(n0), [math.log(Te_guess)]])
+        n0 = np.where(self.neg, 1e-3 * n0[self.ion].sum(), n0)
         ns = len(self.sp)
+        # the electrons are an unknown of their own while the plasma
+        # settles (so they stay positive however many negative ions form);
+        # the charge they and the ions carry is kept, so the start's
+        # neutrality holds, and the last step imposes it exactly
+        if Te_guess is None:
+            Te_guess = self._start_Te(n0)
+        y0 = np.concatenate([np.log(n0), [math.log(self._ne(n0))], [math.log(Te_guess)]])
 
         def f(t, y):
             n = np.exp(np.clip(y[:ns], -200, 200))
-            Te = float(np.exp(np.clip(y[ns], -10, 10)))
-            dn, dE = self.residual(n, Te)
-            ne = float(n[self.ion].sum())
+            ne = float(np.exp(np.clip(y[ns], -200, 200)))
+            Te = float(np.exp(np.clip(y[ns + 1], -10, 10)))
+            dn, dne, dE = self._balance(n, ne, Te)
             # d(3/2 n_e T_e)/dt = dE  ->  dT_e/dt from dn_e/dt
-            dne = float(dn[self.ion].sum())
             dTe = (dE - 1.5 * Te * dne) / (1.5 * ne)
-            return np.concatenate([dn / n, [dTe / Te]])
-        sol = solve_ivp(f, (0.0, t_end), y0, method="BDF", rtol=1e-8, atol=1e-10)
-        y = sol.y[:, -1]
+            return np.concatenate([dn / n, [dne / ne, dTe / Te]])
+        def integrate():
+            sol = solve_ivp(f, (0.0, t_end), y0, method="BDF", rtol=1e-8, atol=1e-10)
+            return sol.y[:, -1]
 
         def g(y):
             n = np.exp(y[:ns])
-            Te = float(np.exp(y[ns]))
-            dn, dE = self.residual(n, Te)
+            ne = float(np.exp(y[ns]))
+            Te = float(np.exp(y[ns + 1]))
+            dn, _, dE = self._balance(n, ne, Te)
             scale_n = self.feed.sum() / self.V + n * self.S / self.V + 1e-300
             return np.concatenate([dn / np.maximum(scale_n, n * 1e-3),
+                                   [(ne - self._ne(n)) / ne],
                                    [dE / max(self.P / (QE * self.V), 1e-300)]])
-        r = root(g, y, method="hybr", tol=1e-14)
-        y = r.x if np.max(np.abs(g(r.x))) < np.max(np.abs(g(y))) else y
-        res = float(np.max(np.abs(g(y))))
+        def polish(y):
+            with np.errstate(all="ignore"):
+                try:
+                    r = root(g, y, method="hybr", tol=1e-14)
+                    gy, gr = np.max(np.abs(g(y))), np.max(np.abs(g(r.x)))
+                except (ZeroDivisionError, FloatingPointError, ValueError):
+                    return y, math.inf
+            if not np.isfinite(gr) and not np.isfinite(gy):
+                return y, math.inf
+            return (r.x, float(gr)) if gr < gy or not np.isfinite(gy) else (y, float(gy))
+        res = math.inf
+        if guess is not None:
+            d = guess["densities"]
+            yg = np.concatenate([np.log([max(d[s_.name], 1e-30) for s_ in self.sp]),
+                                 [math.log(guess["ne"])], [math.log(guess["Te_eV"])]])
+            y, res = polish(yg)
         if not res < 1e-6:
-            raise RuntimeError(f"the plasma did not settle (relative residual {res:.1e})")
+            y, res = polish(integrate())
+        if not res < 1e-6:
+            raise RuntimeError(f"the plasma did not settle (relative residual {res:.1e}); "
+                               "start from a nearby solution with guess=")
+        y = np.concatenate([y[:ns], y[ns + 1:]])
         n = np.exp(y[:ns])
         Te = float(np.exp(y[ns]))
         nu, uB = self._wall_rates(n, Te)
         flux = nu * n * self.V / self.A                           # per m^2 of wall
         return dict(
-            Te_eV=Te, ne=float(n[self.ion].sum()), residual=res,
+            Te_eV=Te, ne=self._ne(n), residual=res,
             densities={s.name: float(n[i]) for i, s in enumerate(self.sp)},
-            pressure_Pa=float(n[~self.ion].sum() * KB * self.Tg),
+            pressure_Pa=float(n[self.heavy_neutral].sum() * KB * self.Tg),
             ion_flux={s.name: float(self.h * n[i] * uB[i])
-                      for i, s in enumerate(self.sp) if s.charge},
+                      for i, s in enumerate(self.sp) if s.charge == 1},
             neutral_flux={s.name: float(n[i] * self.vbar[i] / 4.0)
                           for i, s in enumerate(self.sp) if not s.charge},
             wall_loss={s.name: float(flux[i]) for i, s in enumerate(self.sp)},
             ion_energy_eV={s.name: float(0.5 * Te + 0.5 * Te * math.log(
-                self.M[i] / (2 * math.pi * ME))) for i, s in enumerate(self.sp) if s.charge})
+                self.M[i] / (2 * math.pi * ME))) for i, s in enumerate(self.sp)
+                if s.charge == 1})
 
 
 def fluxes_cm2(result, neutral, ion):
