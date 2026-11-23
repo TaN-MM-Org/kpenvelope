@@ -543,56 +543,87 @@ def interface_modes(below, above):
 
 
 # ------------------------------------------- polar phonons of many layers
+def _mat(m):
+    """a layer's dielectric function as (eps_high, LO energies, TO energies),
+    eps(w) = eps_high prod (w^2 - LO^2) / (w^2 - TO^2). A layer is given as
+    (phonon_eV, eps_static, eps_high) (one oscillator, TO from
+    Lyddane-Sachs-Teller), as a number (a permittivity without phonons, such
+    as 1 for air), or as {"eps_high": , "lo_eV": [...], "to_eV": [...]} (several
+    oscillators, as in alloys with two-mode behavior)."""
+    if isinstance(m, tuple) and len(m) == 4 and m[0] == "osc":
+        return m
+    if isinstance(m, (int, float, np.integer, np.floating)):
+        ei, L, T = float(m), (), ()
+    elif isinstance(m, dict):
+        ei = float(m["eps_high"])
+        L = tuple(float(v) for v in m["lo_eV"])
+        T = tuple(float(v) for v in m["to_eV"])
+        if len(L) != len(T) or not L:
+            raise ValueError("give as many TO as LO energies (at least one)")
+    else:
+        hw, es, ei = (float(v) for v in m)
+        if not (hw > 0 and es > ei > 0):
+            raise ValueError("each layer needs phonon_eV > 0 and eps_static > eps_high > 0")
+        L, T = (hw,), (hw * math.sqrt(ei / es),)
+    if not ei > 0:
+        raise ValueError("the high-frequency permittivity must be positive")
+    if L:
+        L, T = tuple(sorted(L)), tuple(sorted(T))
+        order = [v for pair in zip(T, L) for v in pair]
+        if not (order[0] > 0 and all(x < y for x, y in zip(order[:-1], order[1:]))):
+            raise ValueError("the oscillators must interlace: 0 < TO1 < LO1 < TO2 < LO2 ...")
+    return ("osc", ei, L, T)
+
+
 def _lorentz(m, w):
-    """eps(w) of an isotropic single-oscillator material (hw_LO, eps_static,
-    eps_high), w_TO from Lyddane-Sachs-Teller; w complex allowed"""
-    L, es, ei = m
-    T2 = L * L * ei / es
-    return ei * (w * w - L * L) / (w * w - T2)
+    """eps(w) of a layer (see `_mat`); w complex allowed"""
+    _, ei, L, T = _mat(m)
+    e = ei
+    for l_, t_ in zip(L, T):
+        e = e * (w * w - l_ * l_) / (w * w - t_ * t_)
+    return e
 
 
-def _layer_dispersion(q, w, zi, mats):
-    """zero at a mode of the layers (q in 1/nm, w in eV): the potential
-    exp(q z) in the lowest layer, carried through the inner layers (phi
-    and eps phi' continuous), must decay above the highest; scaled"""
-    e = [_lorentz(m, w) for m in mats]
-    e = [v if v != 0 else 1e-300 for v in e]
-    phi, D = 1.0, e[0] * q
-    for j in range(1, len(mats) - 1):
-        d = zi[j] - zi[j - 1]
-        # cosh(q d) taken out (the result does not depend on the scale),
-        # so that thick layers at large q do not overflow
-        t = math.tanh(q * d)
-        phi, D = phi + D / (e[j] * q) * t, phi * e[j] * q * t + D
-        nrm = abs(phi) + abs(D) / (abs(e[j]) * q + 1e-300)
-        phi, D = phi / nrm, D / nrm
-    return (D + e[-1] * q * phi) / (abs(phi) * abs(e[-1]) * q + abs(D) + 1e-300)
+def _eps_static(m):
+    _, ei, L, T = _mat(m)
+    return ei * math.prod((l_ / t_) ** 2 for l_, t_ in zip(L, T))
 
 
 def _layer_roots(q, zi, mats):
     """the interface-mode energies of the layers at q. With eps_j(w) =
-    eps_high (w^2 - LO^2) / (w^2 - TO^2), the dispersion times every eps
-    of the inner layers and every (w^2 - TO^2) it divides by is a
-    polynomial in w^2 of degree 2 (layers - 1) (one in eps of the two outer
-    layers, two in each inner one), so all its roots are found at once:
-    from its values on Chebyshev points of the bands TO^2 .. LO^2, then the
-    roots of the Chebyshev series. Two roots closer than the rounding (thick
-    layers at large q, where the modes of separate interfaces have almost
-    the same energy) may come out slightly complex; their real parts are
-    kept, and `layer_modes` takes such near-equal poles inside one contour"""
-    Ls = [m[0] for m in mats]
-    Ts = [m[0] * math.sqrt(m[2] / m[1]) for m in mats]
+    num_j / den_j (polynomials in w^2 of the degree n_j of its oscillators,
+    `_mat`), the dispersion times every eps of the inner layers and every
+    den it divides by is a polynomial in w^2 of degree n_first + n_last +
+    2 sum n_inner, so all its roots are found at once: from its values on
+    Chebyshev points of the bands min TO^2 .. max LO^2 (where some eps is
+    negative, as an interface mode needs), then the roots of the Chebyshev
+    series. Two roots closer than the rounding (thick layers at large q,
+    where the modes of separate interfaces have almost the same energy) may
+    come out slightly complex; their real parts are kept, and `layer_modes`
+    takes such near-equal poles inside one contour"""
+    mm = [_mat(m) for m in mats]
+    Ls = [v for m in mm for v in m[2]]
+    Ts = [v for m in mm for v in m[3]]
+    deg = len(mm[0][2]) + len(mm[-1][2]) + 2 * sum(len(m[2]) for m in mm[1:-1])
+    if len(mm) < 2 or deg == 0:
+        return []
     a, b = min(Ts) ** 2, max(Ls) ** 2
-    deg = 2 * (len(mats) - 1)
-    t = [math.tanh(q * (zi[j] - zi[j - 1])) for j in range(1, len(mats) - 1)]
+    t = [math.tanh(q * (zi[j] - zi[j - 1])) for j in range(1, len(mm) - 1)]
     u = np.cos(np.pi * (np.arange(4 * deg + 8) + 0.5) / (4 * deg + 8))
     x = 0.5 * (a + b) + 0.5 * (b - a) * u
-    # eps_j = num_j / den_j; the recursion of `_layer_dispersion` times
-    # eps_j den_j^2 at each inner layer, den of the outer ones: no division
-    num = [m[2] * (x - m[0] ** 2) for m in mats]
-    den = [x - (m[0] ** 2) * m[2] / m[1] for m in mats]
+    # eps_j = num_j / den_j; the transfer of phi and eps phi' / q through
+    # each inner layer (cosh(q d) taken out, so that thick layers do not
+    # overflow), times eps_j den_j^2 there and den of the outer ones: no
+    # division
+    num, den = [], []
+    for _, ei, L, T in mm:
+        n_, d_ = np.full_like(x, ei), np.ones_like(x)
+        for l_, t_ in zip(L, T):
+            n_, d_ = n_ * (x - l_ * l_), d_ * (x - t_ * t_)
+        num.append(n_)
+        den.append(d_)
     phi, D = den[0], num[0]
-    for j in range(1, len(mats) - 1):
+    for j in range(1, len(mm) - 1):
         nj, dj, tj = num[j], den[j], t[j - 1]
         phi, D = phi * nj * dj + D * tj * dj ** 2, phi * nj ** 2 * tj + D * nj * dj
     P = D * den[-1] + num[-1] * phi
@@ -616,8 +647,12 @@ def _layer_solve(z, w, idx, mats, q, wv, rhs):
     # charges on the nodes get their exact potentials: for one material
     # F is sum a_i a_j exp(-q |z_i - z_j|) / (2 q eps), as `_pair` sums it
     x = q * h
-    co = q / np.tanh(x)
-    cs = q / np.sinh(x)
+    # coth and 1 / sinh without overflow for long segments (a layer far
+    # outside the grid)
+    ex = np.exp(-x)
+    den = -np.expm1(-2.0 * x)
+    co = q * (1.0 + ex * ex) / den
+    cs = 2.0 * q * ex / den
     diag = np.zeros(N, complex)
     diag[:-1] += ef * co
     diag[1:] += ef * co
@@ -634,8 +669,11 @@ def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
     """The polar-phonon modes of a stack of isotropic layers at in-plane
     wave number q (1/nm), and their weight on the charge profiles A (new in
     0.34.0). z, weights : nodes (nm) and their weights; A : (len(z), P)
-    profiles (1/nm); interfaces : the boundaries (nm, inside z), materials :
-    (phonon_eV, eps_static, eps_high) of each layer, lowest first.
+    profiles (1/nm); interfaces : the boundaries (nm, increasing; since
+    0.35.0 anywhere, also between nodes or outside z), materials : each
+    layer, lowest first, as (phonon_eV, eps_static, eps_high), as a number
+    (a permittivity without phonons, such as air) or as {"eps_high",
+    "lo_eV", "to_eV"} with several oscillators (since 0.35.0, see `_mat`).
 
     F_p(w) = int int A_p(z) V(z, z'; w) A_p(z') with V the potential of a
     point charge in the layers, -(eps phi')' + q^2 eps phi = delta, solved
@@ -644,19 +682,37 @@ def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
     the layers (bulk-like modes) and the interface modes (zeros of the
     layers' dispersion, which change with q). Returns [(energy eV, G)] with
     G (P,) = 2 q (2 / w) Res F, found by a contour integral around each
-    pole; G is H(q) (1/eps_high - 1/eps_static) for a bulk material.
+    pole; G is H(q) (1/eps_high - 1/eps_static) for a bulk material with
+    one oscillator.
     Checked by the sum rule sum_p (2 / w_p) Res_p F = F(w -> inf) - F(0)."""
     z = np.asarray(z, float)
     zi = [float(v) for v in interfaces]
     if len(materials) != len(zi) + 1:
         raise ValueError("one material more than interfaces")
-    if any(not (z[0] < v < z[-1]) for v in zi) or np.any(np.diff(zi) <= 0):
-        raise ValueError("the interfaces must increase and lie inside z")
-    idx = np.searchsorted(np.asarray(zi), 0.5 * (z[1:] + z[:-1]))
+    if np.any(np.diff(zi) <= 0):
+        raise ValueError("the interfaces must increase")
+    materials = [_mat(m) for m in materials]
     rhs = (np.asarray(A, float) * np.asarray(weights, float)[:, None]).astype(complex)
-    Ls = [float(m[0]) for m in materials]
-    Ts = [float(m[0]) * math.sqrt(m[2] / m[1]) for m in materials]
+    # a node (without charge) at every interface that is not one, and one
+    # beyond an interface outside the grid: each segment is then inside one
+    # material, where the scheme of `_layer_solve` is exact
+    extra = [v for v in zi if np.min(np.abs(z - v)) > 1e-9 * max(1.0, abs(v))]
+    if zi and zi[0] <= z[0]:
+        extra.append(zi[0] - 1.0)
+    if zi and zi[-1] >= z[-1]:
+        extra.append(zi[-1] + 1.0)
+    if extra:
+        zz = np.concatenate([z, extra])
+        o_ = np.argsort(zz, kind="stable")
+        z = zz[o_]
+        rhs = np.concatenate([rhs, np.zeros((len(extra), rhs.shape[1]), complex)])[o_]
+        weights = np.concatenate([np.asarray(weights, float), np.zeros(len(extra))])[o_]
+    idx = np.searchsorted(np.asarray(zi), 0.5 * (z[1:] + z[:-1]))
+    Ls = [v for m in materials for v in m[2]]
+    Ts = [v for m in materials for v in m[3]]
     roots = _layer_roots(q, zi, materials)
+    if not Ls:
+        return []
     # every pole (the LO energies and the roots) and the TO points (where
     # eps is infinite), grouped where they lie within 1e-5 eV of each other
     pts = sorted([(v, 1) for v in roots + Ls] + [(v, 0) for v in Ts])
@@ -1255,9 +1311,13 @@ class Subbands:
                         q_range=(1e-4, 30.0), q_points=120):
         """Polar optical phonons of a stack of isotropic layers with any
         number of interfaces (new in 0.34.0): thin barriers, wells, cap
-        layers. interfaces : the boundaries (nm, increasing, inside the
-        envelopes' z); materials : (phonon_eV, eps_static, eps_high) of each
-        layer, lowest first (the lowest and highest continue to infinity).
+        layers. interfaces : the boundaries (nm, increasing; since 0.35.0
+        they may lie between grid points or outside the envelopes' z);
+        materials : each layer, lowest first (the lowest and highest continue
+        to infinity), as (phonon_eV, eps_static, eps_high), or since 0.35.0
+        as a number (a permittivity without phonons: 1 for the air above a
+        surface) or as {"eps_high": , "lo_eV": [...], "to_eV": [...]} for a
+        material with several oscillators (an alloy with two-mode behavior).
         The modes come from the poles of the layers' Coulomb potential (see
         `layer_modes`), on q_points wave numbers in q_range (1/nm, log
         spaced): bulk-like LO modes of each material and interface modes
@@ -1267,12 +1327,11 @@ class Subbands:
         same (the energy changes with q, which a fixed-energy mode cannot
         follow). With one interface it is `interface_phonons`; with one
         material, `polar_optical`."""
-        mats = []
-        for m in materials:
-            hw, es, ei = (float(v) for v in m)
-            if not (hw > 0 and es > ei > 0):
-                raise ValueError("each layer needs phonon_eV > 0 and eps_static > eps_high > 0")
-            mats.append((hw, es, ei))
+        mats = [_mat(m) for m in materials]
+        if not any(m[2] for m in mats):
+            raise ValueError("no layer has phonons")
+        if len(mats) != len(interfaces) + 1 or np.any(np.diff(np.asarray(interfaces, float)) <= 0):
+            raise ValueError("give one material more than interfaces, the interfaces increasing")
         if not (0 < q_range[0] < q_range[1]) or int(q_points) < 8:
             raise ValueError("q_range must be 0 < q_min < q_max, q_points >= 8")
         T = self.T if temperature_K is None else float(temperature_K)

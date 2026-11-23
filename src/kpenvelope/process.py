@@ -1579,15 +1579,26 @@ class Structure:
         # oxide fill with the oxide that the flow carries out to them
         fill = np.zeros((nx, nz))
         vel = None
+        # and (new in 0.35.0) a mask that flows or is elastic rides on the
+        # oxide below it: push collects the oxide that flows up into the
+        # bottom cell of such a solid; a whole cell of it lifts the solid's
+        # column by one cell and puts oxide under it
+        movable = (set(viscosity or ()) | set(shear_modulus or ())) - {oxide, material}
+        push = np.zeros((nx, nz))
+        made = 0.0                          # oxide area made so far (nm^2)
+        ox0 = float((self.mat == oxide).sum()) * h * h
 
-        def flow(src):
+        def flow(src, step=None):
             nonlocal t_flow
             if shear_modulus:
-                d_t = max(t - t_flow, 1e-300)
+                # backward Euler over the time since the last solve, or (the
+                # flowing shape, which solves at the start of a step) over
+                # the step ahead
+                d_t = max(t - t_flow, 1e-300) if step is None else step
                 r_ = self.stokes(viscosity, source=src, shear_modulus=shear_modulus,
                                  dt=d_t, history=self._vehist)
                 self._vehist = {k_: v_.copy() for k_, v_ in r_["tau"].items()}
-                t_flow = t
+                t_flow = t if step is None else t + step
                 return r_
             return self.stokes(viscosity, source=src)
         while t < time * (1 - 1e-12):
@@ -1683,32 +1694,48 @@ class Structure:
                 upd = cand > best
                 best[upd] = cand[upd]
                 bdir[upd] = q
+            # each step moves no interface by more than half a cell
+            dt = min(time - t, 0.5 * h * h / float(rate.max()))
             if flow_shape and viscosity is not None and qn.any():
                 if steps % flow_every == 0 or vel is None:
                     fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat],
                                      bool)
-                    self.oxide_stress = flow(np.where(fluid, qn, 0.0))
-                    vel = (self.oxide_stress["u"], self.oxide_stress["w"])
-            # each step moves no interface by more than half a cell
-            dt = min(time - t, 0.5 * h * h / float(rate.max()))
+                    src_ = np.where(fluid, qn, 0.0)
+                    hist0 = self._vehist
+                    for _ in range(4):
+                        self._vehist = hist0
+                        self.oxide_stress = flow(src_, dt)
+                        vel = (self.oxide_stress["u"], self.oxide_stress["w"])
+                        vmax = float(max(np.abs(vel[0]).max(), np.abs(vel[1]).max()))
+                        # nor does the flow move oxide by more than half a
+                        # cell; a springy oxide is solved again over the
+                        # shorter step
+                        if not (vmax > 0 and 0.5 * h / vmax < dt * (1 - 1e-9)):
+                            break
+                        dt = 0.5 * h / vmax
+                        if not shear_modulus:
+                            break
             if flow_shape and vel is not None:
                 # the flow carries oxide out through its faces to the open
                 # gas, which fills (area per s through each face, nm^2/s)
                 u_, w_ = vel
-                if float(max(np.abs(u_).max(), np.abs(w_).max())) > 0:
-                    dt = min(dt, 0.5 * h / float(max(np.abs(u_).max(), np.abs(w_).max())))
+                vmax = float(max(np.abs(u_).max(), np.abs(w_).max()))
+                if vmax > 0:
+                    dt = min(dt, 0.5 * h / vmax)
                 isox = self.mat == oxide
                 gas = self._gas_open()
                 fx = u_ * h * dt                      # (nx+1, nz) through x faces
                 fz = w_ * h * dt                      # (nx, nz+1) through z faces
-                # x faces between (i-1, k) and (i, k)
-                out_r = isox[:-1] & gas[1:] & (fx[1:-1] > 0)
+                # x faces between (i-1, k) and (i, k); what flows back from
+                # the gas into the oxide is taken off the gas cell's fill
+                # (since 0.35.0), so that the oxide's volume is kept exactly
+                out_r = isox[:-1] & gas[1:]
                 fill[1:][out_r] += fx[1:-1][out_r]
-                out_l = isox[1:] & gas[:-1] & (fx[1:-1] < 0)
+                out_l = isox[1:] & gas[:-1]
                 fill[:-1][out_l] -= fx[1:-1][out_l]
-                out_u = isox[:, :-1] & gas[:, 1:] & (fz[:, 1:-1] > 0)
+                out_u = isox[:, :-1] & gas[:, 1:]
                 fill[:, 1:][out_u] += fz[:, 1:-1][out_u]
-                out_d = isox[:, 1:] & gas[:, :-1] & (fz[:, 1:-1] < 0)
+                out_d = isox[:, 1:] & gas[:, :-1]
                 fill[:, :-1][out_d] -= fz[:, 1:-1][out_d]
                 while True:
                     full_ = (fill >= h * h * (1 - 1e-12)) & gas
@@ -1734,8 +1761,52 @@ class Structure:
                         if best_ is not None:
                             fill[best_] += rest
                     gas = self._gas_open()
+                if movable:
+                    # the oxide and the solids as they were when the flow
+                    # was taken (the fill above has not moved any solid)
+                    mov = np.isin(self.mat, list(movable))
+                    # the oxide that flows into a movable solid, through any
+                    # of its faces (signed: a solid moving into the oxide
+                    # takes it back), goes to the bottom cell of that solid
+                    # in its column, which only moves up
+                    into = np.zeros((nx, nz))
+                    m_ = isox[:-1] & mov[1:]
+                    into[1:][m_] += fx[1:-1][m_]
+                    m_ = isox[1:] & mov[:-1]
+                    into[:-1][m_] -= fx[1:-1][m_]
+                    m_ = isox[:, :-1] & mov[:, 1:]
+                    into[:, 1:][m_] += fz[:, 1:-1][m_]
+                    m_ = isox[:, 1:] & mov[:, :-1]
+                    into[:, :-1][m_] -= fz[:, 1:-1][m_]
+                    for i, k in zip(*np.nonzero(into)):
+                        kb = k
+                        while kb > 0 and mov[i, kb - 1]:
+                            kb -= 1
+                        push[i, kb] += into[i, k]
+                    for i, k in zip(*np.nonzero(push >= h * h * (1 - 1e-12))):
+                        while (push[i, k] >= h * h * (1 - 1e-12) and k > 0
+                               and self.mat[i, k - 1] == oxide):
+                            # oxide in at (i, k), the column above moves up
+                            # (with what is still to come for its cells; a
+                            # gas cell's fill moves on to the gas above)
+                            b = k
+                            while b < nz and self.mat[i, b] is not None:
+                                b += 1
+                            if b >= nz:
+                                raise ValueError("the oxide lifts material out of the "
+                                                 "domain; raise z_top")
+                            if b + 1 < nz:
+                                fill[i, b + 1] += fill[i, b]
+                                fill[i, b] = 0.0
+                            rest = push[i, k] - h * h
+                            push[i, k + 1:b + 1] = push[i, k:b].copy()
+                            push[i, k] = 0.0
+                            self._push_oxide(i, k - 1, (0, 1), oxide)
+                            k += 1
+                            push[i, k] = rest
             acc += rate * dt
             lift += extra * dt
+            made += float(v.sum()) * h * dt
             while True:
                 done = (rate > 0) & (acc >= h * h * (1 - 1e-12)) & (self.mat == material)
                 if not done.any():
@@ -1760,10 +1831,17 @@ class Structure:
                 while lift[q, i, k] >= h * h * (1 - 1e-12):
                     self._push_oxide(i, k, dirs[q], oxide)
                     lift[q, i, k] -= h * h
+            if flow_shape:
+                self._carry_parts(fill, push, movable)
             t += dt
             steps += 1
             if steps > 200000:
                 raise RuntimeError("the oxidation did not finish; use larger cells")
+        # the oxide's balance (new in 0.35.0): what was made, what is in
+        # whole cells, and what was still in parts of cells at the end
+        part = float(acc[self.mat == material].sum() + lift.sum() + push.sum()
+                     + fill[self.mat == None].sum())  # noqa: E711
+        whole = float((self.mat == oxide).sum()) * h * h - ox0
         # a cell more than half consumed at the end turns to oxide, and half a
         # cell of new volume or more is put in (the front passed the center)
         half = (acc >= 0.5 * h * h) & (self.mat == material)
@@ -1774,20 +1852,70 @@ class Structure:
         for q, i, k in zip(*np.nonzero(lift >= 0.5 * h * h)):
             self._push_oxide(i, k, dirs[q], oxide)
         if flow_shape:
-            # so do the gas cells the flow has filled half way or more
+            # so do the gas cells the flow has filled half way or more, and
+            # the masks it has pushed up half a cell or more
             half_g = (fill >= 0.5 * h * h) & (self.mat == None)  # noqa: E711
             for i, k in zip(*np.nonzero(half_g)):
                 self.mat[i, k] = oxide
                 self._hist_new_cell(i, k)
-        if viscosity is not None and q_prev is not None:
-            # the flow and stress of the final shape (with the last growth)
+            for i, k in zip(*np.nonzero(push >= 0.5 * h * h)):
+                if self.mat[i, k] in movable and k > 0 and self.mat[i, k - 1] == oxide:
+                    self._push_oxide(i, k - 1, (0, 1), oxide)
+        if viscosity is not None and q_prev is not None and not (flow_shape and shear_modulus):
+            # the flow and stress of the final shape (with the last growth;
+            # a springy oxide shaped by its flow keeps the stress of its last
+            # step, which already reaches the end)
             fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
             self.oxide_stress = flow(np.where(fluid, q_prev, 0.0))
+        self.oxidation_balance = dict(
+            made_nm2=made, whole_cells_nm2=whole, parts_nm2=part,
+            rounding_nm2=float((self.mat == oxide).sum()) * h * h - ox0 - made)
         self.log.append(("oxidize", material, oxide, B, BA, time, cf, reference, "2d"))
         top = np.zeros(nx)
         for i in range(nx):
             top[i] = float(np.sum(self.mat[i] == oxide) * h)
         return top
+
+    def _carry_parts(self, fill, push, movable):
+        """shape="flow": a part of a cell's oxide that sits on a cell which
+        has meanwhile changed (a gas cell taken by oxide put in by the
+        simple rule, or lifted into by a mask; a solid's cell that moved)
+        goes on to where it belongs, so that no oxide is lost: a gas cell's
+        fill to the nearest open gas cell, a solid's push to the bottom of
+        the movable solid above it in its column, else to the open gas"""
+        from scipy import ndimage
+        nx, nz = self.mat.shape
+        gas = self._gas_open()
+        mov = np.isin(self.mat, list(movable)) if movable else np.zeros_like(gas)
+        bad_f = (fill != 0.0) & ~gas
+        bad_p = (push != 0.0) & ~mov
+        if not (bad_f.any() or bad_p.any()):
+            return
+        for i, k in zip(*np.nonzero(bad_p)):
+            b = k + 1
+            while b < nz and not mov[i, b] and self.mat[i, b] is not None:
+                b += 1
+            if b < nz and mov[i, b]:
+                push[i, b] += push[i, k]
+            else:
+                fill[i, k] += push[i, k]
+                bad_f[i, k] = fill[i, k] != 0.0 and not gas[i, k]
+            push[i, k] = 0.0
+        if bad_f.any() and gas.any():
+            # shared equally among the open gas cells nearest to it (all of
+            # them, so that a symmetric shape stays symmetric)
+            dist = ndimage.distance_transform_edt(~gas)
+            for i, k in zip(*np.nonzero(bad_f)):
+                r = float(dist[i, k])
+                R = int(math.ceil(r)) + 1
+                a0, a1, b0, b1 = max(0, i - R), min(nx, i + R + 1), max(0, k - R), min(nz, k + R + 1)
+                ii, kk = np.nonzero(gas[a0:a1, b0:b1])
+                d2 = (ii + a0 - i) ** 2 + (kk + b0 - k) ** 2
+                near = d2 <= r * r * (1 + 1e-12) + 1e-12
+                share = fill[i, k] / int(near.sum())
+                for a_, b_ in zip(ii[near] + a0, kk[near] + b0):
+                    fill[a_, b_] += share
+                fill[i, k] = 0.0
 
     def _push_oxide(self, i, k, d, oxide):
         """One cell of new oxide in front of the face of cell (i, k) facing
