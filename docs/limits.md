@@ -29,10 +29,17 @@ The limits of each part of the package, in detail. The
   materials (the half-space LO modes of each side and the interface
   modes), for isotropic materials with one oscillator each (wurtzite's
   small anisotropy and the two-mode behavior of alloys such as AlGaN are
-  left out), not the confined modes of a thin barrier or several
-  interfaces; its mode energies are split between the two nearest points
+  left out); its mode energies are split between the two nearest points
   of the energy grid (the error is second order in the step: 3e-4 at the
-  default step in example 71). There are no hot phonons. The phonons
+  default step in example 71). Since 0.34.0 `Subbands.layered_phonons`
+  has the modes of any number of layers (thin spacers and barriers,
+  caps), whose energies change with the wave number, with the same
+  limits (isotropic layers, one oscillator each, no damping); the modes
+  are found on a grid of wave numbers (120 by default, between 1e-4 and
+  30 per nm) and, at each one, split between the two nearest energy
+  steps. A layer of air or vacuum (no phonons) cannot be one of the
+  layers, so the top surface of a stack is left out. There are no hot
+  phonons. The phonons
   are unscreened by default (static screening, the option, is an upper
   bound: at the phonon frequency screening is weaker); with them
   the mobility comes from the exact solution of the linearized Boltzmann
@@ -49,16 +56,19 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.33.0) has the library's features of 0.24.0 to 0.33.0
+- The app (since 0.34.0) has the library's features of 0.24.0 to 0.34.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
   only, no heat), with the four lowest levels joined along the channel
   if you ask (with or without scattering; with both, on a 1 nm step
   along the channel), the Fermi-Dirac heat per
   electron, simulated implant ranges, plasma etching, oxide flow,
-  springy oxide and masks that bend in the process recipe, and the mobility of the electron layer with the
+  springy oxide, masks that bend and oxide shaped by its flow in the
+  process recipe, and the mobility of the electron layer with the
   interface vibrations of the boundary next to the electrons (GaN on its
-  side, your numbers on the other). It does not offer the triangle and
+  side, your numbers on the other) or of every layer of the exact region
+  (GaN's numbers for GaN layers, one set of yours for the others, and
+  optionally another for the layer next to the electrons). It does not offer the triangle and
   adaptive meshes (its transistor is built on a rectangular grid), the
   NEGF of holes (its transistor is an electron
   device), the plasma chemistry (the recipe takes the fluxes; the
@@ -417,9 +427,15 @@ The limits of each part of the package, in detail. The
   oxide's slow viscous flow and stress (since 0.26.0, `stokes`: Newtonian,
   one viscosity per material, materials without one rigid, the gas a
   fluid 1e4 times less viscous in place of a free surface) and slow the
-  reaction where the stress normal to the interface is compressive. The
-  shape still follows the volume rule (the new volume moves cells up or
-  into the nearest gas), not the flow. Since 0.33.0 `shear_modulus`
+  reaction where the stress normal to the interface is compressive. By
+  default the shape follows the volume rule (the new volume moves cells
+  up or into the nearest gas). Since 0.34.0 `shape="flow"` lets the free
+  surface follow the flow instead: the open gas cells next to the oxide
+  fill with what flows out through each face and become oxide when full
+  (half-full cells round up at the end), so the volume is kept to a
+  few cells (2 percent in the test) and the surface is still a
+  staircase of cells; masks and other solids next to the oxide are still
+  moved by the volume rule, not by the flow. Since 0.33.0 `shear_modulus`
   makes the oxide viscoelastic (Maxwell, one relaxation time per
   material, stepped in time between flow solves, with the stress carried
   along when cells move and new oxide starting without stress) and a mask

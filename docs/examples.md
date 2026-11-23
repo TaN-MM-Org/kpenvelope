@@ -35,7 +35,8 @@ degenerate gas; 69 a gas of several subbands that scatter into each
 other; 70 the screening of all its pairs of levels; 71 the vibrations of
 an interface; 72 a plasma's chemistry feeding an etch; 73 electrons that
 change subband and scatter; 74 springy oxide and a mask that bends; 75
-negative ions in a plasma.
+negative ions in a plasma; 76 phonons of a stack with a thin spacer; 77
+oxide that goes where it flows.
 
 ### 1. Energy levels and what they are made of
 
@@ -3482,6 +3483,103 @@ hotter to keep up the ionization, and fewer positive ions reach the
 wafer. The strongly attaching case is reached in steps with `guess=`:
 started cold, the time integration loses its electrons before the
 plasma settles. All numbers are illustrative.
+
+### 76. Phonons of a stack with a thin spacer (new in 0.34.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subbands
+
+# the heterostructure of example 69 with a 1 nm AlN spacer under the
+# barrier; the electrons' levels from the whole stack, then their mobility
+# limited by polar phonons: bulk GaN, the GaN/barrier interface alone, and
+# all three layers with the spacer. GaN's phonons are cited; the spacer's
+# (LO 112 meV, 8.5 and 4.6) and the barrier's (LO 105 meV, 9.0 and 5.0)
+# are illustrative
+gan, aln, bar = algan(0.0), algan(1.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(aln, 1.0), StackLayer(bar, 24.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 324.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 324.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, np.where(z < 301.0, aln.me, bar.me))
+E, p2, w, psi = column_states(z, r.ec[win], mass, 3, z[0] - 0.1, z[-1] + 0.1, signed=True)
+G = (ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp)
+spacer, barrier = (0.112, 8.5, 4.6), (0.105, 9.0, 5.0)
+sb = Subbands(z, psi, E, gan.me, ph.eps0_perp, fermi=0.0, weights=w)
+print(f"electrons {r.sheet_quantum_cm2:.3e} cm^-2 in three levels")
+print(f"bulk GaN phonons:                  {sb.mobility(sb.polar_optical(*G))['mobility_cm2Vs']:.0f} cm^2/Vs")
+print(f"GaN / barrier, no spacer phonons:  "
+      f"{sb.mobility(*sb.interface_phonons(300.0, G, barrier))['mobility_cm2Vs']:.0f} cm^2/Vs")
+lay = sb.layered_phonons([300.0, 301.0], [G, spacer, barrier])
+print(f"GaN / spacer / barrier:            {sb.mobility(lay)['mobility_cm2Vs']:.0f} cm^2/Vs")
+for q in (0.1, 1.0):
+    k = int(np.argmin(np.abs(lay.qs - q)))
+    print(f"  modes at q = {lay.qs[k]:.2f} 1/nm: "
+          + ", ".join(f"{1000 * e:.1f}" for e, _ in lay.poles[k]) + " meV")
+```
+
+```
+electrons 1.643e+13 cm^-2 in three levels
+bulk GaN phonons:                  1258 cm^2/Vs
+GaN / barrier, no spacer phonons:  1278 cm^2/Vs
+GaN / spacer / barrier:            1280 cm^2/Vs
+  modes at q = 0.10 1/nm: 73.0, 82.0, 92.5, 100.3, 105.0, 111.6, 112.0 meV
+  modes at q = 1.01 1/nm: 73.8, 80.5, 92.5, 103.1, 105.0, 109.3, 112.0 meV
+```
+
+`layered_phonons` finds the polar vibrations of a whole stack of layers:
+the bulk-like ones of each material (at its LO energy) and the ones that
+live on its boundaries, whose energies now change with the wave number
+because the boundaries feel each other through the thin spacer (at
+q = 0.1 per nm they spread from 73 to 112 meV; at 1 per nm they move
+toward the energies of two separate interfaces). Each is found as a pole
+of the Coulomb potential of the layers, with its weight on every pair of
+levels; the mobility then spreads each mode's weight over the two energy
+steps around its energy, q by q. Here the spacer's own vibrations add
+little: 1280 cm^2/Vs against 1278 without it and 1258 for bulk GaN
+phonons. With the same material everywhere the result is the bulk one
+(a test checks it to 1e-5, and the single interface against
+`interface_phonons` to 1e-5). The spacer's and the barrier's phonon
+numbers are illustrative.
+
+### 77. Oxide that goes where it flows (new in 0.34.0)
+
+```python
+from kpenvelope.process import Structure
+
+# a 40 nm wide, 40 nm deep trench in silicon, oxidized with the
+# illustrative constants of example 61 and a flowing oxide (1e12 Pa s,
+# illustrative): the new oxide placed by the simple rule (it pushes the
+# column above it up, or fills the nearest gas) or carried by the flow
+for shape in ("volume", "flow"):
+    st = Structure(80.0, 0.0, 140.0, 2.0, "Si", 100.0)
+    st.etch({"Si": 1.0}, 40.0, mode="directional", window=(20, 60))
+    st.oxidize("Si", "O", 0.5, 0.05, 2000.0, 0.44, "illustrative", mode="2d",
+               viscosity={"O": 1e12}, shape=shape)
+    top = st.top_surface()
+    print(f"{shape:6s}: oxide {st.area('O'):.0f} nm^2; top of the oxide at x = 5, 15, 25, "
+          f"35 nm: " + ", ".join(f"{top[int(x / 2)]:.0f}" for x in (5, 15, 25, 35))
+          + " nm; open trench " + f"{sum(1 for k in range(top.size) if top[k] < 100) * 2} nm wide")
+```
+
+```
+volume: oxide 3712 nm^2; top of the oxide at x = 5, 15, 25, 35 nm: 122, 112, 104, 88 nm; open trench 22 nm wide
+flow  : oxide 3672 nm^2; top of the oxide at x = 5, 15, 25, 35 nm: 114, 114, 112, 78 nm; open trench 20 nm wide
+```
+
+By the simple rule, new oxide pushes the column above it up or fills the
+nearest open gas, which piles oxide up at the trench's edges (the top
+reaches 122 nm at x = 5 nm). With `shape="flow"` the computed flow of
+the oxide carries the new volume to the surface: the open gas cells next
+to the oxide fill with what flows out through each face, and the surface
+rises evenly on the shoulders (114 nm) while the walls close in on the
+trench. Both keep the oxide's volume to within a few cells (a test
+checks 2 percent against the silicon consumed); masks still move by the
+simple rule. Numbers illustrative.
 
 ## Tutorials
 

@@ -634,6 +634,39 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Phonons of many layers, oxide shaped by its flow (new in 0.34.0)**
+
+- `Subbands.layered_phonons(interfaces, materials, temperature_K=None,
+  screening=False, q_range=(1e-4, 30.0), q_points=120)` -- the polar
+  phonons of a stack of isotropic layers with any number of boundaries
+  (thin spacers, wells, caps), each layer given as (phonon_eV,
+  eps_static, eps_high), lowest first, the lowest and highest
+  continuing to infinity. At each of q_points wave numbers it finds the
+  modes as the poles of the layers' Coulomb potential: the LO energy of
+  each layer and the boundary modes, whose energies change with q. Returns
+  one mechanism for `mobility` and `lifetimes`; the mobility places each
+  mode's weight, q by q, on the two energy steps around its energy, so
+  that the weight and the mean energy are kept (example 76). With one
+  boundary it gives `interface_phonons`, with one material
+  `polar_optical`.
+- `kpenvelope.scattering.layer_modes(z, weights, A, interfaces,
+  materials, q)` -- the modes at one q: [(energy eV, weight on each
+  column of A)]. The boundary-mode energies are the roots of a polynomial
+  in w^2 of degree 2 (layers - 1) (the dispersion with its denominators
+  cleared); each weight is a contour integral of the potential around
+  its pole, and poles closer than 1e-5 eV (thick layers at large q) are
+  taken together in one contour.
+- `Structure.oxidize(..., mode="2d", viscosity=..., shape="flow")` -- the
+  new oxide goes where its computed flow carries it: the open gas cells
+  next to the oxide fill with what flows out through each face and turn
+  into oxide when full (example 77). The default `shape="volume"` keeps
+  the simple rule (the new volume lifts the column above it).
+- `Subbands.mobility` with one mechanism solves the Boltzmann equation
+  once instead of twice (the result is the same).
+- The app: `shape=flow` in the oxidize step of Process steps; in the
+  Electrons tab, the vibrations of every layer of the exact region, with
+  optional numbers for the layer next to the electrons.
+
 **Springy oxide, masks that bend, negative ions (new in 0.33.0)**
 
 - `Structure.stokes(..., shear_modulus={material: G}, dt=, history=)` --

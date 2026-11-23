@@ -343,6 +343,37 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Phonons of many layers, oxide shaped by its flow (new in 0.34.0)**
+
+- The modes of layers of one material are the bulk LO phonon with the
+  bulk weight (1e-9; measured 5e-14); of two materials, the half-space
+  and interface modes in closed form (1e-7; measured 2.5e-11); a slab of
+  barrier in GaN has the interface-mode energies of
+  `phonons.slab_modes` (1e-9; measured 2e-15).
+- The sum rule: the weights of all the modes add up to the difference
+  of the potentials with the high-frequency and the static permittivities,
+  for three and four layers at three wave numbers (1e-7; measured 5e-9),
+  and for a channel, a 1 nm spacer, a 24 nm barrier and a cap at 16 wave
+  numbers from 1e-4 to 30 per nm (1e-6; measured 2e-7). This last check
+  found two faults of a first version, which scanned the dispersion for
+  sign changes: at large q the modes of the barrier's two boundaries came
+  so close in energy that some were lost (17 percent off the sum rule),
+  and the cosh of a thick layer overflowed. The roots now come from the
+  polynomial the dispersion becomes with its denominators cleared, and
+  near-equal poles are taken in one contour.
+- In the mobility: layers of one material give bulk GaN's phonons
+  (1e-5; measured 9e-7), two materials give `interface_phonons` (1e-5;
+  measured 1.1e-6), and a barrier 0.5 nm thin in GaN changes the bulk
+  value by 2e-5 (1e-3).
+- The app: with GaN's numbers everywhere, bulk GaN (1e-5); with a cap 25
+  nm from the electrons, the same as the boundary next to them alone
+  (1e-5; measured 3e-7); spacer numbers equal to the barrier's change
+  nothing (exactly).
+- Oxide shaped by its flow: on a flat surface the same as the volume rule
+  (exactly); in a trench, a symmetric result, and the oxide's area equals
+  the silicon consumed over 0.44 (2 percent). The app's oxide equals the
+  library's (exactly).
+
 **Springy oxide, masks that bend, negative ions (new in 0.33.0)**
 
 - A uniform layer swelling at a constant rate: the Maxwell stress after
