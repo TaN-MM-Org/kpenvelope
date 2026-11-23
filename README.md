@@ -60,7 +60,8 @@ only looks right.
   etching (also with the shadowing of narrow openings, particles that
   bounce, and etching driven by ions and a reactive gas together, with
   the fluxes from a model of the plasma's chemistry),
-  oxidation (also under mask edges, with the oxide's flow and stress),
+  oxidation (also under mask edges, with the oxide's flow and stress,
+  springy oxide and masks that bend),
   implants (with ranges from a Monte Carlo simulation of the ions) and
   anneals.
 
@@ -181,7 +182,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  73 worked examples, each with the output it prints, and three
+  75 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -222,9 +223,9 @@ The main gaps, in plain terms:
   models behave; the attempts to change it are described on the limits
   page, with the numbers.
 - Process steps stay simple in other ways. The plasma model is
-  averaged over the chamber, for positive ions only, with your rates
-  and wall factors; growing oxide flows but its shape
-  follows a simple volume rule and there is no elasticity, the Monte
+  averaged over the chamber, with your rates and wall factors; growing
+  oxide flows and can be springy, and masks can bend, but the shape
+  follows a simple volume rule, the Monte
   Carlo implant ranges use a textbook electronic stopping that can be off
   by tens of percent for light ions, diffusion constants come from you,
   and the shapes are built from square cells.

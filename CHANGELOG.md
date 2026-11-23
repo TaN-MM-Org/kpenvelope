@@ -4,6 +4,42 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.33.0 (2026-11-23)
+
+The oxide can be springy as well as runny, masks can bend, and the
+plasma model takes negative ions. The examples print what they printed
+before; examples 74 and 75 are new.
+
+### Added
+
+- `Structure.stokes(shear_modulus=, dt=, history=)`: Maxwell
+  viscoelastic flow, and elastic solids (a modulus without a
+  viscosity); `Structure.oxidize(shear_modulus=)` uses it with the stress
+  carried with the cells.
+- `plasma.Species(charge=-1)`: negative ions; `GlobalPlasma.solve(guess=)`
+  to start from a nearby solution. The electrons are now an unknown of
+  their own while the plasma settles (the steady state is the same).
+- The app: `modulus=` and `modulus_X=` in the oxidize step, and the
+  stress of each elastic solid in the summary.
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; the confined phonons of thin layers and
+  several interfaces; a shipped plasma rate set; the oxide's shape
+  following its flow; better electronic stopping; tunnel paths that
+  bend; tunneling and heat inside one Newton solve; the hot-electron
+  model at zero relaxation time. The app has no meshes, NEGF holes,
+  plasma chemistry or 3D.
+
+### Checks (tests)
+
+4 new tests (406 in all; docs/checks.md has the tolerances): the
+Maxwell stress against its exact recursion and an elastic solid's linear
+growth; a steady flow settling on the viscous stress (which found and
+fixed the corner averaging); the oxidation's viscous limit; the app's
+elastic mask; negative ions against the balances written out by hand.
+All 75 documented examples were rerun.
+
 ## 0.32.0 (2026-11-22)
 
 Electrons in coupled mode space can now scatter, quantum transport runs
