@@ -289,7 +289,11 @@ def run_mobility(spec):
     "interface_phonons" {lo_meV, eps_static, eps_high, source} (since
     0.31.0, in place of "polar": the polar phonons of the heterostructure,
     GaN on its side of the boundary next to the electrons, your numbers on
-    the other, and the interface modes between them), "donors"
+    the other, and the interface modes between them; with "all_layers"
+    true, since 0.34.0, every layer and boundary of the exact region, and
+    optional numbers spacer_lo_meV, spacer_eps_static, spacer_eps_high,
+    spacer_source for the layer just past the boundary next to the
+    electrons), "donors"
     (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
     corr_nm, source} at the boundary next to the electrons, "acoustic"
     {deformation_eV, density, velocity, source}. Numbers you type need
@@ -362,14 +366,73 @@ def run_mobility(spec):
             raise SpecError("No layer boundary lies in the exact region.")
         zi = float(zb[np.argmin(np.abs(zb - z[peak]))])
         below_is_gan = z[peak] < zi
-        modes = sb.interface_phonons(zi, gan_ph if below_is_gan else other,
-                                     other if below_is_gan else gan_ph)
+        spacer = None
+        if any(str(iface.get(k, "")).strip() for k in
+               ("spacer_lo_meV", "spacer_eps_static", "spacer_eps_high", "spacer_source")):
+            src2 = str(iface.get("spacer_source", "")).strip()
+            if not src2:
+                raise SpecError("Please say where the numbers of the layer next to the "
+                                "electrons come from.")
+            spacer = (_num(iface, "spacer_lo_meV", lo=1.0, hi=500.0,
+                           what="the LO phonon energy of the layer next to the "
+                                "electrons (meV)") / 1000.0,
+                      _num(iface, "spacer_eps_static", lo=1.0, hi=100.0,
+                           what="the static permittivity of the layer next to the electrons"),
+                      _num(iface, "spacer_eps_high", lo=1.0, hi=100.0,
+                           what="the high-frequency permittivity of the layer next to "
+                                "the electrons"))
+            if not spacer[1] > spacer[2]:
+                raise SpecError("The static permittivity of the layer next to the "
+                                "electrons must be larger than its high-frequency one.")
+            if not iface.get("all_layers"):
+                raise SpecError("Numbers for the layer next to the electrons need "
+                                "'every layer of the exact region' ticked.")
+        modes, layered, far, far_src = None, False, other, src
+        if iface.get("all_layers"):
+            # every layer of the exact region (since 0.34.0): GaN layers get
+            # GaN's numbers, the layer just past the boundary next to the
+            # electrons gets the spacer's numbers if given, every other layer
+            # the barrier's; neighbors with the same numbers are merged
+            j = int(np.argmin(np.abs(edges - zi)))
+            k_next = j if below_is_gan else j - 1
+            seg = [win[0]] + list(zb) + [win[1]]
+            ifs, mats = [], []
+            for a, b in zip(seg[:-1], seg[1:]):
+                k = int(np.clip(np.searchsorted(edges, 0.5 * (a + b), side="right") - 1,
+                                0, len(layers) - 1))
+                nm_ = layers[k].material.name
+                if nm_ == "GaN" or nm_.startswith("GaN") or nm_ == algan(0.0).name:
+                    m_ = gan_ph
+                elif spacer is not None and k == k_next:
+                    m_ = spacer
+                else:
+                    m_ = other
+                if mats and m_ == mats[-1]:
+                    continue
+                if mats:
+                    ifs.append(a)
+                mats.append(m_)
+            if spacer is not None and spacer not in mats:
+                raise SpecError("The layer next to the electrons is GaN and has GaN's "
+                                "numbers; leave the numbers for that layer empty.")
+            if len(mats) == 2 and spacer is not None:
+                far, far_src = spacer, src2      # one boundary, the spacer beyond it
+            if len(mats) > 2:
+                modes, layered = [sb.layered_phonons(ifs, mats)], True
+                parts = [ref, src] + ([src2] if spacer is not None else [])
+                names.append("vibrations of every layer and boundary of the exact region ("
+                             + "; ".join(parts) + ")")
+        if modes is None:
+            modes = sb.interface_phonons(zi, gan_ph if below_is_gan else far,
+                                         far if below_is_gan else gan_ph)
         for m in modes:
             mechs.append(m)
+            if layered:
+                continue
             if m.name.startswith("half-space"):
                 side_gan = (m.name.endswith("below")) == below_is_gan
                 names.append(f"vibrations of the GaN side ({ref})" if side_gan
-                             else f"vibrations of the barrier side ({src})")
+                             else f"vibrations of the barrier side ({far_src})")
             else:
                 names.append(f"vibrations of the interface itself at {m.name.split()[1]} meV")
     elif sc.get("polar"):
@@ -1643,7 +1706,8 @@ _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thicknes
                  "oxidation that reaches under mask edges, and viscosity=1e12 to let the "
                  "oxide flow; stress_volume=0.025 temperature=1273 slows growth where it "
                  "is squeezed; modulus=3e10 makes the oxide springy as well, "
-                 "modulus_Si3N4=1e11 lets a mask bend instead of staying rigid), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
+                 "modulus_Si3N4=1e11 lets a mask bend instead of staying rigid, "
+                 "shape=flow lets the flow decide where the new oxide goes), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
                  "target_Z=14 target_mass=28.09 atoms=5e22 species=acceptor dose=1e13' "
                  "(the depth profile from a simulation of the ions), 'plasmaetch "
                  "neutrals=1e18 ions=1e16 stick_Si=0.2 yield_Si=5 atoms_Si=5e22 time=10' "
@@ -1802,8 +1866,14 @@ def run_process(spec):
                     if mods:
                         flow["shear_modulus"] = mods
                         elastic_solids |= set(mods) - {ox}
-                elif any(a == "modulus" or a.startswith("modulus_") for a in args):
-                    raise SpecError(f"Step {k}: the elastic moduli need viscosity= (and mode=2d).")
+                    # the shape from the flow (new in 0.34.0)
+                    if args.get("shape", "volume") not in ("volume", "flow"):
+                        raise SpecError(f"Step {k}: shape is volume or flow.")
+                    flow["shape"] = args.get("shape", "volume")
+                elif any(a == "modulus" or a.startswith("modulus_") or a == "shape"
+                         for a in args):
+                    raise SpecError(f"Step {k}: modulus= and shape= need viscosity= "
+                                    "(and mode=2d).")
                 oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
                                      num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
                                      src, mode=omode, **flow)
