@@ -34,7 +34,7 @@ import numpy as np
 from .electrons import EPS0, HBAR, KB, M0
 from .nitride import QE
 
-__all__ = ["Subband", "Subbands", "interface_modes"]
+__all__ = ["Subband", "Subbands", "interface_modes", "layer_modes"]
 
 
 def _gauss_theta(n):
@@ -540,6 +540,174 @@ def interface_modes(below, above):
                  for L, Tt, ei in ((L1, T1, ei1), (L2, T2, ei2)))
         out.append((w, 4.0 / (w * dD)))
     return out
+
+
+# ------------------------------------------- polar phonons of many layers
+def _lorentz(m, w):
+    """eps(w) of an isotropic single-oscillator material (hw_LO, eps_static,
+    eps_high), w_TO from Lyddane-Sachs-Teller; w complex allowed"""
+    L, es, ei = m
+    T2 = L * L * ei / es
+    return ei * (w * w - L * L) / (w * w - T2)
+
+
+def _layer_dispersion(q, w, zi, mats):
+    """zero at a mode of the layers (q in 1/nm, w in eV): the potential
+    exp(q z) in the lowest layer, carried through the inner layers (phi
+    and eps phi' continuous), must decay above the highest; scaled"""
+    e = [_lorentz(m, w) for m in mats]
+    e = [v if v != 0 else 1e-300 for v in e]
+    phi, D = 1.0, e[0] * q
+    for j in range(1, len(mats) - 1):
+        d = zi[j] - zi[j - 1]
+        # cosh(q d) taken out (the result does not depend on the scale),
+        # so that thick layers at large q do not overflow
+        t = math.tanh(q * d)
+        phi, D = phi + D / (e[j] * q) * t, phi * e[j] * q * t + D
+        nrm = abs(phi) + abs(D) / (abs(e[j]) * q + 1e-300)
+        phi, D = phi / nrm, D / nrm
+    return (D + e[-1] * q * phi) / (abs(phi) * abs(e[-1]) * q + abs(D) + 1e-300)
+
+
+def _layer_roots(q, zi, mats):
+    """the interface-mode energies of the layers at q. With eps_j(w) =
+    eps_high (w^2 - LO^2) / (w^2 - TO^2), the dispersion times every eps
+    of the inner layers and every (w^2 - TO^2) it divides by is a
+    polynomial in w^2 of degree 2 (layers - 1) (one in eps of the two outer
+    layers, two in each inner one), so all its roots are found at once:
+    from its values on Chebyshev points of the bands TO^2 .. LO^2, then the
+    roots of the Chebyshev series. Two roots closer than the rounding (thick
+    layers at large q, where the modes of separate interfaces have almost
+    the same energy) may come out slightly complex; their real parts are
+    kept, and `layer_modes` takes such near-equal poles inside one contour"""
+    Ls = [m[0] for m in mats]
+    Ts = [m[0] * math.sqrt(m[2] / m[1]) for m in mats]
+    a, b = min(Ts) ** 2, max(Ls) ** 2
+    deg = 2 * (len(mats) - 1)
+    t = [math.tanh(q * (zi[j] - zi[j - 1])) for j in range(1, len(mats) - 1)]
+    u = np.cos(np.pi * (np.arange(4 * deg + 8) + 0.5) / (4 * deg + 8))
+    x = 0.5 * (a + b) + 0.5 * (b - a) * u
+    # eps_j = num_j / den_j; the recursion of `_layer_dispersion` times
+    # eps_j den_j^2 at each inner layer, den of the outer ones: no division
+    num = [m[2] * (x - m[0] ** 2) for m in mats]
+    den = [x - (m[0] ** 2) * m[2] / m[1] for m in mats]
+    phi, D = den[0], num[0]
+    for j in range(1, len(mats) - 1):
+        nj, dj, tj = num[j], den[j], t[j - 1]
+        phi, D = phi * nj * dj + D * tj * dj ** 2, phi * nj ** 2 * tj + D * nj * dj
+    P = D * den[-1] + num[-1] * phi
+    c = np.polynomial.chebyshev.chebfit(u, P, deg)
+    r = np.polynomial.chebyshev.chebroots(c)
+    xr = 0.5 * (a + b) + 0.5 * (b - a) * r
+    keep = (np.abs(xr.imag) <= 1e-6 * (b - a)) & (xr.real > 0)
+    return sorted(float(math.sqrt(v)) for v in xr.real[keep])
+
+
+def _layer_solve(z, w, idx, mats, q, wv, rhs):
+    """phi of -(eps phi')' + q^2 eps phi = a on the nodes z (box method,
+    faces in the layer idx), the lowest and highest layers continuing to
+    infinity (phi' = +-q phi there), at the frequency wv (complex)"""
+    from scipy.linalg import solve_banded
+    e = np.array([_lorentz(m, wv) for m in mats], dtype=complex)
+    ef = e[idx]
+    h = np.diff(z)
+    N = z.size
+    # each segment joins its two nodes exactly (phi'' = q^2 phi inside), so
+    # charges on the nodes get their exact potentials: for one material
+    # F is sum a_i a_j exp(-q |z_i - z_j|) / (2 q eps), as `_pair` sums it
+    x = q * h
+    co = q / np.tanh(x)
+    cs = q / np.sinh(x)
+    diag = np.zeros(N, complex)
+    diag[:-1] += ef * co
+    diag[1:] += ef * co
+    diag[0] += e[0] * q
+    diag[-1] += e[-1] * q
+    ab = np.zeros((3, N), complex)
+    ab[0, 1:] = -ef * cs
+    ab[1] = diag
+    ab[2, :-1] = -ef * cs
+    return solve_banded((1, 1), ab, rhs)
+
+
+def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
+    """The polar-phonon modes of a stack of isotropic layers at in-plane
+    wave number q (1/nm), and their weight on the charge profiles A (new in
+    0.34.0). z, weights : nodes (nm) and their weights; A : (len(z), P)
+    profiles (1/nm); interfaces : the boundaries (nm, inside z), materials :
+    (phonon_eV, eps_static, eps_high) of each layer, lowest first.
+
+    F_p(w) = int int A_p(z) V(z, z'; w) A_p(z') with V the potential of a
+    point charge in the layers, -(eps phi')' + q^2 eps phi = delta, solved
+    on the nodes (box method; the lowest and highest layers continue to
+    infinity). Its poles on the real axis are the modes: the LO energies of
+    the layers (bulk-like modes) and the interface modes (zeros of the
+    layers' dispersion, which change with q). Returns [(energy eV, G)] with
+    G (P,) = 2 q (2 / w) Res F, found by a contour integral around each
+    pole; G is H(q) (1/eps_high - 1/eps_static) for a bulk material.
+    Checked by the sum rule sum_p (2 / w_p) Res_p F = F(w -> inf) - F(0)."""
+    z = np.asarray(z, float)
+    zi = [float(v) for v in interfaces]
+    if len(materials) != len(zi) + 1:
+        raise ValueError("one material more than interfaces")
+    if any(not (z[0] < v < z[-1]) for v in zi) or np.any(np.diff(zi) <= 0):
+        raise ValueError("the interfaces must increase and lie inside z")
+    idx = np.searchsorted(np.asarray(zi), 0.5 * (z[1:] + z[:-1]))
+    rhs = (np.asarray(A, float) * np.asarray(weights, float)[:, None]).astype(complex)
+    Ls = [float(m[0]) for m in materials]
+    Ts = [float(m[0]) * math.sqrt(m[2] / m[1]) for m in materials]
+    roots = _layer_roots(q, zi, materials)
+    # every pole (the LO energies and the roots) and the TO points (where
+    # eps is infinite), grouped where they lie within 1e-5 eV of each other
+    pts = sorted([(v, 1) for v in roots + Ls] + [(v, 0) for v in Ts])
+    groups, cur = [], [pts[0]]
+    for v in pts[1:]:
+        if v[0] - cur[-1][0] < 1e-5:
+            cur.append(v)
+        else:
+            groups.append(cur)
+            cur = [v]
+    groups.append(cur)
+    out = []
+    for g in groups:
+        if not any(k for _, k in g):
+            continue                       # a TO point alone is not a pole
+        lo, hi = g[0][0], g[-1][0]
+        c = 0.5 * (lo + hi)
+        half = 0.5 * (hi - lo)
+        gap = min([abs(v - c) - half for h in groups if h is not g for v, _ in h]
+                  + [1.0])
+        r = half + min(0.3 * gap, 2e-3)
+        # enough points on the circle for the poles inside and the
+        # singularities outside (the trapezoid error goes as ratio ** n)
+        ratio = max(half / r, r / (half + gap), 1e-3)
+        n = int(min(1024, max(n_contour, math.ceil(-32.0 / math.log(ratio)))))
+        th = 2 * np.pi * (np.arange(n) + 0.5) / n
+        acc = 0.0
+        mom = 0.0
+        for t_ in th:
+            dw = r * np.exp(1j * t_)
+            phi = _layer_solve(z, weights, idx, materials, q, c + dw, rhs)
+            val = (rhs * phi).sum(0) * dw
+            acc = acc + val
+            mom = mom + val * dw
+        R = np.real(acc / n)
+        # the energy: with near-equal poles, the first moment of the residue
+        # (their mean weighted by their residues), kept inside the group
+        M = np.real(mom / n)
+        wsum = np.abs(R).sum()
+        pl = sorted(set(v for v, k in g if k))
+        if len(pl) == 1:
+            p = pl[0]                          # one pole: its own energy
+        else:
+            p = c + (float((np.abs(R) * M / np.where(R != 0, R, 1)).sum() / wsum)
+                     if wsum > 0 else 0.0)
+            p = min(max(p, pl[0]), pl[-1])
+        out.append((p, 2 * q * (2 / p) * R, any(abs(v - L) < 1e-5 for v, _ in g for L in Ls)))
+    # a root that only the cleared denominators put there (at TO, when two
+    # neighbors are the same material) has no weight; the LO modes are kept
+    big = max((float(np.max(np.abs(G))) for _, G, _ in out), default=0.0)
+    return [(p, G) for p, G, lo in out if lo or float(np.max(np.abs(G))) > 1e-10 * big]
 
 
 def _pair(z, q, a, b):
@@ -1083,6 +1251,37 @@ class Subbands:
                                     f"interface {1000 * w:.1f} meV", T))
         return modes
 
+    def layered_phonons(self, interfaces, materials, temperature_K=None, screening=False,
+                        q_range=(1e-4, 30.0), q_points=120):
+        """Polar optical phonons of a stack of isotropic layers with any
+        number of interfaces (new in 0.34.0): thin barriers, wells, cap
+        layers. interfaces : the boundaries (nm, increasing, inside the
+        envelopes' z); materials : (phonon_eV, eps_static, eps_high) of each
+        layer, lowest first (the lowest and highest continue to infinity).
+        The modes come from the poles of the layers' Coulomb potential (see
+        `layer_modes`), on q_points wave numbers in q_range (1/nm, log
+        spaced): bulk-like LO modes of each material and interface modes
+        whose energies change with q. Returns one mechanism; `mobility`
+        places each mode's weight, at each q, on the two energy-grid points
+        around its energy so that the weight and the mean energy stay the
+        same (the energy changes with q, which a fixed-energy mode cannot
+        follow). With one interface it is `interface_phonons`; with one
+        material, `polar_optical`."""
+        mats = []
+        for m in materials:
+            hw, es, ei = (float(v) for v in m)
+            if not (hw > 0 and es > ei > 0):
+                raise ValueError("each layer needs phonon_eV > 0 and eps_static > eps_high > 0")
+            mats.append((hw, es, ei))
+        if not (0 < q_range[0] < q_range[1]) or int(q_points) < 8:
+            raise ValueError("q_range must be 0 < q_min < q_max, q_points >= 8")
+        T = self.T if temperature_K is None else float(temperature_K)
+        pr = self.pairs()
+        A = np.stack([self.psi[:, k] * self.psi[:, l] for k, l in pr], 1)
+        qs = np.exp(np.linspace(math.log(q_range[0]), math.log(q_range[1]), int(q_points)))
+        poles = [layer_modes(self.z, self.w, A, interfaces, mats, float(q_)) for q_ in qs]
+        return _PolarBranches(self, qs, poles, T, bool(screening))
+
     # --------------------------------------------------------- results
     def _elastic_matrices(self, mechanisms, E):
         """nu0, nu1 (n, n, nE): rates from i to j at total energy E."""
@@ -1106,11 +1305,12 @@ class Subbands:
         if energy is None and self.fermi <= self.E.min():
             E = float(self.E.min()) + self.kT
         Ea = np.array([E])
-        el = [f for f in mechanisms if not isinstance(f, _PolarMany)]
+        inel = (_PolarMany, _PolarBranches)
+        el = [f for f in mechanisms if not isinstance(f, inel)]
         nu0, nu1 = self._elastic_matrices(el, Ea)
         out = nu0[:, :, 0].sum(1)
         for f in mechanisms:
-            if isinstance(f, _PolarMany):
+            if isinstance(f, inel):
                 out = out + f.out_rate(Ea)[:, 0]
         op = E > self.E
         tq = [float(1 / out[i]) if op[i] and out[i] > 0 else None for i in range(self.n)]
@@ -1149,8 +1349,23 @@ class Subbands:
         if not mechanisms:
             raise ValueError("give at least one mechanism")
         pol = [f for f in mechanisms if isinstance(f, _PolarMany)]
+        branches = [f for f in mechanisms if isinstance(f, _PolarBranches)]
         parts = {id(f): [f] for f in mechanisms}
-        if pol:
+        if branches and not pol:
+            # the grid follows the strongest mode of the layers
+            hw = max(b.reference_energy() for b in branches)
+            n_sub = (max(4, int(math.ceil(hw / (self.kT / 10)))) if n_energy is None
+                     else int(n_energy))
+            lowest = min(b.e_min for b in branches)
+            n_sub = max(n_sub, int(math.ceil(2 * hw / lowest)))
+            dE = hw / n_sub
+            for b in branches:
+                parts[id(b)] = b.expand(dE)
+            steps = {id(g): int(round(g.hw / dE)) for b in branches for g in parts[id(b)]}
+        elif branches:
+            raise ValueError("give the phonons of the layers on their own (they include "
+                             "the bulk-like modes)")
+        elif pol:
             # one energy grid for every phonon: its step divides the energy
             # of the mode that scatters most at the Fermi level (steps of at
             # most kT / 10 and a quarter of it, or 1 / n_energy of it) and
@@ -1286,10 +1501,77 @@ class Subbands:
                                 diag[i] += L * a0
                                 put(i, j, 0, L * a1)
             return diag, rows, cols, vals
-        each = [solve([f])[0] for f in mechanisms]
         mu, mus = solve(mechanisms)
+        # each mechanism alone (with one, that is the solve just made)
+        each = [mu] if len(mechanisms) == 1 else [solve([f])[0] for f in mechanisms]
         return dict(mobility_cm2Vs=mu, each=each, subbands=mus,
                     sheets_cm2=self.sheets * 1e-4, energy_step_eV=dE)
+
+
+class _PolarBranches:
+    """Polar phonons whose energies change with q (`Subbands.layered_phonons`):
+    at every q of a grid, the modes' energies and weights G per pair."""
+
+    def __init__(self, sb, qs, poles, T, screening):
+        self.sb, self.qs, self.poles, self.T, self.screening = sb, qs, poles, T, screening
+        self.name = "phonons of the layers"
+        self._cache = {}
+        Es = [p for row in poles for p, _ in row]
+        self.e_min, self.e_max = min(Es), max(Es)
+
+    def reference_energy(self):
+        """the energy that weighs most at q near 1/nm (for the grid)"""
+        k = int(np.argmin(np.abs(np.log(self.qs))))
+        row = self.poles[k]
+        wts = np.array([float(np.sum(G)) for _, G in row])
+        return float(row[int(np.argmax(wts))][0])
+
+    def expand(self, dE):
+        """fixed-energy modes on the grid energies m dE: at each q, a mode at
+        w between m dE and (m + 1) dE gives the share (1 - t) of its weight
+        (times w / energy, so w G stays the same) to m and t to m + 1,
+        t = w / dE - m"""
+        key = round(dE, 15)
+        if key in self._cache:
+            return self._cache[key]
+        from scipy.interpolate import PchipInterpolator
+        sb = self.sb
+        P = len(sb.pairs())
+        acc = {}
+        for iq, row in enumerate(self.poles):
+            for w, G in row:
+                x = w / dE
+                m = int(math.floor(x + 1e-12))
+                t = x - m
+                for mm, share in ((m, 1.0 - t), (m + 1, t)):
+                    if share <= 1e-15 or mm < 1:
+                        continue
+                    arr = acc.setdefault(mm, np.zeros((self.qs.size, P)))
+                    arr[iq] += share * np.asarray(G, float) * w / (mm * dE)
+        index = {p: a for a, p in enumerate(sb.pairs())}
+        lq = np.log(self.qs)
+        out = []
+        for mm in sorted(acc):
+            vals = np.maximum(acc[mm], 0.0)
+            spl = {}                         # one interpolant per pair, when asked
+
+            def form(i, j, q_nm, vals=vals, spl=spl):
+                c = index[(min(i, j), max(i, j))]
+                if c not in spl:
+                    spl[c] = PchipInterpolator(lq, vals[:, c], extrapolate=True)
+                x = np.log(np.clip(np.asarray(q_nm, float), self.qs[0], self.qs[-1]))
+                return np.maximum(spl[c](x), 0.0)
+            hw = mm * dE
+            out.append(_PolarMany(sb, hw, 1.0 / EPS0, 1.0 / math.expm1(hw / (KB * self.T)),
+                                  self.screening, form, f"layers {1000 * hw:.1f} meV", self.T))
+        self._cache[key] = out
+        return out
+
+    def out_rate(self, E):
+        return sum(m.out_rate(E) for m in self.expand(self.sb.kT / 10.0))
+
+    def __call__(self, E, quantum=False):
+        raise ValueError("use Subbands.lifetimes or Subbands.mobility")
 
 
 class _Elastic:

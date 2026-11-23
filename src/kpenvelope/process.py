@@ -1343,7 +1343,7 @@ class Structure:
                 time: float, consumed_fraction: float, reference: str,
                 mode: str = "column", viscosity: dict = None, stress_volume_nm3: float = None,
                 temperature_K: float = None, flow_every: int = 1,
-                shear_modulus: dict = None):
+                shear_modulus: dict = None, shape: str = "volume"):
         """Thermal oxidation by the Deal-Grove law (see the module notes):
         in every column whose top is `material`, or `oxide` lying directly
         on `material`, the oxide grows from its present thickness x0 to x
@@ -1376,7 +1376,16 @@ class Structure:
         a material with a modulus but no viscosity (a nitride mask, say) is
         an elastic solid that bends and holds stress instead of being
         rigid. The stress is carried with the cells (new oxide starts
-        without stress)."""
+        without stress).
+
+        shape="flow" (new in 0.34.0, with mode="2d" and viscosity): the new
+        oxide's volume is carried by the computed flow instead of the
+        volume rule: the open gas cells next to the oxide fill with what
+        flows out to them through each face (u . n times the face, every
+        step), and turn to oxide when full, so the free surface swells
+        where the oxide flows out. Where new oxide forms against a mask or
+        the gas directly, it goes in as before (a mask's column is lifted:
+        cells of solids do not move with the flow)."""
         if not (B_nm2_s > 0 and B_over_A_nm_s > 0 and time > 0):
             raise ValueError("B, B/A and time must be > 0")
         if not (0 < consumed_fraction < 1):
@@ -1387,12 +1396,16 @@ class Structure:
             raise ValueError("stress_volume_nm3 needs viscosity and temperature_K")
         if shear_modulus is not None and viscosity is None:
             raise ValueError("shear_modulus needs viscosity (the oxide's flow)")
+        if shape not in ("volume", "flow"):
+            raise ValueError('shape must be "volume" or "flow"')
+        if shape == "flow" and (viscosity is None or mode != "2d"):
+            raise ValueError('shape="flow" needs mode="2d" and viscosity')
         if mode == "2d":
             return self._oxidize_2d(material, oxide, B_nm2_s, B_over_A_nm_s, time,
                                     consumed_fraction, reference, viscosity=viscosity,
                                     stress_volume=stress_volume_nm3,
                                     temperature=temperature_K, flow_every=int(flow_every),
-                                    shear_modulus=shear_modulus)
+                                    shear_modulus=shear_modulus, shape=shape)
         if viscosity is not None:
             raise ValueError("viscous flow and stress need mode='2d'")
         if mode != "column":
@@ -1532,7 +1545,8 @@ class Structure:
         return li, lk, c
 
     def _oxidize_2d(self, material, oxide, B, BA, time, cf, reference, viscosity=None,
-                    stress_volume=None, temperature=None, flow_every=1, shear_modulus=None):
+                    stress_volume=None, temperature=None, flow_every=1, shear_modulus=None,
+                    shape="volume"):
         """Two-dimensional oxidation (new in 0.24.0): the oxidant diffuses
         through the oxide in two dimensions (`_oxidant`), each face where
         the material meets oxide or gas grows oxide at (B/A) c, c the
@@ -1560,6 +1574,11 @@ class Structure:
         # solve, kept with the cells, and the time it was solved at
         self._vehist = None
         t_flow = 0.0
+        flow_shape = shape == "flow"
+        # shape="flow" (new in 0.34.0): the open gas cells next to the
+        # oxide fill with the oxide that the flow carries out to them
+        fill = np.zeros((nx, nz))
+        vel = None
 
         def flow(src):
             nonlocal t_flow
@@ -1577,11 +1596,17 @@ class Structure:
             # the new volume still to be put in
             ext = (acc[None, :, :] / h) * np.ones((4, 1, 1)) + lift / h
             ext = np.where((self.mat == material)[None], ext, 0.0)
-            if viscosity is not None and q_prev is not None and steps % flow_every == 0:
+            solved = False
+            if (viscosity is not None and q_prev is not None and steps % flow_every == 0
+                    and not flow_shape):
                 # the viscous flow of the oxide that the new volume drives, and
                 # its stress normal to each reacting face (new in 0.26.0)
                 fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
                 self.oxide_stress = flow(np.where(fluid, q_prev, 0.0))
+                solved = True
+            if flow_shape and q_prev is not None:
+                solved = True            # the stress of the last step's flow
+            if solved:
                 if stress_volume is not None:
                     kfac = np.ones((4, nx, nz))
                     S = self.oxide_stress
@@ -1632,7 +1657,22 @@ class Structure:
             rate = np.zeros((nx, nz))       # material area consumed per s
             np.add.at(rate, (li, lk), cf * v * h)
             extra = np.zeros((4, nx, nz))   # oxide area to put in front, per s
-            np.add.at(extra, (dl, li, lk), (1.0 - cf) * v * h)
+            if flow_shape:
+                # the new volume that appears in oxide goes with the flow;
+                # in front of a face looking at gas or a mask it goes in as
+                # before (the gas cell fills, the mask's column is lifted)
+                front_ox = np.zeros(li.size, bool)
+                for qd, (di, dk) in enumerate(dirs):
+                    m = np.flatnonzero(dl == qd)
+                    fi, fk = li[m] + di, lk[m] + dk
+                    ok = (fi >= 0) & (fi < nx) & (fk >= 0) & (fk < nz)
+                    front_ox[m[ok]] = [self.mat[a_, b_] == oxide
+                                       for a_, b_ in zip(fi[ok], fk[ok])]
+                keep_ = ~front_ox
+                np.add.at(extra, (dl[keep_], li[keep_], lk[keep_]),
+                          (1.0 - cf) * v[keep_] * h)
+            else:
+                np.add.at(extra, (dl, li, lk), (1.0 - cf) * v * h)
             # the face that consumes a cell fastest sets where it continues
             best = np.full((nx, nz), -1.0)
             bdir = np.zeros((nx, nz), int)
@@ -1643,8 +1683,57 @@ class Structure:
                 upd = cand > best
                 best[upd] = cand[upd]
                 bdir[upd] = q
+            if flow_shape and viscosity is not None and qn.any():
+                if steps % flow_every == 0 or vel is None:
+                    fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat],
+                                     bool)
+                    self.oxide_stress = flow(np.where(fluid, qn, 0.0))
+                    vel = (self.oxide_stress["u"], self.oxide_stress["w"])
             # each step moves no interface by more than half a cell
             dt = min(time - t, 0.5 * h * h / float(rate.max()))
+            if flow_shape and vel is not None:
+                # the flow carries oxide out through its faces to the open
+                # gas, which fills (area per s through each face, nm^2/s)
+                u_, w_ = vel
+                if float(max(np.abs(u_).max(), np.abs(w_).max())) > 0:
+                    dt = min(dt, 0.5 * h / float(max(np.abs(u_).max(), np.abs(w_).max())))
+                isox = self.mat == oxide
+                gas = self._gas_open()
+                fx = u_ * h * dt                      # (nx+1, nz) through x faces
+                fz = w_ * h * dt                      # (nx, nz+1) through z faces
+                # x faces between (i-1, k) and (i, k)
+                out_r = isox[:-1] & gas[1:] & (fx[1:-1] > 0)
+                fill[1:][out_r] += fx[1:-1][out_r]
+                out_l = isox[1:] & gas[:-1] & (fx[1:-1] < 0)
+                fill[:-1][out_l] -= fx[1:-1][out_l]
+                out_u = isox[:, :-1] & gas[:, 1:] & (fz[:, 1:-1] > 0)
+                fill[:, 1:][out_u] += fz[:, 1:-1][out_u]
+                out_d = isox[:, 1:] & gas[:, :-1] & (fz[:, 1:-1] < 0)
+                fill[:, :-1][out_d] -= fz[:, 1:-1][out_d]
+                while True:
+                    full_ = (fill >= h * h * (1 - 1e-12)) & gas
+                    if not full_.any():
+                        break
+                    for i, k in zip(*np.nonzero(full_)):
+                        self.mat[i, k] = oxide
+                        self.donors[i, k] = self.acceptors[i, k] = 0.0
+                        self._hist_new_cell(i, k)
+                        rest = fill[i, k] - h * h
+                        fill[i, k] = 0.0
+                        # what is left goes on to the open gas next to it,
+                        # where this cell's oxide flows out (else upward)
+                        best_, bv = None, -1.0
+                        for (di, dk), sp_ in (((1, 0), u_[min(i + 1, nx), k]),
+                                              ((-1, 0), -u_[i, k]),
+                                              ((0, 1), w_[i, min(k + 1, nz)]),
+                                              ((0, -1), -w_[i, k])):
+                            a2, b2 = i + di, k + dk
+                            if 0 <= a2 < nx and 0 <= b2 < nz and self.mat[a2, b2] is None \
+                                    and sp_ > bv:
+                                best_, bv = (a2, b2), sp_
+                        if best_ is not None:
+                            fill[best_] += rest
+                    gas = self._gas_open()
             acc += rate * dt
             lift += extra * dt
             while True:
@@ -1684,6 +1773,12 @@ class Structure:
         self.donors[half] = self.acceptors[half] = 0.0
         for q, i, k in zip(*np.nonzero(lift >= 0.5 * h * h)):
             self._push_oxide(i, k, dirs[q], oxide)
+        if flow_shape:
+            # so do the gas cells the flow has filled half way or more
+            half_g = (fill >= 0.5 * h * h) & (self.mat == None)  # noqa: E711
+            for i, k in zip(*np.nonzero(half_g)):
+                self.mat[i, k] = oxide
+                self._hist_new_cell(i, k)
         if viscosity is not None and q_prev is not None:
             # the flow and stress of the final shape (with the last growth)
             fluid = np.array([[m_ in viscosity for m_ in row] for row in self.mat], bool)
