@@ -293,7 +293,9 @@ def run_mobility(spec):
     true, since 0.34.0, every layer and boundary of the exact region, and
     optional numbers spacer_lo_meV, spacer_eps_static, spacer_eps_high,
     spacer_source for the layer just past the boundary next to the
-    electrons), "donors"
+    electrons; since 0.35.0 the air above the top surface when the exact
+    region reaches it, and an optional second vibration of the barrier,
+    lo2_meV and to2_meV, for alloys with two), "donors"
     (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
     corr_nm, source} at the boundary next to the electrons, "acoustic"
     {deformation_eV, density, velocity, source}. Numbers you type need
@@ -361,6 +363,27 @@ def run_mobility(spec):
         if not other[1] > other[2]:
             raise SpecError("The barrier's static permittivity must be larger than its "
                             "high-frequency one.")
+        two_mode = False
+        if any(str(iface.get(k, "")).strip() for k in ("lo2_meV", "to2_meV")):
+            # an alloy barrier with two vibrations (since 0.35.0): the second
+            # LO and TO as given, the first TO from Lyddane-Sachs-Teller
+            from ..scattering import _mat
+            L2 = _num(iface, "lo2_meV", lo=1.0, hi=500.0,
+                      what="the barrier's second LO phonon energy (meV)") / 1000.0
+            T2 = _num(iface, "to2_meV", lo=1.0, hi=500.0,
+                      what="the barrier's second TO phonon energy (meV)") / 1000.0
+            L1, es_, ei_ = other
+            T1 = math.sqrt(ei_ * L1 * L1 * L2 * L2 / (es_ * T2 * T2))
+            other = {"eps_high": ei_, "lo_eV": [L1, L2], "to_eV": [T1, T2]}
+            try:
+                _mat(other)
+            except ValueError:
+                raise SpecError(
+                    "The barrier's two vibrations do not fit together: with the "
+                    f"permittivities given, the first TO comes out at {1000 * T1:.1f} meV, "
+                    "and each TO must lie below its LO, the first pair below the "
+                    "second.") from None
+            two_mode = True
         zb = np.array([e_ for e_ in edges[1:-1] if win[0] < e_ < win[1]])
         if zb.size == 0:
             raise SpecError("No layer boundary lies in the exact region.")
@@ -388,6 +411,12 @@ def run_mobility(spec):
                 raise SpecError("Numbers for the layer next to the electrons need "
                                 "'every layer of the exact region' ticked.")
         modes, layered, far, far_src = None, False, other, src
+        if two_mode and not iface.get("all_layers"):
+            # one boundary, but interface_phonons has one vibration per side
+            pair = [gan_ph, other] if below_is_gan else [other, gan_ph]
+            modes, layered = [sb.layered_phonons([zi], pair)], True
+            names.append(f"vibrations of the GaN side, the barrier side and the boundary "
+                         f"({ref}; {src})")
         if iface.get("all_layers"):
             # every layer of the exact region (since 0.34.0): GaN layers get
             # GaN's numbers, the layer just past the boundary next to the
@@ -417,7 +446,13 @@ def run_mobility(spec):
                                 "numbers; leave the numbers for that layer empty.")
             if len(mats) == 2 and spacer is not None:
                 far, far_src = spacer, src2      # one boundary, the spacer beyond it
-            if len(mats) > 2:
+            # the air above the top surface (since 0.35.0), when the exact
+            # region reaches it
+            if win[1] >= edges[-1] - 1e-9:
+                ifs.append(float(edges[-1]))
+                mats.append(1.0)
+            plain = len(mats) == 2 and 1.0 not in mats and not two_mode
+            if len(mats) >= 2 and not plain:
                 modes, layered = [sb.layered_phonons(ifs, mats)], True
                 parts = [ref, src] + ([src2] if spacer is not None else [])
                 names.append("vibrations of every layer and boundary of the exact region ("
@@ -1707,11 +1742,127 @@ _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thicknes
                  "oxide flow; stress_volume=0.025 temperature=1273 slows growth where it "
                  "is squeezed; modulus=3e10 makes the oxide springy as well, "
                  "modulus_Si3N4=1e11 lets a mask bend instead of staying rigid, "
-                 "shape=flow lets the flow decide where the new oxide goes), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
+                 "viscosity_Si3N4=1e14 lets it flow slowly, "
+                 "shape=flow lets the flow decide where the new oxide goes and lifts "
+                 "masks that bend or flow), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
                  "target_Z=14 target_mass=28.09 atoms=5e22 species=acceptor dose=1e13' "
                  "(the depth profile from a simulation of the ions), 'plasmaetch "
                  "neutrals=1e18 ions=1e16 stick_Si=0.2 yield_Si=5 atoms_Si=5e22 time=10' "
-                 "(ions and a reactive gas together)")
+                 "(ions and a reactive gas together; fluxes=plasma neutral=Cl ion=Cl2+ "
+                 "takes the fluxes from the plasma's chemistry)")
+
+
+_PLASMA_HELP = ("one item per line: 'species Ar mass=39.95', 'species Ar+ mass=39.95 "
+                "charge=1 returns=Ar' (what it turns into at the wall; 'returns=Cl2:0.5' "
+                "for half a molecule), 'species Cl mass=35.45 wall=0.1 returns=Cl2:0.5' "
+                "(wall: the chance it reacts when it hits the wall), 'reaction e + Ar -> "
+                "Ar+ + e + e A=2e-14 b=0.5 C=16 energy=15.8 source=...' (k = A Te^b "
+                "exp(-C/Te) in m3/s, energy lost by the electron in eV; add 'elastic' for "
+                "elastic collisions), 'chamber radius=0.15 length=0.1 power=500 pump=0.05 "
+                "h=0.3 gas_temperature=300 h_source=...' (meters, watts, m3/s), 'feed "
+                "Ar=20' (sccm); a source runs to the end of its line")
+
+
+def _parse_plasma(text):
+    """The app's plasma chemistry (new in 0.35.0): the lines of _PLASMA_HELP
+    into a `GlobalPlasma`, and the sources named."""
+    from ..plasma import SCCM, GlobalPlasma, Reaction, Species
+    species, reactions, chamber, feed, sources = [], [], None, {}, []
+    for k, raw in enumerate(str(text).splitlines(), 1):
+        ln = raw.split("#")[0].strip()
+        if not ln:
+            continue
+        src = None
+        for key in ("h_source=", "source="):
+            if key in ln:
+                ln, src = ln.split(key, 1)
+                src = src.strip()
+                ln = ln.strip()
+                if not src:
+                    raise SpecError(f"Plasma line {k}: the source is empty.")
+                break
+        words = ln.split()
+        kind = words[0].lower()
+
+        def kv(ws):
+            d = {}
+            for w in ws:
+                if "=" in w:
+                    a, b = w.split("=", 1)
+                    d[a] = b
+            return d
+
+        def num(d, name, default=None, lo=None, hi=None):
+            if name not in d:
+                if default is None:
+                    raise SpecError(f"Plasma line {k} ({kind}) needs {name}=...")
+                return default
+            try:
+                v = float(d[name])
+            except ValueError:
+                raise SpecError(f"Plasma line {k}: {name} must be a number.") from None
+            if not math.isfinite(v) or (lo is not None and v < lo) or (hi is not None and v > hi):
+                raise SpecError(f"Plasma line {k}: {name}={d[name]} is out of range.")
+            return v
+        try:
+            if kind == "species":
+                if len(words) < 2 or "=" in words[1]:
+                    raise SpecError(f"Plasma line {k}: give the species a name first.")
+                d = kv(words[2:])
+                ret = {}
+                for part in [x for x in d.get("returns", "").split(",") if x]:
+                    nm, _, c = part.partition(":")
+                    try:
+                        ret[nm] = float(c) if c else 1.0
+                    except ValueError:
+                        raise SpecError(f"Plasma line {k}: returns=name or name:number.") from None
+                species.append(Species(words[1], num(d, "mass", lo=1e-3, hi=1e4),
+                                       int(num(d, "charge", 0.0, -1.0, 1.0)),
+                                       num(d, "wall", 0.0, 0.0, 1.0), ret))
+            elif kind == "reaction":
+                body = " ".join(w for w in words[1:] if "=" not in w and w != "elastic")
+                if "->" not in body:
+                    raise SpecError(f"Plasma line {k}: write the reaction as 'a + b -> c + d'.")
+                lhs, rhs = body.split("->", 1)
+                def side(t):
+                    return tuple(x for x in t.split() if x != "+")
+                if not src:
+                    raise SpecError(f"Plasma line {k}: say where the rate comes from "
+                                    "(source=... at the end of the line).")
+                d = kv(words[1:])
+                reactions.append(Reaction(side(lhs), side(rhs), num(d, "A", lo=0.0), src,
+                                          num(d, "b", 0.0), num(d, "C", 0.0),
+                                          num(d, "energy", 0.0), "elastic" in words))
+                sources.append(src)
+            elif kind == "chamber":
+                if not src:
+                    raise SpecError(f"Plasma line {k}: say where h comes from "
+                                    "(h_source=... at the end of the line).")
+                d = kv(words[1:])
+                chamber = dict(radius_m=num(d, "radius", lo=1e-4, hi=10.0),
+                               length_m=num(d, "length", lo=1e-4, hi=10.0),
+                               power_W=num(d, "power", lo=1e-6, hi=1e6),
+                               pump_m3_s=num(d, "pump", lo=1e-9, hi=1e3),
+                               h=num(d, "h", lo=1e-6, hi=1.0), h_source=src,
+                               gas_temperature_K=num(d, "gas_temperature", 300.0, 1.0, 5000.0))
+                sources.append(src)
+            elif kind == "feed":
+                for nm, v in kv(words[1:]).items():
+                    feed[nm] = num({nm: v}, nm, lo=0.0) * SCCM
+            else:
+                raise SpecError(f"Plasma line {k}: unknown item '{kind}' ({_PLASMA_HELP}).")
+        except SpecError:
+            raise
+        except ValueError as e:
+            raise SpecError(f"Plasma line {k}: {e}") from None
+    if not species or not reactions or chamber is None or not feed:
+        raise SpecError("The plasma needs species, reactions, a chamber line and a feed "
+                        f"({_PLASMA_HELP}).")
+    try:
+        gp = GlobalPlasma(species, reactions, feed=feed, **chamber)
+    except ValueError as e:
+        raise SpecError(f"The plasma: {e}") from None
+    return gp, sources
 
 
 def _flux_size(st, k):
@@ -1751,6 +1902,14 @@ def run_process(spec):
     sim_notes = []
     flow_oxide = None
     elastic_solids = set()
+    # the plasma's chemistry (new in 0.35.0): solved once if given
+    plasma, plasma_res, plasma_src = None, None, []
+    if str(p.get("plasma") or "").strip():
+        plasma, plasma_src = _parse_plasma(p["plasma"])
+        try:
+            plasma_res = plasma.solve()
+        except RuntimeError as e:
+            raise SpecError(f"The plasma: {e}") from None
     for k, ln in enumerate(lines, 1):
         words = ln.split()
         kind, args = words[0].lower(), {}
@@ -1837,6 +1996,20 @@ def run_process(spec):
                 if not stick or set(stick) != set(atoms):
                     raise SpecError(f"Step {k}: give stick_X=, yield_X= and atoms_X= for "
                                     "each material X that the gas etches.")
+                if args.get("fluxes") == "plasma":
+                    # the fluxes from the plasma's chemistry
+                    from ..plasma import fluxes_cm2
+                    if plasma_res is None:
+                        raise SpecError(f"Step {k}: fluxes=plasma needs the plasma's "
+                                        "chemistry (the box below the steps).")
+                    try:
+                        nf, jf = fluxes_cm2(plasma_res, args.get("neutral", ""),
+                                            args.get("ion", ""))
+                    except ValueError as e:
+                        raise SpecError(f"Step {k}: {e} (give neutral= and ion=).") from None
+                    args["neutrals"], args["ions"] = repr(nf), repr(jf)
+                elif "fluxes" in args:
+                    raise SpecError(f"Step {k}: fluxes=plasma, or give neutrals= and ions=.")
                 kin = EtchKinetics(num("neutrals", lo=0.0), num("ions", lo=0.0),
                                    num("sites", 1e15, 1e10, 1e18), stick, yld, atoms, src)
                 _flux_size(st, k)
@@ -1853,6 +2026,14 @@ def run_process(spec):
                     if omode != "2d":
                         raise SpecError(f"Step {k}: the oxide's flow needs mode=2d.")
                     flow["viscosity"] = {ox: num("viscosity", lo=1e3, hi=1e25)}
+                    # viscosity_X= lets the solid X (a mask) flow too (new
+                    # in 0.35.0; with shape=flow it rides on the oxide)
+                    for a in args:
+                        if a.startswith("viscosity_"):
+                            if a[10:] in (ox, mat):
+                                raise SpecError(f"Step {k}: viscosity_X= is for other "
+                                                "solids, such as a mask.")
+                            flow["viscosity"][a[10:]] = num(a, lo=1e3, hi=1e25)
                     flow_oxide = ox
                     if "stress_volume" in args:
                         flow["stress_volume_nm3"] = num("stress_volume", lo=0.0, hi=1.0)
@@ -1870,10 +2051,10 @@ def run_process(spec):
                     if args.get("shape", "volume") not in ("volume", "flow"):
                         raise SpecError(f"Step {k}: shape is volume or flow.")
                     flow["shape"] = args.get("shape", "volume")
-                elif any(a == "modulus" or a.startswith("modulus_") or a == "shape"
+                elif any(a == "modulus" or a.startswith(("modulus_", "viscosity_")) or a == "shape"
                          for a in args):
-                    raise SpecError(f"Step {k}: modulus= and shape= need viscosity= "
-                                    "(and mode=2d).")
+                    raise SpecError(f"Step {k}: modulus=, viscosity_X= and shape= need "
+                                    "viscosity= (and mode=2d).")
                 oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
                                      num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
                                      src, mode=omode, **flow)
@@ -1914,10 +2095,21 @@ def run_process(spec):
             "donor_dose": float(st.donors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
             "acceptor_dose": float(st.acceptors.sum() * (h * 1e-7) ** 2 / (W * 1e-7)),
             "oxide_exact": None if oxide_x is None else float(np.max(oxide_x)),
-            "steps": len(lines), "sources": [src], "warnings": [],
+            "steps": len(lines), "sources": [src] + list(dict.fromkeys(plasma_src)),
+            "warnings": [],
+            "plasma": None if plasma_res is None else _plasma_summary(plasma_res),
             "notes": sim_notes,
             "stress_GPa": _oxide_stress(st, flow_oxide),
             "solid_stress_GPa": _solid_stress(st, elastic_solids)}
+
+
+def _plasma_summary(r):
+    """the plasma's state for the app: per cm^2 and cm^3"""
+    return {"Te_eV": r["Te_eV"], "ne_cm3": r["ne"] * 1e-6, "pressure_Pa": r["pressure_Pa"],
+            "densities_cm3": {k: v * 1e-6 for k, v in r["densities"].items()},
+            "ion_flux_cm2": {k: v * 1e-4 for k, v in r["ion_flux"].items()},
+            "neutral_flux_cm2": {k: v * 1e-4 for k, v in r["neutral_flux"].items()},
+            "ion_energy_eV": r["ion_energy_eV"]}
 
 
 def _solid_stress(st, names):
