@@ -1642,7 +1642,8 @@ _PROCESS_HELP = ("one step per line, for example: 'deposit material=SiN thicknes
                  "oxide=SiO2 B=2.9 BA=0.021 time=7200 consumed=0.44' (add mode=2d for "
                  "oxidation that reaches under mask edges, and viscosity=1e12 to let the "
                  "oxide flow; stress_volume=0.025 temperature=1273 slows growth where it "
-                 "is squeezed), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
+                 "is squeezed; modulus=3e10 makes the oxide springy as well, "
+                 "modulus_Si3N4=1e11 lets a mask bend instead of staying rigid), 'implant ranges=simulate ion_Z=5 ion_mass=11 energy=30000 "
                  "target_Z=14 target_mass=28.09 atoms=5e22 species=acceptor dose=1e13' "
                  "(the depth profile from a simulation of the ions), 'plasmaetch "
                  "neutrals=1e18 ions=1e16 stick_Si=0.2 yield_Si=5 atoms_Si=5e22 time=10' "
@@ -1685,6 +1686,7 @@ def run_process(spec):
     oxide_x = None
     sim_notes = []
     flow_oxide = None
+    elastic_solids = set()
     for k, ln in enumerate(lines, 1):
         words = ln.split()
         kind, args = words[0].lower(), {}
@@ -1791,6 +1793,17 @@ def run_process(spec):
                     if "stress_volume" in args:
                         flow["stress_volume_nm3"] = num("stress_volume", lo=0.0, hi=1.0)
                         flow["temperature_K"] = num("temperature", lo=300.0, hi=2000.0)
+                    # elastic too (new in 0.33.0): modulus= for the oxide,
+                    # modulus_X= makes the solid X (a mask) elastic
+                    mods = {a[8:]: num(a, lo=1e5, hi=1e13) for a in args
+                            if a.startswith("modulus_")}
+                    if "modulus" in args:
+                        mods[ox] = num("modulus", lo=1e5, hi=1e13)
+                    if mods:
+                        flow["shear_modulus"] = mods
+                        elastic_solids |= set(mods) - {ox}
+                elif any(a == "modulus" or a.startswith("modulus_") for a in args):
+                    raise SpecError(f"Step {k}: the elastic moduli need viscosity= (and mode=2d).")
                 oxide_x = st.oxidize(mat, ox, num("B", lo=1e-300), num("BA", lo=1e-300),
                                      num("time", lo=1e-12), num("consumed", 0.44, 1e-6, 0.999999),
                                      src, mode=omode, **flow)
@@ -1833,7 +1846,22 @@ def run_process(spec):
             "oxide_exact": None if oxide_x is None else float(np.max(oxide_x)),
             "steps": len(lines), "sources": [src], "warnings": [],
             "notes": sim_notes,
-            "stress_GPa": _oxide_stress(st, flow_oxide)}
+            "stress_GPa": _oxide_stress(st, flow_oxide),
+            "solid_stress_GPa": _solid_stress(st, elastic_solids)}
+
+
+def _solid_stress(st, names):
+    """the range of sigma_xx (GPa) in each elastic solid, or None"""
+    S = getattr(st, "oxide_stress", None)
+    if S is None or not names:
+        return None
+    out = {}
+    for m in sorted(names):
+        v = S["sxx"][st.mat == m]
+        v = v[np.isfinite(v)]
+        if v.size:
+            out[m] = [float(v.min()) / 1e9, float(v.max()) / 1e9]
+    return out or None
 
 
 def _oxide_stress(st, ox):
