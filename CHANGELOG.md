@@ -4,6 +4,50 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.34.0 (2026-11-23)
+
+The polar phonons of a whole stack of layers join the mobility, and the
+oxide's free surface can follow its flow. The examples print what they
+printed before; examples 76 and 77 are new.
+
+### Added
+
+- `Subbands.layered_phonons`: the polar phonons of any number of layers
+  (thin spacers, barriers, caps), whose boundary modes change energy
+  with the wave number, for `mobility` and `lifetimes`; and
+  `scattering.layer_modes`, the modes and their weights at one wave
+  number.
+- `Structure.oxidize(shape="flow")`: with `mode="2d"` and a viscosity,
+  the new oxide goes where its flow carries it instead of lifting the
+  column above it.
+- The app: `shape=flow` in the oxidize step; in the Electrons tab, the
+  vibrations of every layer of the exact region, with optional numbers
+  for the layer next to the electrons.
+
+### Changed
+
+- `Subbands.mobility` with a single mechanism solves the Boltzmann
+  equation once (it solved it twice; the result is the same).
+
+### Not included (see docs/limits.md)
+
+- Phonon self-energies in NEGF; alloy two-mode phonons and wurtzite's
+  anisotropy; a shipped plasma rate set; masks moved by the oxide's
+  flow; better electronic stopping; tunnel paths that bend; tunneling
+  and heat inside one Newton solve; the hot-electron model at zero
+  relaxation time. The app has no meshes, NEGF holes, plasma chemistry
+  or 3D.
+
+### Checks (tests)
+
+6 new tests (412 in all; docs/checks.md has the tolerances): the modes
+of many layers against bulk, one interface and `slab_modes`, and against
+the sum rule (which found two faults of a first version, for thick
+layers at large wave numbers); the mobility against bulk and one
+interface; the app's layers against the boundary alone; the oxide's
+flowing shape against the volume rule, its symmetry and its volume.
+All 77 documented examples were rerun.
+
 ## 0.33.0 (2026-11-23)
 
 The oxide can be springy as well as runny, masks can bend, and the
