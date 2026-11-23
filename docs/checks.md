@@ -343,6 +343,36 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Alloys and air in the phonons, masks that ride on the oxide, the plasma in the app (new in 0.35.0)**
+
+- GaN under air: the surface mode's energy (eps(w) = -1) to 1e-12, its
+  weight 4 F^2 / (w deps/dw) and the half-space LO mode in closed form
+  (1e-6; measured 2e-8, and 1.1e-7 with the oldest NumPy and SciPy where
+  the weights are 1e-7 of the largest), with the surface between grid points and 23 to
+  25 nm outside the grid on either side; two polar materials likewise
+  (1e-6; measured 1.3e-7).
+- An alloy with two vibrations in bulk: a mode at each LO with the weight
+  H (2 / LO) Res(1 / eps) (1e-10; measured 5e-14). The sum rule with
+  alloys, air and boundaries between grid points (1e-6; measured 1.6e-7).
+- In the mobility: air 500 nm away gives bulk GaN (1e-5); a second
+  vibration without strength gives `interface_phonons` (1e-5); air on top
+  of a 10 nm barrier gives the barrier's surface mode at q = 1 / nm
+  (1e-7) and changes the mobility by 1.5e-6 (1e-4).
+- The oxide's balance: in the volume rule and in the flow with a rigid,
+  a flowing and an elastic mask, the oxide made equals the oxide in whole
+  cells plus the parts of cells (1e-9; measured 0 to 4e-16). This check
+  found three leaks in a first version of the riding masks (oxide flowing
+  into a mask's side, the fill of a gas cell a mask moved into, oxide
+  flowing back from the gas) and, for an elastic mask, a first flow
+  solved over a time step of zero, which also made the result lopsided;
+  each was fixed. The masks that move are lifted at both edges, not in
+  the middle, and the same on both sides; a rigid mask stays.
+- The app: masks that flow equal the library's (exactly); the plasma's
+  chemistry gives the library's state and the etch with its fluxes
+  (exactly); the alloy barrier with a second vibration without strength
+  gives the single vibration (1e-5), and the air above changes the
+  mobility by less than 1e-4.
+
 **Phonons of many layers, oxide shaped by its flow (new in 0.34.0)**
 
 - The modes of layers of one material are the bulk LO phonon with the

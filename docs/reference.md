@@ -634,6 +634,32 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Alloys and air in the phonons, masks that ride on the oxide, the plasma in the app (new in 0.35.0)**
+
+- `Subbands.layered_phonons` and `scattering.layer_modes` take a layer
+  as (phonon_eV, eps_static, eps_high) as before, as a number (a
+  permittivity without vibrations: 1.0 for the air above a surface), or
+  as {"eps_high": , "lo_eV": [...], "to_eV": [...]} for a material with
+  several vibrations (an alloy with two-mode behavior; the LO and TO
+  energies must interlace, TO1 < LO1 < TO2 < LO2). The boundaries may now
+  lie anywhere: between grid points or outside the envelopes' grid (a node
+  without charge is put at each, which keeps the potential exact)
+  (example 78).
+- `Structure.oxidize(..., shape="flow")`: a mask with a viscosity or a
+  shear modulus rides on the oxide under it (the oxide that flows into it
+  lifts its column one cell at a time); a rigid mask stays (example 79).
+- `Structure.oxidation_balance` after a two-dimensional oxidation:
+  made_nm2 (the oxide made), whole_cells_nm2, parts_nm2 (still in parts
+  of cells at the end) and rounding_nm2 (what the end's rounding of half
+  cells added, minus what it dropped).
+- The app, Process steps: a box for the plasma's chemistry (species,
+  reactions with their sources, the chamber and the feed), whose state the
+  summary gives, and `plasmaetch fluxes=plasma neutral= ion=` to etch with
+  its fluxes; `viscosity_X=` in the oxidize step for a mask that flows.
+- The app, Electrons tab: a second vibration of the barrier (an alloy),
+  and the air above the top surface when every layer of the exact region
+  counts.
+
 **Phonons of many layers, oxide shaped by its flow (new in 0.34.0)**
 
 - `Subbands.layered_phonons(interfaces, materials, temperature_K=None,

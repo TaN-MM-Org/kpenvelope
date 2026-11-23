@@ -36,7 +36,8 @@ other; 70 the screening of all its pairs of levels; 71 the vibrations of
 an interface; 72 a plasma's chemistry feeding an etch; 73 electrons that
 change subband and scatter; 74 springy oxide and a mask that bends; 75
 negative ions in a plasma; 76 phonons of a stack with a thin spacer; 77
-oxide that goes where it flows.
+oxide that goes where it flows; 78 an alloy barrier and the air above it;
+79 a mask that rides on the flowing oxide.
 
 ### 1. Energy levels and what they are made of
 
@@ -3568,7 +3569,7 @@ for shape in ("volume", "flow"):
 
 ```
 volume: oxide 3712 nm^2; top of the oxide at x = 5, 15, 25, 35 nm: 122, 112, 104, 88 nm; open trench 22 nm wide
-flow  : oxide 3672 nm^2; top of the oxide at x = 5, 15, 25, 35 nm: 114, 114, 112, 78 nm; open trench 20 nm wide
+flow  : oxide 3680 nm^2; top of the oxide at x = 5, 15, 25, 35 nm: 114, 116, 114, 78 nm; open trench 20 nm wide
 ```
 
 By the simple rule, new oxide pushes the column above it up or fills the
@@ -3576,10 +3577,110 @@ nearest open gas, which piles oxide up at the trench's edges (the top
 reaches 122 nm at x = 5 nm). With `shape="flow"` the computed flow of
 the oxide carries the new volume to the surface: the open gas cells next
 to the oxide fill with what flows out through each face, and the surface
-rises evenly on the shoulders (114 nm) while the walls close in on the
-trench. Both keep the oxide's volume to within a few cells (a test
-checks 2 percent against the silicon consumed); masks still move by the
-simple rule. Numbers illustrative.
+rises evenly on the shoulders (114 to 116 nm) while the walls close in on
+the trench. Both keep the oxide's volume to within a few cells (a test
+checks 2 percent against the silicon consumed; since 0.35.0
+`oxidation_balance` shows it exactly), and since 0.35.0 a mask that
+flows or bends rides on the oxide (example 79). Numbers illustrative.
+(In 0.34.0 the flow printed 3672 nm^2 and 114, 114, 112, 78 nm: the oxide
+that flowed back from the gas was dropped then.)
+
+### 78. An alloy barrier with two vibrations, and the air above it (new in 0.35.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subbands
+
+# GaN under an 8 nm barrier, with air above it: the electrons' levels
+# from the stack, then their mobility limited by polar phonons, the
+# barrier with one vibration or (an alloy) two, and with the air above it
+# counted or not. GaN's phonons are cited; the barrier's (one: LO 105 meV,
+# eps 9.0 and 5.0; two: LO 95 and 110, TO 100 meV) are illustrative
+gan, bar = algan(0.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(bar, 8.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 308.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 308.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, bar.me)
+E, p2, w, psi = column_states(z, r.ec[win], mass, 2, z[0] - 0.1, z[-1] + 0.1, signed=True)
+G = (ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp)
+one = (0.105, 9.0, 5.0)
+T1 = (5.0 * 0.095 ** 2 * 0.110 ** 2 / (9.0 * 0.100 ** 2)) ** 0.5   # Lyddane-Sachs-Teller
+two = {"eps_high": 5.0, "lo_eV": [0.095, 0.110], "to_eV": [T1, 0.100]}
+sb = Subbands(z, psi, E, gan.me, ph.eps0_perp, fermi=0.0, weights=w)
+print(f"electrons {r.sheet_quantum_cm2:.3e} cm^-2 in two levels")
+for label, bm in (("one vibration ", one), ("two vibrations", two)):
+    mu = [sb.mobility(sb.layered_phonons(ifs, mats))["mobility_cm2Vs"]
+          for ifs, mats in (([300.0], [G, bm]), ([300.0, 308.0], [G, bm, 1.0]))]
+    print(f"barrier with {label}: {mu[0]:.1f} cm^2/Vs, with the air above it {mu[1]:.1f}")
+lay = sb.layered_phonons([300.0, 308.0], [G, two, 1.0])
+k = int(np.argmin(np.abs(lay.qs - 0.3)))
+print(f"  modes at q = {lay.qs[k]:.2f} 1/nm: " + ", ".join(f"{1000 * e:.1f}" for e, _ in lay.poles[k]) + " meV")
+```
+
+```
+electrons 9.899e+12 cm^-2 in two levels
+barrier with one vibration : 1270.3 cm^2/Vs, with the air above it 1270.2
+barrier with two vibrations: 1272.2 cm^2/Vs, with the air above it 1272.1
+  modes at q = 0.31 1/nm: 72.8, 92.5, 93.9, 94.5, 95.0, 104.9, 107.1, 110.0 meV
+```
+
+An alloy such as AlGaN can vibrate in two ways, one closer to each parent
+crystal; a layer is then given by its high-frequency permittivity and a
+list of LO and TO energies. The air above the surface is a layer with a
+permittivity and no vibrations (the number 1.0). Here the barrier with
+two vibrations gives 2 cm^2/Vs more than the one with a single vibration,
+and the air above the 8 nm barrier lowers the mobility by 0.1: its own
+mode, where the barrier's permittivity is -1, sits too far from the
+electrons to matter much. The list of modes
+at one wave number shows the extra ones that the two vibrations and the
+air bring. A test checks the surface mode of a crystal under air and the
+two modes of an alloy against their formulas (1e-7 and 1e-10).
+
+### 79. A mask that rides on the flowing oxide (new in 0.35.0)
+
+```python
+import numpy as np
+from kpenvelope.process import Structure
+
+# a 10 nm nitride mask over the middle of a 4 nm pad oxide, oxidized with
+# the illustrative constants of example 61 and a flowing oxide (1e12 Pa s);
+# the oxide's shape from its flow, and the mask rigid, flowing slowly
+# (1e13 Pa s) or elastic (100 GPa, the oxide 30 GPa); all illustrative
+for label, kw in (("rigid mask  ", dict(viscosity={"SiO2": 1e12})),
+                  ("flowing mask", dict(viscosity={"SiO2": 1e12, "Si3N4": 1e13})),
+                  ("elastic mask", dict(viscosity={"SiO2": 1e12},
+                                        shear_modulus={"SiO2": 3e10, "Si3N4": 1e11}))):
+    st = Structure(160.0, 0.0, 160.0, 2.0, "Si", 100.0)
+    st.deposit("SiO2", 4.0, mode="directional")
+    st.deposit("Si3N4", 10.0, mode="directional", window=(40, 120))
+    st.oxidize("Si", "SiO2", 0.5, 0.05, 1500.0, 0.44, "illustrative", mode="2d",
+               shape="flow", **kw)
+    nit = st.mat == "Si3N4"
+    lift = [2.0 * (np.nonzero(nit[int(x / 2)])[0].min() - 52) for x in (41, 45, 49, 60, 80)]
+    b = st.oxidation_balance
+    print(f"{label}: mask lifted at x = 41, 45, 49, 60, 80 nm by "
+          + ", ".join(f"{v:.0f}" for v in lift) + f" nm; oxide made {b['made_nm2']:.1f} nm^2, "
+          f"{b['whole_cells_nm2']:.0f} in whole cells + {b['parts_nm2']:.1f} in parts")
+```
+
+```
+rigid mask  : mask lifted at x = 41, 45, 49, 60, 80 nm by 0, 0, 0, 0, 0 nm; oxide made 1826.5 nm^2, 1632 in whole cells + 194.5 in parts
+flowing mask: mask lifted at x = 41, 45, 49, 60, 80 nm by 6, 4, 4, 0, 0 nm; oxide made 1940.7 nm^2, 1744 in whole cells + 196.7 in parts
+elastic mask: mask lifted at x = 41, 45, 49, 60, 80 nm by 4, 4, 2, 0, 0 nm; oxide made 1934.9 nm^2, 1696 in whole cells + 238.9 in parts
+```
+
+With `shape="flow"`, a mask that flows or bends now moves with the oxide
+under it: the oxide that flows up into its bottom lifts its column, one
+cell at a time, most at its edges where the new oxide pushes in (the bird's
+beak). A rigid mask stays where it is, and the oxide goes out sideways
+instead. `oxidation_balance` shows where the oxide went: what was made
+equals what is in whole cells plus what is still in parts of cells (a
+test checks this to 1e-9; it holds to rounding). Numbers illustrative.
 
 ## Tutorials
 
