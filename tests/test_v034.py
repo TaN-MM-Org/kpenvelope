@@ -74,7 +74,7 @@ def test_layer_modes_against_closed_forms_and_the_sum_rule():
             tot = sum(G / (2 * qq) for _, G in layer_modes(z, w, A, zi, mats, qq))
 
             def F_static(k):
-                st = [(1.0, m[1 + k], m[1 + k]) for m in mats]     # constant eps
+                st = [m[1 + k] for m in mats]     # constant eps
                 phi = _layer_solve(z, w, idx, st, qq, 0.5, rhs)
                 return np.real((rhs * phi).sum(0))
             assert np.max(np.abs(tot / (F_static(1) - F_static(0)) - 1)) < 1e-7  # 5e-9
@@ -92,8 +92,8 @@ def test_layered_phonons_in_the_mobility():
     # a barrier 0.5 nm thin in GaN hardly changes anything
     thin = sb.mobility(sb.layered_phonons([30.0, 30.5], [_GAN, _BAR, _GAN]))
     assert thin["mobility_cm2Vs"] == pytest.approx(bulk, rel=1e-3)
-    with pytest.raises(ValueError, match="inside"):
-        sb.layered_phonons([50.0], [_GAN, _BAR])
+    with pytest.raises(ValueError, match="increasing"):
+        sb.layered_phonons([30.0, 30.0], [_GAN, _BAR, _GAN])
 
 
 # ---------------------------------------------- oxide shaped by its flow
@@ -154,7 +154,7 @@ def test_layer_modes_of_thick_layers_keep_the_sum_rule():
         idx = np.searchsorted(np.asarray(zi), 0.5 * (z[1:] + z[:-1]))
         for qq in np.exp(np.linspace(math.log(1e-4), math.log(30.0), 16)):
             tot = sum(G / (2 * qq) for _, G in layer_modes(z, w, A, zi, mats, qq))
-            F = [np.real((rhs * _layer_solve(z, w, idx, [(1.0, m[1 + k], m[1 + k]) for m in mats],
+            F = [np.real((rhs * _layer_solve(z, w, idx, [m[1 + k] for m in mats],
                                              qq, 0.5, rhs)).sum(0)) for k in (0, 1)]
             assert np.max(np.abs(tot / (F[1] - F[0]) - 1)) < 1e-6   # measured 2e-7
 
