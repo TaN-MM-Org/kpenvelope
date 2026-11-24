@@ -634,6 +634,29 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**NEGF with phonons that take and give energy (new in 0.36.0)**
+
+- `Device.negf(..., phonon_energy=hw, phonon_coupling=C)` -- the channel
+  electrons (or holes) emit and absorb phonons of energy hw (eV) with a
+  local coupling C (eV^2 nm^2), in every subband; `negf["phonon_power"]`
+  is the heat they leave in the crystal (W/mm) (example 80). Not with
+  `scattering_time` or `coupled_modes`.
+- `negf.phonon_transport(chain, FS, FD, kT, phonon_eV, coupling, ...)` --
+  one chain with these phonons: the self-consistent Born approximation,
+  the motion across the width on a grid (for every total energy, the
+  energies along the chain from -inf to it), total energies on steps
+  that divide hw; returns the density, the current at both ends, the
+  power to the phonons from the contacts and from the emission and
+  absorption, and each site's electrons and states per energy.
+- `negf.phonon_coupling_for_mobility(mobility_cm2Vs, mass, phonon_eV,
+  temperature_K, fermi_eV=None)` -- the coupling that gives a uniform 2D
+  gas that mobility, from the Boltzmann equation with the same
+  scattering (closed form for a thin gas; with Fermi-Dirac filling at a
+  Fermi level fermi_eV above the band bottom).
+- The app, Transistor tab: the wave current with GaN's optical phonon at
+  the strength that gives the tab's mobility to the electrons under the
+  middle of the gate, and the heat they leave in the crystal.
+
 **Alloys and air in the phonons, masks that ride on the oxide, the plasma in the app (new in 0.35.0)**
 
 - `Subbands.layered_phonons` and `scattering.layer_modes` take a layer

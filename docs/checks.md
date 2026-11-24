@@ -343,6 +343,40 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**NEGF with phonons that take and give energy (new in 0.36.0)**
+
+- The building blocks: the sums |G_ij|^2 x_j and the columns |G_i0|^2,
+  |G_i,N-1|^2 of the chain with any broadening against a dense matrix
+  inverse (measured 1e-14, in development).
+- Without coupling, the closed-form ballistic current (1e-5; measured
+  3e-7) and density (1e-2; measured 3e-3, the even energy grid).
+- At equilibrium, every state filled as Fermi-Dirac says at every site and
+  energy (1e-12 of the largest; measured 1e-15) and no current.
+- With a bias: the current leaving equals the current entering (1e-8;
+  measured 9e-10, and it falls with the iterations' tolerance: 1e-5,
+  2e-7, 4e-11 at 1e-7, 1e-9, 1e-11), and the power the contacts lose
+  equals hw times the net emission (1e-6; measured 4e-9).
+- A uniform channel 75 nm long: the conductance against the sum over the
+  width of each part's exact 1D result lambda / (lambda + L), lambda = 2
+  hbar v_x / Gamma (3 percent; measured 1.1, and 1.5 and 1.6 at 150 and
+  300 nm). Comparing instead the slope of the resistance with length to
+  the Boltzmann mobility was 24 percent off at 150 to 300 nm, because the
+  fastest electrons' mean free path (about 190 nm) is not short against
+  those lengths; the 1D result itself was checked on one wire at one
+  energy (the textbook (h / 2 q^2) / (2 v tau) per length, measured 5e-4).
+- The density with scattering against the same Lorentzian broadening of a
+  2D gas worked out by hand (measured 0.2 percent). A first version cut
+  each part of the width at the band bottom and lost 3 to 11 percent of
+  the electrons; the energies along x now run down to -inf.
+- `phonon_coupling_for_mobility`: against the Boltzmann mobility
+  integrated separately (1e-5; measured 2e-6), and with a Fermi level
+  against an independent integration (1e-6) and the thin-gas closed form
+  (1e-6; measured 7e-8).
+- Holes with phonons mirror electrons with phonons in a mirrored device:
+  current and heat (1e-8; measured 1e-13); with phonons the current is
+  below the ballistic one and the heat below I V. The app passes GaN's
+  optical phonon energy and the coupling of the formula.
+
 **Alloys and air in the phonons, masks that ride on the oxide, the plasma in the app (new in 0.35.0)**
 
 - GaN under air: the surface mode's energy (eps(w) = -1) to 1e-12, its

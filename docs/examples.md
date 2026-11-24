@@ -37,7 +37,8 @@ an interface; 72 a plasma's chemistry feeding an etch; 73 electrons that
 change subband and scatter; 74 springy oxide and a mask that bends; 75
 negative ions in a plasma; 76 phonons of a stack with a thin spacer; 77
 oxide that goes where it flows; 78 an alloy barrier and the air above it;
-79 a mask that rides on the flowing oxide.
+79 a mask that rides on the flowing oxide; 80 electrons that give energy to
+the crystal.
 
 ### 1. Energy levels and what they are made of
 
@@ -3681,6 +3682,78 @@ beak). A rigid mask stays where it is, and the oxide goes out sideways
 instead. `oxidation_balance` shows where the oxide went: what was made
 equals what is in whole cells plus what is still in parts of cells (a
 test checks this to 1e-9; it holds to rounding). Numbers illustrative.
+
+### 80. Electrons that give energy to the crystal (new in 0.36.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.device import Device, Electrode, Mobility, QuantumChannel, Surface
+from kpenvelope.electrons import M0
+from kpenvelope.negf import _H2M, phonon_coupling_for_mobility
+from kpenvelope.nitride import QE
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+
+# a short GaN transistor (gate 30 nm, 90 nm of channel between the
+# contacts' edges), the channel electrons as waves at Vg = -1 V, Vd = 0.05 V:
+# flying straight through, bumping at the rate of a 1500 cm^2/Vs mobility
+# (Buttiker probes), or emitting and absorbing GaN's optical phonon at the
+# strength that gives the same mobility to the electrons under the middle
+# of the gate (their sheet density from the ordinary model, as one level);
+# the mobility is illustrative
+layers = [StackLayer(algan(0.0), 300.0, name="buffer"), StackLayer(algan(0.25), 20.0, name="barrier")]
+el = [Electrode("source", "ohmic", 0, 50, implant_depth=30, implant_donors=1e20),
+      Electrode("gate", "schottky", 85, 115, barrier=1.0),
+      Electrode("drain", "ohmic", 150, 200, implant_depth=30, implant_donors=1e20)]
+dev = Device(layers, 200.0, el, Mobility(1500.0, "illustrative"), Surface("pinned", barrier=1.0),
+             dx_fine=5, dx_max=50, dz_fine=0.5, dz_max=50,
+             quantum=QuantumChannel((270.0, 319.5), x_range=(55, 145)))
+b = {"gate": -1.0, "drain": 0.05}
+dd = dev.solve(b)
+m = algan(0.0).me
+hw = ph.w_LO_perp / 1000.0
+xs = np.array([x for x, _ in dd.quantum["subbands"]])
+ns = dd.quantum["sheet_cm2"][int(np.argmin(np.abs(xs - 100.0)))] * 1e-14    # 1/nm^2
+kT = 8.617333262e-5 * 300.0
+g = m / (2 * np.pi * 2 * _H2M)                     # states per eV and nm^2, one spin
+F = kT * np.log(np.expm1(ns / (2 * g * kT)))       # Fermi level above the band bottom
+runs = {"straight through  ": {},
+        "bumping (probes)  ": dict(scattering_time=1500e-4 * m * M0 / QE),
+        "optical phonons   ": dict(phonon_energy=hw,
+                                   phonon_coupling=phonon_coupling_for_mobility(1500.0, m, hw, 300.0,
+                                                                                fermi_eV=F))}
+print(f"under the gate: {ns * 1e14:.2e} electrons per cm^2, Fermi level {1000 * F:.0f} meV "
+      f"above the band bottom")
+print(f"ordinary model    : {dd.current['drain']:.3f} A/mm")
+for label, kw in runs.items():
+    st = dev.negf(b, guess=dd, dx=1.0, **kw)
+    heat = st.negf["phonon_power"]
+    print(f"{label}: {st.current['drain']:.3f} A/mm" +
+          ("" if heat is None else f", heat left in the crystal {1000 * heat:.2f} mW/mm "
+           f"of the {1000 * st.current['drain'] * 0.05:.2f} mW/mm given"))
+```
+
+```
+under the gate: 1.09e+13 electrons per cm^2, Fermi level 131 meV above the band bottom
+ordinary model    : 1.631 A/mm
+straight through  : 1.166 A/mm
+bumping (probes)  : 0.643 A/mm
+optical phonons   : 0.674 A/mm, heat left in the crystal 16.66 mW/mm of the 33.68 mW/mm given
+```
+
+Flying straight through, the electrons carry the ballistic current. With
+probes they lose their direction at the rate of the mobility but keep
+their energy. With the optical phonon they also hand 92 meV at a time to
+the crystal and now and then take it back; at the same mobility (for the
+electrons under the gate) the current is about the same as with probes,
+and half of the power the drain voltage gives the electrons ends up as
+heat in the crystal along the channel (the rest they carry into the
+drain). The ordinary model's current is higher than the ballistic limit
+here: it has no such limit, and in a channel this short the resistance
+it gets from the mobility alone is below the one electrons flying
+straight through have. A test checks the phonons against detailed balance,
+current and energy conservation, the ballistic limit and the exact 1D
+result of each part of the width. The mobility is illustrative.
 
 ## Tutorials
 

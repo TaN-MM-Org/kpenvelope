@@ -60,12 +60,15 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.35.0) has the library's features of 0.24.0 to 0.35.0
+- The app (since 0.36.0) has the library's features of 0.24.0 to 0.36.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
-  only, no heat), with the four lowest levels joined along the channel
-  if you ask (with or without scattering; with both, on a 1 nm step
-  along the channel), the Fermi-Dirac heat per
+  only, no self-heating), with the four lowest levels joined along the
+  channel if you ask (with or without scattering; with both, on a 1 nm
+  step along the channel), or (since 0.36.0) with GaN's optical phonon
+  at the strength that gives the tab's mobility to the electrons under
+  the middle of the gate, and the heat they leave in the crystal, the
+  Fermi-Dirac heat per
   electron, simulated implant ranges, plasma etching, oxide flow,
   springy oxide, masks that bend or flow and oxide shaped by its flow in
   the process recipe, the plasma's chemistry (your species, reactions and
@@ -373,12 +376,27 @@ The limits of each part of the package, in detail. The
   ungated channel; `scattering_time` adds Buttiker probes, which settle
   it. The
   probes relax momentum and energy at one rate (no phonon spectrum, no
-  separate energy relaxation). Real phonon self-energies were not added:
-  a phonon that turns an electron's direction moves energy between its
-  motion along the channel and across the width, which the closed-form
-  sum over the width (each chain carries one energy along x) cannot
-  follow, so it needs the width's wave numbers on a grid, a different
-  and much larger calculation. The probes' broadening is cut at the local band
+  separate energy relaxation). Since 0.36.0 phonons that take and give
+  energy are there too (`phonon_energy=` and `phonon_coupling=` in
+  `Device.negf`, `negf.phonon_transport`): the self-consistent Born
+  approximation with the motion across the width on a grid, for one
+  phonon energy and a local coupling, which turns an electron's
+  direction at random (like a deformation potential; GaN's polar optical
+  phonons prefer small turns, which this leaves out), within each
+  subband (no phonon moves an electron to another subband) and without
+  the shift of the band that the real part of the self-energy would give
+  (in a local model it depends on how high the states are counted). The
+  broadening it gives spreads states below the band edge and, at a given
+  Fermi level, adds electrons: 2.6 percent at a 2D gas's mobility of
+  about 14 000 cm^2/Vs and 8 percent at about 4000 (mass 0.2, Fermi level
+  30 meV above the band bottom, 300 K), which agree with the same
+  broadening worked out by hand to 0.2 percent. It costs much more
+  than probes (a minute or more per bias for a short transistor, more for
+  many subbands); with probes it is not combined, nor with coupled modes.
+  `phonon_coupling_for_mobility` gives the coupling for a mobility from
+  the Boltzmann equation with the same scattering, at a Fermi level you
+  choose (a dense gas needs a weaker coupling: more of its electrons can
+  emit). The probes' broadening is cut at the local band
   bottom and the lost states near it are added back from an infinite
   uniform chain (exact there, approximate where the band changes fast).
   The probe resistance matches the Drude value q^2 n tau / m to about 1
