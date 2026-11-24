@@ -3986,7 +3986,8 @@ class Device:
              dx: float = 0.5, scattering_time: float = None, guess: DeviceState = None,
              energy_step: float = None, emax_kT: float = 15.0, energy_rtol: float = 1e-3,
              tol: float = 1e-4, max_outer: int = 100, coupled_modes: int = None,
-             carrier: str = "electrons"):
+             carrier: str = "electrons", phonon_energy: float = None,
+             phonon_coupling: float = None):
         """Quantum transport of the channel electrons by non-equilibrium
         Green's functions, self-consistent with the potential (new in
         0.26.0). Needs a 2D device with a QuantumChannel for electrons.
@@ -4034,6 +4035,16 @@ class Device:
         back to the nodes as the QuantumChannel carries its own;
         coupled_modes needs the same samples on every line.
 
+        phonon_energy = hbar w (eV) and phonon_coupling = C (eV^2 nm^2) (new
+        in 0.36.0): instead of probes, phonons of one energy that the
+        electrons emit and absorb (`negf.phonon_transport`: the
+        self-consistent Born approximation for a local coupling, with the
+        motion across the width on a grid), in every subband (the phonons do
+        not move electrons between subbands); the electrons lose energy to
+        the lattice and fill wells on the way, and negf["phonon_power"] gives
+        the heat they leave in it (W/mm). `negf.phonon_coupling_for_mobility`
+        gives C for a mobility. Not with scattering_time or coupled_modes.
+
         carrier="holes" (new in 0.27.0): the same for the holes of the
         QuantumChannel (it needs `holes=(m_z, m_inplane, ...)`): one band,
         the valence band edge, m_z across the channel and m_inplane along x
@@ -4046,7 +4057,7 @@ class Device:
         (A/mm) and negf = dict(current, mode_currents, modes (per subband:
         x, E_i(x), m_i(x)), energies, transmission (per subband),
         iterations, last_change, probe_levels)."""
-        from .negf import Chain, Slab, chain_transport, slab_transport
+        from .negf import Chain, Slab, chain_transport, phonon_transport, slab_transport
         if carrier not in ("electrons", "holes"):
             raise ValueError('carrier must be "electrons" or "holes"')
         holes = carrier == "holes"
@@ -4067,6 +4078,16 @@ class Device:
         if coupled_modes is not None:
             if not (isinstance(coupled_modes, int) and coupled_modes >= 1):
                 raise ValueError("coupled_modes must be an integer >= 1")
+        phon = phonon_energy is not None or phonon_coupling is not None
+        if phon:
+            if phonon_energy is None or phonon_coupling is None:
+                raise ValueError("give both phonon_energy (eV) and phonon_coupling "
+                                 "(eV^2 nm^2)")
+            if not (phonon_energy > 0 and phonon_coupling >= 0):
+                raise ValueError("phonon_energy must be > 0 and phonon_coupling >= 0")
+            if scattering_time is not None or coupled_modes is not None:
+                raise ValueError("phonons are not combined with scattering_time or "
+                                 "coupled_modes")
         lo, hi = sorted([0.5 * (es.x0 + es.x1), 0.5 * (ed.x0 + ed.x1)])
         cols = self._negf_columns(lo, hi)
         if len(cols) < 2:
@@ -4108,6 +4129,8 @@ class Device:
             qnodes = self._negf_nodes(cols)
             hist = []
             probe_F = None
+            ph_sig = {}                    # the phonons' self-energies per subband
+            ph_pow = []
             beta = 0.3
             acc = _Anderson(m=8, beta=beta, positive=False)
             for it in range(1, int(max_outer) + 1):
@@ -4177,9 +4200,19 @@ class Device:
                     m = np.interp(xs, xc, mi[:, i])
                     ch = Chain(U, m, a, eta=eta)
                     guess_F = None if probe_F is None or i >= len(probe_F) else probe_F[i]
-                    r = chain_transport(ch, FS, FD, kT, energy_step=energy_step,
-                                        emax_kT=emax_kT, probe_guess=guess_F,
-                                        rtol=energy_rtol)
+                    if phon:
+                        r = phonon_transport(ch, FS, FD, kT, phonon_energy, phonon_coupling,
+                                             energy_step=energy_step, emax_kT=emax_kT,
+                                             guess=ph_sig.get(i),
+                                             mass_y=mxy_h if holes else None)
+                        ph_sig[i] = r["sigma"]
+                        if i == 0:
+                            ph_pow = []
+                        ph_pow.append(r["power"] * 1e6)              # W/mm
+                    else:
+                        r = chain_transport(ch, FS, FD, kT, energy_step=energy_step,
+                                            emax_kT=emax_kT, probe_guess=guess_F,
+                                            rtol=energy_rtol)
                     # each column takes the mean over its own box along x (the
                     # density oscillates on the scale of the electrons'
                     # wavelength, finer than the device grid)
@@ -4189,8 +4222,8 @@ class Device:
                         ncol[k] += nn[k] * P2[k][:, i]                   # nm^-3
                     modes.append(dict(x=xs, E=sg * U, mass=m))
                     mode_I.append(sg * r["I"] * 1e6)                     # A/mm
-                    trans.append((sg * r["E"], r["T"]))
-                    newF.append(r["probe_F"])
+                    trans.append((sg * r["E"], r.get("T")))
+                    newF.append(r.get("probe_F"))
                 probe_F = newF
                 # the effective quasi-Fermi level that gives this density
                 X = x.reshape(self.N, nv).copy()
@@ -4240,7 +4273,8 @@ class Device:
                                          [None if f is None else sg * np.asarray(f)
                                           for f in probe_F]),
                            carrier=carrier,
-                           quantum_nodes=qnodes)
+                           quantum_nodes=qnodes,
+                           phonon_power=(float(sum(ph_pow)) if phon else None))
             return st
         finally:
             if Lam_save is not None:

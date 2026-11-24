@@ -44,6 +44,12 @@ momentum and phase relaxation time), whose filling at every energy is set
 so that no current flows into it; the energy of an electron is kept. A
 chain with probes is a resistor: a long uniform one carries the Drude
 conductance q^2 n tau / m (checked in the tests).
+
+Since 0.36.0 the electrons can instead emit and absorb phonons of one
+energy (`phonon_transport`): the self-consistent Born approximation with a
+local coupling. The phonons turn the motion along x into motion across the
+width, so there the width is no longer summed in closed form but put on a
+grid.
 """
 
 from __future__ import annotations
@@ -644,6 +650,288 @@ def chain_transport(chain: Chain, FS: float, FD: float, kT: float,
     return dict(n=n, I=_G0 * float(np.sum(IS * w)), I_drain=_G0 * float(np.sum(ID * w)),
                 E=E, T=sol["T"], probe_F=Fp)
 
+
+# ------------------------------------------- phonons that exchange energy (0.36.0)
+def _cos_nodes(a, b, n):
+    """n midpoint nodes on [a, b] crowding into both ends (E = a + (b - a)
+    (1 - cos pi u) / 2), which makes 1 / sqrt edges at both ends smooth"""
+    u = (np.arange(n) + 0.5) / n
+    x = a + (b - a) * 0.5 * (1.0 - np.cos(math.pi * u))
+    w = (b - a) * 0.5 * math.pi * np.sin(math.pi * u) / n
+    return x, w
+
+
+def _chain_batch(ch, Ex, Gam, sin_ph):
+    """For many (E_x, broadening) at once: the spectral diagonal A, the
+    contacts' broadenings and |G_i0|^2, |G_i,N-1|^2, and
+    y_i = sum_j |G_ij|^2 sin_ph_j (by the recursions of `_SMul`). Gam and
+    sin_ph are (N, B) (sites first, so that each step of the recursions
+    works on contiguous memory); the results are (N, B)."""
+    sL, gL_ = lead_self_energy(Ex, ch.U[0], ch.tL)
+    sR, gR_ = lead_self_energy(Ex, ch.U[-1], ch.tR)
+    a = (Ex[None, :] - ch.diag[:, None]).astype(complex) + 0.5j * Gam
+    a[0] -= sL
+    a[-1] -= sR
+    b = ch.tl
+    b2 = b ** 2
+    N, B = a.shape
+    gl = np.empty((N, B), complex)
+    gr = np.empty((N, B), complex)
+    gl[0] = 1.0 / a[0]
+    for j in range(1, N):
+        gl[j] = 1.0 / (a[j] - b2[j - 1] * gl[j - 1])
+    gr[-1] = 1.0 / a[-1]
+    for j in range(N - 2, -1, -1):
+        gr[j] = 1.0 / (a[j] - b2[j] * gr[j + 1])
+    Gd = gl.copy()
+    Gd[:-1] = 1.0 / (1.0 / gl[:-1] - b2[:, None] * gr[1:])
+    Gd2 = Gd.real ** 2 + Gd.imag ** 2
+    r2 = np.empty((N, B))
+    r2[0] = 0.0
+    t_ = gr[1:] * b[:, None]
+    r2[1:] = t_.real ** 2 + t_.imag ** 2
+    q2 = np.empty((N, B))
+    q2[-1] = 0.0
+    t_ = gl[:-1] * b[:, None]
+    q2[:-1] = t_.real ** 2 + t_.imag ** 2
+    c0 = np.empty((N, B))
+    c0[0] = Gd2[0]
+    for j in range(1, N):
+        c0[j] = r2[j] * c0[j - 1]
+    cN = np.empty((N, B))
+    cN[-1] = Gd2[-1]
+    for j in range(N - 2, -1, -1):
+        cN[j] = q2[j] * cN[j + 1]
+    L = np.empty((N, B))
+    L[0] = Gd2[0] * sin_ph[0]
+    for i in range(1, N):
+        L[i] = r2[i] * L[i - 1] + Gd2[i] * sin_ph[i]
+    S = np.zeros((N, B))
+    for i in range(N - 2, -1, -1):
+        S[i] = r2[i + 1] * (sin_ph[i + 1] + S[i + 1])
+    return -2.0 * Gd.imag, L + Gd2 * S, c0, cN, gL_, gR_
+
+
+def phonon_transport(chain: Chain, FS: float, FD: float, kT: float, phonon_eV: float,
+                     coupling: float, mass_y: float = None, energy_step: float = None,
+                     emax_kT: float = 30.0, nodes: int = 12, tol: float = 1e-8,
+                     max_iter: int = 400, guess=None):
+    """Density and current of a chain (as `chain_transport`) whose electrons
+    exchange energy with phonons of one energy hbar w = phonon_eV (new in
+    0.36.0): the self-consistent Born approximation for a local coupling
+    (the electron's momentum is randomized, as by a deformation potential),
+    with the motion across the width on a grid.
+
+    The phonons' in- and out-scattering at every site and total energy E,
+
+        Sigma_in(E)  = (C / a) [(N + 1) G^n(E + hbar w) + N G^n(E - hbar w)],
+        Sigma_out(E) = (C / a) [(N + 1) G^p(E - hbar w) + N G^p(E + hbar w)],
+
+    with N the phonons' Bose-Einstein number at kT, G^n and G^p = A - G^n
+    the site's electron and empty-state spectral densities summed over the
+    width, and the broadening Gamma = Sigma_in + Sigma_out (the real part of
+    the self-energy, a shift of the band that in this local model depends on
+    how far up the states are counted, is left out). coupling C (eV^2 nm^2)
+    is the strength per area: an electron of energy E in a uniform 2D gas
+    is scattered at the rate (2 pi / hbar) C g [(N + 1) (1 - f) + N f
+    terms] with g = m / (2 pi hbar^2) (`phonon_coupling_for_mobility` gives
+    C for a mobility). Because the phonons change the motion along x into
+    motion across the width and back, the width cannot be summed in closed
+    form: for every total energy E the energies along x run from -inf (the
+    tails of the broadened states) to E on `nodes` points per piece, each
+    with the weight of its width momentum (int dk_y / 2 pi). Total energies
+    are on a uniform grid of steps that divide hbar w (at most kT / 6 by
+    default; 12 nodes give the current to 1e-3 in the tests). Iterated (Anderson
+    mixing) until Sigma changes by less than tol of its largest value.
+
+    Checked in the tests: at equilibrium G^n = f A exactly and no current;
+    the current leaving equals the current entering, and the power the
+    contacts lose equals hbar w times the net emission; without coupling
+    the closed-form ballistic current; in uniform channels the conductance
+    of the sum over the width of each part's exact 1D result
+    lambda / (lambda + L). Returns dict(n, I, I_drain, E, power (W per nm
+    of width, given to the phonons), power_phonons (the same from the
+    emission and absorption), G_n and A (nE, N: each site's electrons and
+    states per energy, summed over the width, 1 / (eV nm)), sigma (for
+    `guess`), iterations, change)."""
+    if chain.eta is not None:
+        raise ValueError("phonon_transport takes a chain without Buttiker probes")
+    hw, C = float(phonon_eV), float(coupling)
+    if not (hw > 0 and C >= 0):
+        raise ValueError("phonon_eV must be > 0 and coupling >= 0")
+    my = float(np.mean(chain.m)) if mass_y is None else float(mass_y)
+    N_, a = chain.N, chain.a
+    Nq = 1.0 / math.expm1(hw / kT)
+    step = kT / 6.0 if energy_step is None else float(energy_step)
+    M = max(int(math.ceil(hw / step - 1e-9)), 1)
+    dE = hw / M
+    Umin = float(np.min(chain.U))
+    top = max(FS, FD) + emax_kT * kT
+    g2 = float(np.mean(chain.m)) / (2.0 * math.pi * 2.0 * _H2M)
+    gam_est = 2.0 * math.pi * C * g2 * (2.0 * Nq + 1.0)
+    lo = Umin - max(3.0 * dE, min(10.0 * gam_est, hw))
+    E = lo + dE * (np.arange(int(math.ceil((top - lo) / dE)) + 1) + 0.5)
+    nE = E.size
+    cuts = sorted(set([Umin, float(chain.U[0]), float(chain.U[-1])]))
+    ut, wt = np.polynomial.legendre.leggauss(int(nodes))
+    ut, wt = 0.5 * (ut + 1.0), 0.5 * wt
+    Ex, wk, ie = [], [], []
+    for k, e in enumerate(E):
+        b = min(e, Umin)
+        xs_ = [b - kT * ut ** 2 / (1.0 - ut) ** 2]
+        ws_ = [wt * kT * 2.0 * ut / (1.0 - ut) ** 3]
+        pts = [c for c in cuts if c < e] + [e]
+        for p in range(len(pts) - 1):
+            x2, w2 = _cos_nodes(pts[p], pts[p + 1], int(nodes))
+            xs_.append(x2)
+            ws_.append(w2)
+        x_ = np.concatenate(xs_)
+        Ex.append(x_)
+        wk.append(np.concatenate(ws_) * math.sqrt(my / _H2M)
+                  / (2.0 * math.pi * np.sqrt(e - x_)))
+        ie.append(np.full(x_.size, k))
+    Ex, wk, ie = np.concatenate(Ex), np.concatenate(wk), np.concatenate(ie)
+    fS = 1.0 / (1.0 + np.exp(np.clip((E - FS) / kT, -700, 700)))
+    fD = 1.0 / (1.0 + np.exp(np.clip((E - FD) / kT, -700, 700)))
+    D = C / a
+    # the rows in pieces of at most about 3e6 numbers
+    chunk = max(1, int(3e6 // N_))
+    starts = list(range(0, Ex.size, chunk))
+
+    # the rows of every total energy are next to each other
+    first = np.searchsorted(ie, np.arange(nE))
+
+    def sweep(sin, sout, final=False):
+        Gn_loc = np.zeros((nE, N_))
+        A_loc = np.zeros((nE, N_))
+        out = dict(iL=0.0, iR=0.0, eL=0.0, eR=0.0)
+        gamT = (sin + sout).T
+        sinT = sin.T
+        for s0 in starts:
+            sl = slice(s0, min(s0 + chunk, Ex.size))
+            k_ = ie[sl]
+            A, y, c0, cN, gL, gR = _chain_batch(chain, Ex[sl], gamT[:, k_], sinT[:, k_])
+            Gn = c0 * (gL * fS[k_])[None, :] + cN * (gR * fD[k_])[None, :] + y
+            # sums over the rows of each energy
+            ks = np.unique(k_)
+            idx = first[ks] - s0
+            idx[0] = max(idx[0], 0)
+            Gn_loc[ks] += np.add.reduceat((Gn * wk[None, sl]).T, idx, axis=0)
+            A_loc[ks] += np.add.reduceat((A * wk[None, sl]).T, idx, axis=0)
+            if final:
+                iL = wk[sl] * gL * (fS[k_] * A[0] - Gn[0])
+                iR = wk[sl] * gR * (fD[k_] * A[-1] - Gn[-1])
+                out["iL"] += float(iL.sum())
+                out["iR"] += float(iR.sum())
+                out["eL"] += float((iL * E[k_]).sum())
+                out["eR"] += float((iR * E[k_]).sum())
+        return Gn_loc, A_loc, out
+
+    def shift(X, d):
+        Y = np.zeros_like(X)
+        if d > 0:
+            Y[:-d] = X[d:]                 # X(E + d dE)
+        else:
+            Y[-d:] = X[:d]                 # X(E - |d| dE)
+        return Y
+    sin = np.zeros((nE, N_)) if guess is None else np.array(guess[0], float)
+    sout = np.zeros((nE, N_)) if guess is None else np.array(guess[1], float)
+    if sin.shape != (nE, N_):
+        sin, sout = np.zeros((nE, N_)), np.zeros((nE, N_))
+    from .device import _Anderson
+    acc = _Anderson(m=8, beta=0.6, positive=False)
+    hist = []
+    for it in range(int(max_iter)):
+        Gn_loc, A_loc, _ = sweep(sin, sout)
+        Gp_loc = A_loc - Gn_loc
+        new_in = D * ((Nq + 1.0) * shift(Gn_loc, M) + Nq * shift(Gn_loc, -M))
+        new_out = D * ((Nq + 1.0) * shift(Gp_loc, -M) + Nq * shift(Gp_loc, M))
+        X = np.concatenate([sin.ravel(), sout.ravel()])
+        Xn = np.concatenate([new_in.ravel(), new_out.ravel()])
+        R = Xn - X
+        big = max(float(np.max(np.abs(Xn))), 1e-300)
+        ch_ = float(np.max(np.abs(R))) / big
+        hist.append(ch_)
+        if ch_ < tol or C == 0.0:
+            sin, sout = new_in, new_out
+            break
+        Xn_ = np.maximum(acc.step(X, R, X + 0.6 * R, float(np.max(np.abs(R)))), 0.0)
+        sin = Xn_[:nE * N_].reshape(nE, N_)
+        sout = Xn_[nE * N_:].reshape(nE, N_)
+    else:
+        if hist[-1] > 1e3 * tol:
+            raise RuntimeError(f"the phonon self-energies did not settle (last change "
+                               f"{hist[-1]:.1e})")
+    Gn_loc, A_loc, o = sweep(sin, sout, final=True)
+    Gp_loc = A_loc - Gn_loc
+    # the power given to the phonons, from their emission and absorption:
+    # electrons from E to E - hbar w (emission) less the reverse (absorption)
+    em = D * (Nq + 1.0) * Gn_loc * shift(Gp_loc, -M)
+    ab = D * Nq * shift(Gn_loc, -M) * Gp_loc
+    P_ph = _G0 * hw * float(np.sum(em - ab)) * dE
+    return dict(n=2.0 / (2.0 * math.pi * a) * Gn_loc.sum(0) * dE,
+                I=_G0 * o["iL"] * dE, I_drain=-_G0 * o["iR"] * dE,
+                power=_G0 * (o["eL"] + o["eR"]) * dE, power_phonons=P_ph,
+                E=E, G_n=Gn_loc, A=A_loc, sigma=(sin, sout), iterations=len(hist),
+                change=hist[-1])
+
+
+def phonon_coupling_for_mobility(mobility_cm2Vs: float, mass: float, phonon_eV: float,
+                                 temperature_K: float, fermi_eV: float = None) -> float:
+    """The coupling C (eV^2 nm^2) of `phonon_transport` that gives a uniform
+    2D gas of mass `mass` (m0) the mobility asked for (new in 0.36.0), from
+    the Boltzmann equation with the same scattering: with g = m / (2 pi
+    hbar^2) and f the Fermi-Dirac filling, an electron of energy E above the
+    band bottom relaxes at
+
+        hbar / tau = 2 pi C g { [(N + 1)(1 - f(E - hbar w)) + N f(E - hbar w)] (E > hbar w)
+                               + N (1 - f(E + hbar w)) + (N + 1) f(E + hbar w) }
+
+    (the same Sigma_in + Sigma_out as in `phonon_transport`; the scattering
+    randomizes the direction, so this is the momentum relaxation time too),
+    and mu = (q / m) int tau E (-df/dE) dE / int f dE. fermi_eV: the Fermi
+    level above the band bottom; None for a non-degenerate gas, where
+
+        <tau> = hbar / (2 pi C g) [(1 - (1 + x) e^-x) / N + (1 + x) e^-x / (2N + 1)],
+
+    x = hbar w / kT. A dense gas, where many electrons can emit, needs a
+    weaker coupling for the same mobility."""
+    from .electrons import KB
+    mu = float(mobility_cm2Vs) * 1e-4
+    if not (mu > 0 and mass > 0 and phonon_eV > 0 and temperature_K > 0):
+        raise ValueError("mobility, mass, phonon energy and temperature must be > 0")
+    kT = KB * temperature_K                          # eV
+    x = phonon_eV / kT
+    Nq = 1.0 / math.expm1(x)
+    g = mass / (2.0 * math.pi * 2.0 * _H2M)                 # 1 / (eV nm^2)
+    tau_want = mu * mass * M0 / QE                          # s
+    if fermi_eV is None:
+        bracket = ((-math.expm1(-x) - x * math.exp(-x)) / Nq
+                   + (1.0 + x) * math.exp(-x) / (2 * Nq + 1))
+        return HBAR / QE * bracket / (2.0 * math.pi * g * tau_want)
+    F = float(fermi_eV)
+    top = max(F, 0.0) + 40.0 * kT
+
+    def f(e):
+        return 0.5 * (1.0 - np.tanh((e - F) / (2.0 * kT)))
+
+    def part(E, emit):
+        # tau jumps at hbar w: each side on its own (Simpson's rule)
+        Em, Ep = E - phonon_eV, E + phonon_eV
+        G1 = Nq * (1 - f(Ep)) + (Nq + 1) * f(Ep)                # absorption
+        if emit:
+            G1 = G1 + (Nq + 1) * (1 - f(Em)) + Nq * f(Em)       # emission
+        G1 = 2.0 * math.pi * g * G1                             # Gamma / C
+        mfp = 1.0 / (4.0 * kT * np.cosh((E - F) / (2.0 * kT)) ** 2)
+        w = np.full(E.size, 2.0)
+        w[1::2] = 4.0
+        w[[0, -1]] = 1.0
+        h = (E[-1] - E[0]) / (E.size - 1) / 3.0
+        return (h * w * HBAR / QE / G1 * E * mfp).sum(), (h * w * f(E)).sum()
+    lo_ = part(np.linspace(0.0, min(phonon_eV, top), 20001), False)
+    hi_ = part(np.linspace(phonon_eV, top, 40001), True) if top > phonon_eV else (0.0, 0.0)
+    tau1 = (lo_[0] + hi_[0]) / (lo_[1] + hi_[1])
+    return tau1 / tau_want
 
 # --------------------------------------------- coupled mode space (0.27.0)
 def lead_surface_green(E, D, C, eta=1e-9, tol=1e-12, max_iter=200):
