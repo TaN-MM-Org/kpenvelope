@@ -379,6 +379,7 @@ dl dd{margin:2px 0 0 0;color:var(--muted)}
       <div><label for="qtVd">Drain voltage (V, small)</label><input id="qtVd" type="text" inputmode="decimal" value="0.05"></div>
     </div>
     <label style="color:var(--ink)"><input type="checkbox" id="qtScat"> Let the electrons bump into things, at the rate that gives the mobility above (slower) <span class="help" title="Without bumping the electrons fly straight through. With it, they lose their direction now and then, at the rate that would give the mobility you typed. A long channel needs this.">?</span></label>
+    <label style="color:var(--ink)"><input type="checkbox" id="qtPh"> Or let them give energy to the crystal's vibrations and take it back (GaN's optical phonon, 92 meV), at the strength that gives the mobility above (slowest) <span class="help" title="Bumping keeps an electron's energy. Real electrons in GaN mostly lose theirs to the crystal, 92 meV at a time, and now and then pick one up. Ticked, the app follows that: electrons that gain energy from the field hand it on to the crystal, and settle into dips of the channel on the way. The answer also says how much heat they leave in the crystal. It takes a few minutes.">?</span></label>
     <label style="color:var(--ink)"><input type="checkbox" id="qtMix"> Let the electrons change level along the channel <span class="help" title="Under the gate the channel's levels change shape, and an electron can move from one level into another there. Ticked, the app joins the four lowest levels of the channel along its length so this can happen. With bumping as well it takes a minute or two.">?</span></label>
     <p><button id="runQt">Work out the wave current</button> <span class="note">About 5 seconds, or a minute with bumping.</span></p>
     <div id="outQt"></div>
@@ -995,13 +996,17 @@ $("runRu").onclick=()=>busy($("runRu"),$("outRu"),async()=>{
   $("cvRu").classList.remove("hidden");
   plot($("cvRu"),[{x:r.voltages,y:r.hottest,color:"#e5534b",label:"Hottest point (K)",dots:true}],{xlabel:"Drain voltage (V)",ylabel:"Temperature (K)",vlines:r.runaway!==null?[r.runaway]:[]});
 });
+$("qtPh").onchange=()=>{ if($("qtPh").checked){ $("qtScat").checked=false; $("qtMix").checked=false; } };
+$("qtScat").onchange=()=>{ if($("qtScat").checked) $("qtPh").checked=false; };
+$("qtMix").onchange=()=>{ if($("qtMix").checked) $("qtPh").checked=false; };
 $("runQt").onclick=()=>busy($("runQt"),$("outQt"),async()=>{
-  const r=await call("quantum",Object.assign(fetBase(),{quantum_transport:{gate:$("qtVg").value,drain:$("qtVd").value,scattering:$("qtScat").checked,mixing:$("qtMix").checked}}));
+  const r=await call("quantum",Object.assign(fetBase(),{quantum_transport:{gate:$("qtVg").value,drain:$("qtVd").value,scattering:$("qtScat").checked,phonons:$("qtPh").checked,mixing:$("qtMix").checked}}));
   const out=$("outQt");
   if(r.error){ out.innerHTML=msg("err",r.error); return; }
   LAST={name:"wave_current",cols:["gate_V","drain_V","wave_A_per_mm","ordinary_A_per_mm","ballistic_limit_A_per_mm"],rows:[[r.gate,r.drain,r.negf,r.drift_diffusion,r.ballistic]]};
-  const how=(r.scattering_time_s?`bumping into something every ${sci(r.scattering_time_s)} s on average`:"flying straight through")+(r.mixing?", free to change level along the way,":"");
+  const how=(r.scattering_time_s?`bumping into something every ${sci(r.scattering_time_s)} s on average`:r.phonon_meV?`giving ${fmt(r.phonon_meV)} meV at a time to the crystal and taking it back`:"flying straight through")+(r.mixing?", free to change level along the way,":"");
   const note=r.scattering_time_s?"With bumping, the wave current falls below the ballistic limit, the more so the longer the channel."
+    :r.phonon_meV?`With the crystal's vibrations, the wave current falls below the ballistic limit, and the electrons leave ${fmt(r.phonon_heat_W_per_mm)} W per mm of heat in the crystal (of the ${fmt(r.negf*r.drain)} W per mm the drain voltage gives them; the rest they carry out as faster electrons).`
     :"Without bumping, the wave current sits close to the ballistic limit; it can be a little higher where electrons slip through the top of the gate's hill.";
   out.innerHTML=warnings(r)+`<div class="summary"><b>In short:</b> at ${fmt(r.gate)} V on the gate and ${fmt(r.drain)} V on the drain, electrons treated as waves and ${how} carry <b>${fmt(r.negf)} A per mm</b>.</div>`+
    `<table><tr><th>How the current is worked out</th><th>A per mm</th></tr><tr><td>Electrons as waves</td><td>${fmt(r.negf)}</td></tr><tr><td>Ordinary model (mobility and top speed)</td><td>${fmt(r.drift_diffusion)}</td></tr><tr><td>Most the channel can carry with no bumping (ballistic limit)</td><td>${fmt(r.ballistic)}</td></tr></table>`+

@@ -1461,7 +1461,10 @@ def run_transistor(spec):
 def run_quantum(spec):
     """The current at one bias with the channel electrons treated as waves
     (non-equilibrium Green's functions, `Device.negf`), next to the
-    drift-diffusion current and the ballistic limit (new in 0.30.0). Only
+    drift-diffusion current and the ballistic limit (new in 0.30.0); with
+    "phonons" (since 0.36.0) the electrons emit and absorb GaN's optical
+    phonon, at the strength that gives the tab's mobility to the electrons
+    under the middle of the gate (`_gate_fermi`). Only
     for short transistors (source to drain at most 600 nm): longer ones take
     too long here and need scattering to settle."""
     t = dict(spec.get("transistor") or {})
@@ -1489,6 +1492,21 @@ def run_quantum(spec):
         # the lowest four states of every column, joined along the channel
         # (coupled mode space, new in 0.31.0 in the app)
         kw["coupled_modes"] = 4
+    phon_src = None
+    if q.get("phonons"):
+        # GaN's optical phonon, emitted and absorbed (new in 0.36.0), at the
+        # strength that gives the tab's mobility in a uniform channel
+        if kw:
+            raise SpecError("Phonons go on their own: untick 'bump into things' and "
+                            "'change level'.")
+        from ..negf import phonon_coupling_for_mobility
+        from ..phonons import GAN_BARKER1973 as _ph
+        m = info["layers"][0].material.me
+        hw = _ph.w_LO_perp / 1000.0
+        kw["phonon_energy"] = hw
+        kw["phonon_coupling"] = phonon_coupling_for_mobility(
+            info["mobility"], m, hw, dev.T, fermi_eV=_gate_fermi(dev, dd, m))
+        phon_src = "GaN's optical phonon energy: " + _ph.reference.split(";")[0]
     # with both bumping and mixing levels every column is joined to every
     # other through the bumps: a coarser step along the channel keeps it to
     # a few minutes
@@ -1503,10 +1521,29 @@ def run_quantum(spec):
     return {"negf": st.negf["current"], "drift_diffusion": dd.current["drain"],
             "ballistic": float(top), "gate": vg, "drain": vd,
             "scattering_time_s": kw.get("scattering_time"),
+            "phonon_meV": (kw["phonon_energy"] * 1000.0 if "phonon_energy" in kw else None),
+            "phonon_heat_W_per_mm": st.negf.get("phonon_power"),
             "mixing": bool(kw.get("coupled_modes")),
             "subbands": kw.get("coupled_modes") or len(st.negf["modes"]),
             "iterations": st.negf["iterations"],
-            "sources": info["sources"], "warnings": info["warn"]}
+            "sources": info["sources"] + ([phon_src] if phon_src else []),
+            "warnings": info["warn"]}
+
+
+def _gate_fermi(dev, st, m):
+    """The Fermi level above the band bottom (eV) of the electrons under the
+    middle of the gate, as the ordinary solution has them, all in one level
+    of a 2D gas: E_F = kT ln(exp(n / (2 g kT)) - 1), g = m / (2 pi hbar^2)"""
+    from ..electrons import KB
+    from ..negf import _H2M
+    gate = [e for e in dev.electrodes if e.name == "gate"][0]
+    xg = 0.5 * (gate.x0 + gate.x1)
+    xs = np.array([x for x, _ in st.quantum["subbands"]])
+    ns = float(st.quantum["sheet_cm2"][int(np.argmin(np.abs(xs - xg)))]) * 1e-14   # 1/nm^2
+    kT = KB * dev.T
+    g = m / (2.0 * math.pi * 2.0 * _H2M)
+    y = ns / (2.0 * g * kT)
+    return kT * (math.log(math.expm1(y)) if y < 30 else y) if y > 0 else -40.0 * kT
 
 
 def run_rf(spec):
