@@ -4,6 +4,42 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.36.0 (2026-11-24)
+
+The electrons in the quantum (NEGF) transport can now hand energy to the
+crystal's vibrations and take it back, in the library and in the app.
+The examples print what they printed before; example 80 is new.
+
+### Added
+
+- `Device.negf(phonon_energy=, phonon_coupling=)` and
+  `negf.phonon_transport`: phonons of one energy, emitted and absorbed in
+  the self-consistent Born approximation with a local coupling, the
+  motion across the width on a grid; the heat they leave in the crystal
+  (`negf["phonon_power"]`). For electrons and holes.
+- `negf.phonon_coupling_for_mobility`: the coupling that gives a mobility,
+  for a thin gas or at a Fermi level.
+- The app, Transistor tab: the wave current with GaN's optical phonon, at
+  the strength that gives the tab's mobility, and the heat left in the
+  crystal.
+
+### Not included (see docs/limits.md)
+
+- The phonons in NEGF are one energy with a local coupling, within each
+  subband, without the band shift; not combined with probes or coupled
+  modes. Wurtzite's phonon anisotropy; a shipped plasma rate set; masks
+  pushed sideways by the oxide; better electronic stopping; tunnel paths
+  that bend; tunneling and heat inside one Newton solve; the hot-electron
+  model at zero relaxation time. The app has no meshes, NEGF holes or 3D.
+
+### Checks (tests)
+
+5 new tests (423 in all; docs/checks.md has the tolerances): detailed
+balance at equilibrium, current and energy conservation, the ballistic
+limit, the exact 1D result of each part of the width, the coupling
+against the Boltzmann equation, holes mirroring electrons, the app's
+phonon numbers. All 80 documented examples were rerun.
+
 ## 0.35.0 (2026-11-23)
 
 Alloys with two vibrations and the air above the surface join the
