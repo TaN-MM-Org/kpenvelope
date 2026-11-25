@@ -634,6 +634,19 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Wurtzite layers in the phonons (new in 0.37.0)**
+
+- `Subbands.layered_phonons` and `scattering.layer_modes` take a uniaxial
+  layer, its c axis along z: a `phonons.PolarPhonons` record (such as
+  `GAN_BARKER1973`) or {"perp": layer, "par": layer}, each an isotropic
+  description (perp for fields in the plane, par along c). The potential
+  then solves -(eps_par phi')' + q^2 eps_perp phi = charge; with such a
+  layer (or with `layer_modes(..., bins=True)`) the weight is found per
+  bin of energy (`bin_eV`, 1 meV) by contour integrals around each bin,
+  which take in single modes and bands of modes alike (example 81).
+- The app, Electrons tab: GaN's vibrations along and across its axis, as
+  an option of the interface vibrations.
+
 **NEGF with phonons that take and give energy (new in 0.36.0)**
 
 - `Device.negf(..., phonon_energy=hw, phonon_coupling=C)` -- the channel

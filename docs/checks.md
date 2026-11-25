@@ -343,6 +343,25 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Wurtzite layers in the phonons (new in 0.37.0)**
+
+- Isotropic stacks through the bins: the total weight of the exact poles
+  (1e-5; measured 8e-7) at their mean energy (0.5 meV; measured 0.17 at
+  worst, against energy steps of about 2.6 meV in the mobility), for one
+  and two boundaries and air; the mobility through the bins equals the
+  one through the poles (1e-5; measured 1.9e-7).
+- Bulk GaN, uniaxial, against the exact potential exp(-kappa |z - z'|) /
+  (2 eps_par kappa): the weight in the band between the TO energies, which
+  only the anisotropy couples (2e-3; measured 1e-7 to 1e-3), and at small
+  q in the band of LO modes (1e-3; measured 2.4e-4; at larger q the
+  reference integral of the exact potential, which oscillates fast near
+  the band's edges, does not converge, while the bins keep the sum rule);
+  at every q the sum rule with both permittivities (1e-6; measured
+  7e-7).
+- In the mobility, GaN's two directions lower it by 3.6 percent against
+  the vibrations across the axis alone (a three-level well), and by 2.2
+  percent in the app's default stack.
+
 **NEGF with phonons that take and give energy (new in 0.36.0)**
 
 - The building blocks: the sums |G_ij|^2 x_j and the columns |G_i0|^2,

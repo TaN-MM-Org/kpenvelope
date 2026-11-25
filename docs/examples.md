@@ -38,7 +38,7 @@ change subband and scatter; 74 springy oxide and a mask that bends; 75
 negative ions in a plasma; 76 phonons of a stack with a thin spacer; 77
 oxide that goes where it flows; 78 an alloy barrier and the air above it;
 79 a mask that rides on the flowing oxide; 80 electrons that give energy to
-the crystal.
+the crystal; 81 GaN's vibrations along and across its axis.
 
 ### 1. Energy levels and what they are made of
 
@@ -3754,6 +3754,61 @@ it gets from the mobility alone is below the one electrons flying
 straight through have. A test checks the phonons against detailed balance,
 current and energy conservation, the ballistic limit and the exact 1D
 result of each part of the width. The mobility is illustrative.
+
+### 81. GaN's vibrations along and across its axis (new in 0.37.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, algan
+from kpenvelope.electrons import solve_electrons
+from kpenvelope.device import column_states
+from kpenvelope.phonons import GAN_BARKER1973 as ph
+from kpenvelope.scattering import Subbands
+
+# the electrons under an 8 nm barrier (as in example 78), their mobility
+# limited by polar phonons, with GaN's vibrations across its c axis only
+# or along and across it (both from the cited record); the barrier's
+# numbers (LO 105 meV, eps 9.0 and 5.0) are illustrative
+gan, bar = algan(0.0), algan(0.25)
+layers = [StackLayer(gan, 300.0, donors=1e-5), StackLayer(bar, 8.0)]
+r = solve_electrons(layers, 1.0, dz=0.1, quantum_window=(250.0, 308.0), n_states=20)
+win = (r.z >= 250.0) & (r.z <= 308.0)
+z = r.z[win]
+mass = np.where(z < 300.0, gan.me, bar.me)
+E, p2, w, psi = column_states(z, r.ec[win], mass, 2, z[0] - 0.1, z[-1] + 0.1, signed=True)
+sb = Subbands(z, psi, E, gan.me, ph.eps0_perp, fermi=0.0, weights=w)
+across = (ph.w_LO_perp / 1000.0, ph.eps0_perp, ph.eps_inf_perp)
+barrier = (0.105, 9.0, 5.0)
+for label, g in (("across the axis only", across), ("along and across    ", ph)):
+    lay = sb.layered_phonons([300.0, 308.0], [g, barrier, 1.0])
+    print(f"GaN {label}: {sb.mobility(lay)['mobility_cm2Vs']:.0f} cm^2/Vs")
+k = int(np.argmin(np.abs(lay.qs - 0.3)))
+G = np.array([g[0] for _, g in lay.poles[k]])
+e = np.array([en for en, _ in lay.poles[k]])
+print(f"at q = {lay.qs[k]:.2f} 1/nm, the lowest level's weight between GaN's two TO "
+      f"energies ({ph.w_TO_par:.1f} and {ph.w_TO_perp:.1f} meV): "
+      f"{100 * G[(e > ph.w_TO_par / 1000) & (e < ph.w_TO_perp / 1000)].sum() / G.sum():.2f} percent")
+```
+
+```
+GaN across the axis only: 1270 cm^2/Vs
+GaN along and across    : 1242 cm^2/Vs
+at q = 0.31 1/nm, the lowest level's weight between GaN's two TO energies (66.1 and 69.3 meV): 0.42 percent
+```
+
+GaN is a wurtzite crystal: its optical vibrations have slightly
+different energies and strengths along the c axis (the growth direction)
+and across it. Given the whole record (`phonons.PolarPhonons`), a layer
+counts both; where the two dielectric functions have opposite signs (a
+narrow band near the LO energies and another between the TO energies)
+there is a band of modes instead of a single energy, and the weight is
+found per narrow bin of energy. GaN couples a little more strongly along
+its axis (1/eps_high - 1/eps_static is 0.091 there, 0.082 across), and a
+thin layer of electrons feels those vibrations, so the mobility is about
+2 percent lower here; the band between the TO energies, which only the
+difference between the two directions couples, holds under half a
+percent of the weight. A test checks the bins against the exact poles of
+isotropic layers, the exact potential of bulk GaN and the sum rule.
 
 ## Tutorials
 

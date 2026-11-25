@@ -36,13 +36,15 @@ The limits of each part of the package, in detail. The
   caps), whose energies change with the wave number; since 0.35.0 a
   layer may also have several vibrations (alloys with two-mode
   behavior) or none (air above the surface, or another dielectric), and
-  the boundaries may lie anywhere. The layers are still isotropic
-  (wurtzite's small anisotropy, about 2 cm^-1 between its two LO energies
-  in GaN but 26 cm^-1 between its TO energies, is left out: a uniaxial
-  layer has a band of confined modes instead of a single LO energy,
-  which needs another treatment) and undamped; the modes are found on a
-  grid of wave numbers (120 by default, between 1e-4 and 30 per nm) and,
-  at each one, split between the two nearest energy steps. There are no
+  the boundaries may lie anywhere; since 0.37.0 a layer may be uniaxial
+  (wurtzite, its c axis along z: a `phonons.PolarPhonons` record), whose
+  bands of modes (where the dielectric functions along and across the
+  axis have opposite signs) are found per bin of energy, 1 meV wide by
+  default, by contour integrals (the mean energy of each bin is kept;
+  about ten times slower than single poles). The layers are undamped;
+  the modes are found on a grid of wave numbers (120 by default, between
+  1e-4 and 30 per nm) and, at each one, split between the two nearest
+  energy steps. There are no
   hot phonons. The phonons
   are unscreened by default (static screening, the option, is an upper
   bound: at the phonon frequency screening is weaker); with them
@@ -60,7 +62,7 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.36.0) has the library's features of 0.24.0 to 0.36.0
+- The app (since 0.37.0) has the library's features of 0.24.0 to 0.37.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
   only, no self-heating), with the four lowest levels joined along the
@@ -77,7 +79,8 @@ The limits of each part of the package, in detail. The
   electrons (GaN on its side, your numbers on the other, with one or two
   vibrations) or of every layer of the exact region (GaN's numbers for
   GaN layers, one set of yours for the others, optionally another for
-  the layer next to the electrons, and the air above the surface). It
+  the layer next to the electrons, and the air above the surface, and
+  since 0.37.0 GaN's vibrations along and across its axis). It
   does not offer the triangle and adaptive meshes (its transistor is
   built on a rectangular grid), the NEGF of holes (its transistor is an
   electron device), the separate lifetimes of `Subband`, or 3D devices;
