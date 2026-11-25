@@ -182,7 +182,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  80 worked examples, each with the output it prints, and three
+  81 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -244,8 +244,9 @@ The main gaps, in plain terms:
   energy-independent scattering time.
 - The polar optical phonons of the scattering lifetimes are those of
   bulk, of one interface or of a stack of layers (alloys with two
-  vibrations and the air above the surface included), for isotropic
-  materials without damping (no wurtzite anisotropy). Screening by all the levels together is an option
+  vibrations and the air above the surface included, and since 0.37.0
+  wurtzite's difference between the c axis and the plane), without
+  damping. Screening by all the levels together is an option
   (static, and only among the levels you pass).
 - No material numbers without a source: where a number is missing, you
   supply it with its source.

@@ -4,6 +4,35 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.37.0 (2026-11-25)
+
+The polar phonons of a stack now take wurtzite's difference between its c
+axis and its plane, in the library and the app. The examples print what
+they printed before; example 81 is new.
+
+### Added
+
+- `Subbands.layered_phonons` and `scattering.layer_modes`: uniaxial layers
+  (a `phonons.PolarPhonons` record such as `GAN_BARKER1973`, or {"perp",
+  "par"}), whose bands of modes are found per bin of energy by contour
+  integrals; `layer_modes(bins=True)` does the same for isotropic stacks.
+- The app, Electrons tab: GaN's vibrations along and across its axis.
+
+### Not included (see docs/limits.md)
+
+- A shipped plasma rate set; masks pushed sideways by the oxide; better
+  electronic stopping; tunnel paths that bend; tunneling and heat inside
+  one Newton solve; the hot-electron model at zero relaxation time. The
+  app has no meshes, NEGF holes or 3D.
+
+### Checks (tests)
+
+3 new tests (426 in all; docs/checks.md has the tolerances): the bins
+against the exact poles of isotropic stacks, against the exact potential
+of bulk GaN in its two bands of modes and against the sum rule; the
+mobility through the bins against the poles; the app's option. All 81
+documented examples were rerun.
+
 ## 0.36.0 (2026-11-24)
 
 The electrons in the quantum (NEGF) transport can now hand energy to the
