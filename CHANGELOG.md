@@ -4,6 +4,57 @@ Every physical claim added in any release is pinned by a test against
 an exact result; the release notes on GitHub carry the full anchor
 lists.
 
+## 0.38.0 (2026-11-25)
+
+Tunneling between bands and self-heating are now one heated solve with
+the local model, and masks that flow are pushed sideways by the oxide.
+The examples print what they printed before, except example 79 (see
+Changed); examples 82 and 83 are new.
+
+### Added
+
+- `Device.solve` with the local `BandToBand` model and `thermal`,
+  `energy_relaxation` or `lattice_temperature`: the tunneling rate goes
+  inside Newton's method, with its exact derivatives, once it has been
+  found without heat, so the heated solve runs once instead of once per
+  round of fixed rates. On the tests' junction it takes about 120
+  Newton steps where the rounds took 518, and it settles at voltages
+  where the rounds did not.
+- `Structure.oxidize(shape="flow")`: the oxide that flows into the side
+  of a mask that flows or is elastic pushes the mask's row sideways.
+- The tests in CI with the oldest dependencies are run once more if the
+  run crashes (SciPy 1.8.0's sparse solver has crashed it now and then),
+  with Python's fault handler on to show where.
+
+### Changed
+
+- `shape="flow"`: the oxide that flows into the end of a mask from the
+  side no longer counts toward lifting it; it pushes it sideways. In
+  example 79 the elastic mask's ends take part of the oxide this way, so
+  the oxide made there is 1940.6 nm^2 in place of 1934.9 (the lift at
+  the points printed is the same).
+- If a heated solve with the local tunneling model fails both ways, the
+  error is the heated solve's own (for example thermal runaway), not
+  that the rounds did not settle.
+
+### Not included (see docs/limits.md)
+
+- The nonlocal tunneling model with heat still repeats the heated solve
+  (its derivatives along every path would cost more than the rounds);
+  the heat itself is iterated with the currents, not inside Newton's
+  method. A shipped plasma rate set; better electronic stopping; tunnel
+  paths that bend; the hot-electron model at zero relaxation time; masks
+  that move as one piece (each row and column moves on its own). The app
+  has no meshes, NEGF holes or 3D.
+
+### Checks (tests)
+
+3 new tests (429 in all; docs/checks.md has the tolerances): the
+derivatives of the tunneling rate; the self-heated junction as a fixed
+point, against the plain solver with its tunneling as a fixed
+generation, a set temperature and hot electrons; a block pushed sideways (the oxide's balance, the mirror
+image, rigid against flowing). All 83 documented examples were rerun.
+
 ## 0.37.0 (2026-11-25)
 
 The polar phonons of a stack now take wurtzite's difference between its c

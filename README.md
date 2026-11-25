@@ -182,7 +182,7 @@ docs).
 The details live in the `docs` folder:
 
 - [Examples](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/examples.md):
-  81 worked examples, each with the output it prints, and three
+  83 worked examples, each with the output it prints, and three
   tutorials that go from measured data to a result with error bars.
 - [Reference](https://github.com/TaN-MM-Org/kpenvelope/blob/main/docs/reference.md):
   every function and option, the units, a glossary of the terms, the
@@ -226,8 +226,8 @@ The main gaps, in plain terms:
 - Process steps stay simple in other ways. The plasma model is
   averaged over the chamber, with your rates and wall factors (none are
   shipped); growing oxide flows and can be springy, its free surface can
-  follow the flow, and masks that bend or flow ride on it (lifted, not
-  pushed sideways), the Monte
+  follow the flow, and masks that bend or flow ride on it (lifted and
+  pushed sideways, one cell at a time), the Monte
   Carlo implant ranges use a textbook electronic stopping that can be off
   by tens of percent for light ions, diffusion constants come from you,
   and the shapes are built from square cells.
@@ -235,9 +235,10 @@ The main gaps, in plain terms:
   need many small triangles. It can refine where the solution curves,
   but you run the loop of meshing and solving yourself.
 - Tunneling between bands follows straight paths in one direction, not
-  paths that bend with the field. Models that depend on each other, such
-  as tunneling and heat, are solved by taking turns (one to five rounds
-  per voltage in the tests).
+  paths that bend with the field. The simple (local) tunneling model is
+  solved together with the currents, so with heat it is one heated solve;
+  the path-following (nonlocal) model and the heat still take turns (one
+  to five rounds per voltage in the tests).
 - The heat carried by electrons, and their thermal diffusion, are by
   default in a simple form that comes out too small where the electrons
   are very dense; the Fermi-Dirac form is an option, still for one
