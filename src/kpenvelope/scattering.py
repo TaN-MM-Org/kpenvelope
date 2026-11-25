@@ -552,6 +552,21 @@ def _mat(m):
     oscillators, as in alloys with two-mode behavior)."""
     if isinstance(m, tuple) and len(m) == 4 and m[0] == "osc":
         return m
+    if isinstance(m, tuple) and len(m) == 3 and m[0] == "aniso":
+        return m
+    # a uniaxial (wurtzite) layer, c along z (new in 0.37.0): a
+    # `phonons.PolarPhonons` record (meV), or {"perp": layer, "par": layer},
+    # perp for fields in the plane, par for fields along c
+    if hasattr(m, "w_TO_perp") and hasattr(m, "eps_inf_par"):
+        m = {"perp": {"eps_high": m.eps_inf_perp, "lo_eV": [m.w_LO_perp / 1000.0],
+                      "to_eV": [m.w_TO_perp / 1000.0]},
+             "par": {"eps_high": m.eps_inf_par, "lo_eV": [m.w_LO_par / 1000.0],
+                     "to_eV": [m.w_TO_par / 1000.0]}}
+    if isinstance(m, dict) and set(m) == {"perp", "par"}:
+        a, b = _mat(m["perp"]), _mat(m["par"])
+        if a[0] != "osc" or b[0] != "osc":
+            raise ValueError("perp and par must each be one isotropic description")
+        return a if a == b else ("aniso", a, b)
     if isinstance(m, (int, float, np.integer, np.floating)):
         ei, L, T = float(m), (), ()
     elif isinstance(m, dict):
@@ -576,7 +591,7 @@ def _mat(m):
 
 
 def _lorentz(m, w):
-    """eps(w) of a layer (see `_mat`); w complex allowed"""
+    """eps(w) of an isotropic layer (see `_mat`); w complex allowed"""
     _, ei, L, T = _mat(m)
     e = ei
     for l_, t_ in zip(L, T):
@@ -584,9 +599,24 @@ def _lorentz(m, w):
     return e
 
 
+def _eps2(m, w):
+    """(eps_perp, eps_par) of a layer at w (equal for an isotropic one)"""
+    m = _mat(m)
+    if m[0] == "aniso":
+        return _lorentz(m[1], w), _lorentz(m[2], w)
+    e = _lorentz(m, w)
+    return e, e
+
+
 def _eps_static(m):
     _, ei, L, T = _mat(m)
     return ei * math.prod((l_ / t_) ** 2 for l_, t_ in zip(L, T))
+
+
+def _osc_parts(m):
+    """the isotropic descriptions a layer is made of"""
+    m = _mat(m)
+    return [m[1], m[2]] if m[0] == "aniso" else [m]
 
 
 def _layer_roots(q, zi, mats):
@@ -635,37 +665,43 @@ def _layer_roots(q, zi, mats):
 
 
 def _layer_solve(z, w, idx, mats, q, wv, rhs):
-    """phi of -(eps phi')' + q^2 eps phi = a on the nodes z (box method,
-    faces in the layer idx), the lowest and highest layers continuing to
-    infinity (phi' = +-q phi there), at the frequency wv (complex)"""
+    """phi of -(eps_par phi')' + q^2 eps_perp phi = a on the nodes z (box
+    method, faces in the layer idx), the lowest and highest layers
+    continuing to infinity (phi' = +-kappa phi there, the decaying root), at
+    the frequency wv (complex). In a layer phi'' = kappa^2 phi with
+    kappa = q sqrt(eps_perp / eps_par) (q for an isotropic layer)."""
     from scipy.linalg import solve_banded
-    e = np.array([_lorentz(m, wv) for m in mats], dtype=complex)
-    ef = e[idx]
+    ep = np.empty(len(mats), complex)
+    ez = np.empty(len(mats), complex)
+    for k_, m in enumerate(mats):
+        ep[k_], ez[k_] = _eps2(m, wv)
+    kap = q * np.sqrt(ep / ez)                 # principal root: Re >= 0
+    c_ = ez * kap                              # eps_par kappa (eps q if isotropic)
     h = np.diff(z)
     N = z.size
-    # each segment joins its two nodes exactly (phi'' = q^2 phi inside), so
-    # charges on the nodes get their exact potentials: for one material
-    # F is sum a_i a_j exp(-q |z_i - z_j|) / (2 q eps), as `_pair` sums it
-    x = q * h
-    # coth and 1 / sinh without overflow for long segments (a layer far
-    # outside the grid)
+    # each segment joins its two nodes exactly (phi'' = kappa^2 phi inside),
+    # so charges on the nodes get their exact potentials: for one isotropic
+    # material F is sum a_i a_j exp(-q |z_i - z_j|) / (2 q eps), as `_pair`
+    # sums it; coth and 1 / sinh without overflow for long segments
+    x = kap[idx] * h
     ex = np.exp(-x)
     den = -np.expm1(-2.0 * x)
-    co = q * (1.0 + ex * ex) / den
-    cs = 2.0 * q * ex / den
+    co = c_[idx] * (1.0 + ex * ex) / den
+    cs = 2.0 * c_[idx] * ex / den
     diag = np.zeros(N, complex)
-    diag[:-1] += ef * co
-    diag[1:] += ef * co
-    diag[0] += e[0] * q
-    diag[-1] += e[-1] * q
+    diag[:-1] += co
+    diag[1:] += co
+    diag[0] += c_[0]
+    diag[-1] += c_[-1]
     ab = np.zeros((3, N), complex)
-    ab[0, 1:] = -ef * cs
+    ab[0, 1:] = -cs
     ab[1] = diag
-    ab[2, :-1] = -ef * cs
+    ab[2, :-1] = -cs
     return solve_banded((1, 1), ab, rhs)
 
 
-def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
+def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32, bins=False,
+                bin_eV=1e-3):
     """The polar-phonon modes of a stack of isotropic layers at in-plane
     wave number q (1/nm), and their weight on the charge profiles A (new in
     0.34.0). z, weights : nodes (nm) and their weights; A : (len(z), P)
@@ -684,7 +720,14 @@ def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
     G (P,) = 2 q (2 / w) Res F, found by a contour integral around each
     pole; G is H(q) (1/eps_high - 1/eps_static) for a bulk material with
     one oscillator.
-    Checked by the sum rule sum_p (2 / w_p) Res_p F = F(w -> inf) - F(0)."""
+    Checked by the sum rule sum_p (2 / w_p) Res_p F = F(w -> inf) - F(0).
+
+    A uniaxial (wurtzite) layer (since 0.37.0: a `phonons.PolarPhonons`
+    record or {"perp": , "par": }) has bands of energies, where eps_perp and
+    eps_par have opposite signs, filled with modes instead of single LO
+    energies; then (or with bins=True) the weight is found per bin of
+    width bin_eV instead of per pole (`_layer_bins`), and each bin is
+    returned as (its mean energy, its weight)."""
     z = np.asarray(z, float)
     zi = [float(v) for v in interfaces]
     if len(materials) != len(zi) + 1:
@@ -708,6 +751,8 @@ def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
         rhs = np.concatenate([rhs, np.zeros((len(extra), rhs.shape[1]), complex)])[o_]
         weights = np.concatenate([np.asarray(weights, float), np.zeros(len(extra))])[o_]
     idx = np.searchsorted(np.asarray(zi), 0.5 * (z[1:] + z[:-1]))
+    if bins or any(m[0] == "aniso" for m in materials):
+        return _layer_bins(z, weights, idx, materials, q, rhs, bin_eV)
     Ls = [v for m in materials for v in m[2]]
     Ts = [v for m in materials for v in m[3]]
     roots = _layer_roots(q, zi, materials)
@@ -764,6 +809,75 @@ def layer_modes(z, weights, A, interfaces, materials, q, n_contour=32):
     # neighbors are the same material) has no weight; the LO modes are kept
     big = max((float(np.max(np.abs(G))) for _, G, _ in out), default=0.0)
     return [(p, G) for p, G, lo in out if lo or float(np.max(np.abs(G))) > 1e-10 * big]
+
+
+def _layer_bins(z, weights, idx, materials, q, rhs, bin_eV, n_top=6, n_side=10):
+    """The modes' weight per bin of energy (new in 0.37.0): for each bin
+    [a, b] the contour integrals (1 / 2 pi i) oint F dw and oint F / w dw
+    around it, which take in its poles and the part of any band of modes
+    (a branch cut of F on the real axis) in it. F is real on the real axis
+    away from them (F(w*) = F(w)*), so each closed integral is
+    (1 / pi) [-Im of the integral along the top side (height H, a to b)
+    + Re of the integral up the right side - the same up the left side]:
+    the top sides of all bins make one line, and neighbors share their
+    sides. The sides are put where F is smallest among a few places near
+    the even spacing (away from poles). Returns [(mean energy, G)] with
+    G = 2 q 2 (1 / 2 pi i) oint F / w dw and the mean energy
+    oint F dw / oint F / w dw (exact for a single pole)."""
+    parts = [p for m in materials for p in _osc_parts(m)]
+    Ls = [v for p in parts for v in p[2]]
+    Ts = [v for p in parts for v in p[3]]
+    if not Ls:
+        return []
+    lo = max(min(Ts) - 2.0 * bin_eV, 0.5 * min(Ts))
+    hi = max(Ls) + 2.0 * bin_eV
+    nb = max(int(math.ceil((hi - lo) / bin_eV)), 1)
+    bw = (hi - lo) / nb
+    H = bw
+
+    def F(w):
+        return (rhs * _layer_solve(z, weights, idx, materials, q, w, rhs)).sum(0)
+    bnd = lo + bw * np.arange(nb + 1)
+    eps = 1e-3 * bw
+    for k in range(1, nb):
+        cand = bnd[k] + bw * np.array([0.0, -0.25, 0.25])
+        val = [float(np.sum(np.abs(F(c + 1j * eps)))) for c in cand]
+        bnd[k] = cand[int(np.argmin(val))]
+    ug, wg = np.polynomial.legendre.leggauss(n_side)
+    ug, wg = 0.5 * (ug + 1.0), 0.5 * wg
+    sideF, sideG = [], []
+    for b_ in bnd:
+        y = H * ug ** 2
+        acc_f = 0.0
+        acc_g = 0.0
+        for y_, w_, u_ in zip(y, wg, ug):
+            wv = b_ + 1j * y_
+            f_ = F(wv) * (w_ * 2.0 * H * u_)
+            acc_f = acc_f + f_
+            acc_g = acc_g + f_ / wv
+        sideF.append(acc_f)
+        sideG.append(acc_g)
+    ut, wt = np.polynomial.legendre.leggauss(n_top)
+    ut, wt = 0.5 * (ut + 1.0), 0.5 * wt
+    out = []
+    for k in range(nb):
+        a_, b_ = bnd[k], bnd[k + 1]
+        tf = 0.0
+        tg = 0.0
+        for u_, w_ in zip(ut, wt):
+            wv = a_ + (b_ - a_) * u_ + 1j * H
+            f_ = F(wv) * (w_ * (b_ - a_))
+            tf = tf + f_
+            tg = tg + f_ / wv
+        WF = (-np.imag(tf) + np.real(sideF[k + 1]) - np.real(sideF[k])) / math.pi
+        WG = (-np.imag(tg) + np.real(sideG[k + 1]) - np.real(sideG[k])) / math.pi
+        aw = np.abs(WG)
+        p = (float((aw * WF / np.where(WG != 0, WG, 1)).sum() / aw.sum())
+             if aw.sum() > 0 else 0.5 * (a_ + b_))
+        p = min(max(p, a_), b_)
+        out.append((p, 4.0 * q * WG))
+    big = max((float(np.max(np.abs(G))) for _, G in out), default=0.0)
+    return [(p, G) for p, G in out if float(np.max(np.abs(G))) > 1e-12 * big]
 
 
 def _pair(z, q, a, b):
@@ -1317,7 +1431,10 @@ class Subbands:
         to infinity), as (phonon_eV, eps_static, eps_high), or since 0.35.0
         as a number (a permittivity without phonons: 1 for the air above a
         surface) or as {"eps_high": , "lo_eV": [...], "to_eV": [...]} for a
-        material with several oscillators (an alloy with two-mode behavior).
+        material with several oscillators (an alloy with two-mode behavior);
+        since 0.37.0 also uniaxial (wurtzite, c along z): a
+        `phonons.PolarPhonons` record or {"perp": , "par": }, whose bands of
+        modes are found per bin of energy (see `layer_modes`).
         The modes come from the poles of the layers' Coulomb potential (see
         `layer_modes`), on q_points wave numbers in q_range (1/nm, log
         spaced): bulk-like LO modes of each material and interface modes
@@ -1328,7 +1445,7 @@ class Subbands:
         follow). With one interface it is `interface_phonons`; with one
         material, `polar_optical`."""
         mats = [_mat(m) for m in materials]
-        if not any(m[2] for m in mats):
+        if not any(p[2] for m in mats for p in _osc_parts(m)):
             raise ValueError("no layer has phonons")
         if len(mats) != len(interfaces) + 1 or np.any(np.diff(np.asarray(interfaces, float)) <= 0):
             raise ValueError("give one material more than interfaces, the interfaces increasing")
