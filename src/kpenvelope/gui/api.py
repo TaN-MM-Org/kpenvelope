@@ -295,7 +295,8 @@ def run_mobility(spec):
     spacer_source for the layer just past the boundary next to the
     electrons; since 0.35.0 the air above the top surface when the exact
     region reaches it, and an optional second vibration of the barrier,
-    lo2_meV and to2_meV, for alloys with two), "donors"
+    lo2_meV and to2_meV, for alloys with two; since 0.37.0 "anisotropic"
+    true uses GaN's vibrations along and across its c axis), "donors"
     (the ionized donors of the stack, no new numbers), "roughness" {rms_nm,
     corr_nm, source} at the boundary next to the electrons, "acoustic"
     {deformation_eV, density, velocity, source}. Numbers you type need
@@ -411,7 +412,13 @@ def run_mobility(spec):
                 raise SpecError("Numbers for the layer next to the electrons need "
                                 "'every layer of the exact region' ticked.")
         modes, layered, far, far_src = None, False, other, src
-        if two_mode and not iface.get("all_layers"):
+        aniso = bool(iface.get("anisotropic"))
+        if aniso:
+            # GaN's vibrations along and across its c axis (new in 0.37.0),
+            # both from the cited record
+            gan_ph = ph
+            ref = ref + " (along and across the c axis)"
+        if (two_mode or aniso) and not iface.get("all_layers"):
             # one boundary, but interface_phonons has one vibration per side
             pair = [gan_ph, other] if below_is_gan else [other, gan_ph]
             modes, layered = [sb.layered_phonons([zi], pair)], True
@@ -451,7 +458,7 @@ def run_mobility(spec):
             if win[1] >= edges[-1] - 1e-9:
                 ifs.append(float(edges[-1]))
                 mats.append(1.0)
-            plain = len(mats) == 2 and 1.0 not in mats and not two_mode
+            plain = len(mats) == 2 and 1.0 not in mats and not two_mode and not aniso
             if len(mats) >= 2 and not plain:
                 modes, layered = [sb.layered_phonons(ifs, mats)], True
                 parts = [ref, src] + ([src2] if spacer is not None else [])
