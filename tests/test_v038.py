@@ -102,7 +102,8 @@ def test_local_band_to_band_and_heat_in_one_solve():
     same = dev.solve({"top": 5.0}, lattice_temperature=300.0)
     assert same.current["top"] == pytest.approx(cold.current["top"], rel=1e-10)
     hot = dev.solve({"top": 5.0}, energy_relaxation=1e-16)
-    assert hot.current["top"] == pytest.approx(cold.current["top"], rel=1e-5)  # 3.5e-6
+    # (3.5e-6 here; 1.04e-5 on CI with the oldest NumPy and SciPy)
+    assert hot.current["top"] == pytest.approx(cold.current["top"], rel=5e-5)
 
 
 def _trench(mirror, viscosity):
