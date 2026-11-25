@@ -343,6 +343,30 @@ the tests use:
   tensor-grid device (current 1e-10, potential 1e-10 V); a curved quarter
   ring converges to the exact resistance with second order.
 
+**Tunneling and heat in one solve, masks pushed sideways (new in 0.38.0)**
+
+- The derivatives of the local band-to-band rate in Newton's method
+  against central differences, in the electron and hole rows, at the
+  nodes with the most tunneling and elsewhere (1e-6; measured 3e-10).
+- A self-heated junction with the local model: its current is q times
+  the pairs the tunneling makes (1e-4; measured 4.6e-6, the Newton
+  tolerance, as without heat); solved again at its own temperature it
+  gives its current (1e-8), and its heat gives its temperature (0.01 K);
+  the same junction without the tunneling model, given the tunneling's
+  pairs as a fixed generation and the temperature as a set one, solved
+  by the plain solver, gives the same current (1e-6; measured equal to
+  rounding) and potential (1e-9 V; measured 4e-16 V); the heated solve
+  takes fewer than 200 Newton steps (about 120; the rounds of heated
+  solves of 0.23.0 took 518 with current NumPy and SciPy and did not
+  settle with the oldest ones); a set lattice temperature equal to the device's changes nothing
+  (1e-10), and hot electrons that relax at once change the current by
+  less than 1e-5 (measured 3.5e-6).
+- A block of nitride against the oxide on a trench's wall: the oxide
+  made equals what is in whole cells plus what is in parts of cells
+  (1e-9); the end's rounding is smaller than the parts; the result is
+  the exact mirror image of the mirrored trench; the block keeps its 100
+  cells and moves away from the wall, while a rigid block stays.
+
 **Wurtzite layers in the phonons (new in 0.37.0)**
 
 - Isotropic stacks through the bins: the total weight of the exact poles

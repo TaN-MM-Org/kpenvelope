@@ -62,7 +62,7 @@ The limits of each part of the package, in detail. The
   they hold; it has GaN's polar optical phonons, the stack's ionized
   donors, and roughness and acoustic phonons from numbers you type, with
   the full screening since 0.30.0.
-- The app (since 0.37.0) has the library's features of 0.24.0 to 0.37.0
+- The app (since 0.38.0) has the library's features of 0.24.0 to 0.38.0
   that fit its tabs: the quantum (NEGF) current at one bias for short
   transistors only (gaps and gate at most 600 nm together; electrons
   only, no self-heating), with the four lowest levels joined along the
@@ -72,7 +72,8 @@ The limits of each part of the package, in detail. The
   the middle of the gate, and the heat they leave in the crystal, the
   Fermi-Dirac heat per
   electron, simulated implant ranges, plasma etching, oxide flow,
-  springy oxide, masks that bend or flow and oxide shaped by its flow in
+  springy oxide, masks that bend or flow (lifted and, since 0.38.0,
+  pushed sideways by the oxide) and oxide shaped by its flow in
   the process recipe, the plasma's chemistry (your species, reactions and
   chamber) feeding the plasma etch, and the mobility of the electron
   layer with the interface vibrations of the boundary next to the
@@ -259,14 +260,24 @@ The limits of each part of the package, in detail. The
   paths: the grid's columns on a tensor grid, and lines in one direction
   you choose on a mesh. Real paths follow the field and can bend; one
   direction is right where the field points mostly one way, as across a
-  junction. Both models are coupled by repeated solves, not inside
-  Newton's method, also when they run with self-heating, hot electrons
-  or a set lattice temperature (since 0.23.0), so a solve with tunneling
-  and heat repeats the heated solve several times (in the tunnel diode of
-  examples 45 and 48, one to five rounds per voltage and about a second
-  per self-heated point). Putting the nonlocal rates inside Newton's
-  method needs their derivatives along every path, many more rate
-  evaluations than these few rounds, so it was not done.
+  junction. Without heat, both models are coupled by repeated solves
+  with the rate held fixed between them. Since 0.38.0 the local rate then
+  goes inside Newton's method, with its exact derivatives, so with
+  self-heating, hot electrons or a set lattice temperature it is one
+  heated solve (in the tests' junction about 120 Newton steps against
+  518 for the rounds at 5 V; at 3 V, and with NumPy 1.22 and SciPy 1.8
+  also at 5 V, the rounds did not settle at all). It is switched on by
+  the rounds first because switching it on inside Newton's method from a state without it fails more often: the
+  rate changes by orders of magnitude over one step of the potential.
+  The nonlocal model still repeats the heated solve, several times (in
+  the tunnel diode of examples 45 and 48, one to five rounds per voltage
+  and about a second per self-heated point): its rates inside Newton's
+  method need their derivatives along every path, by differences three
+  rate evaluations per grid point of a column (about 1200 in the tests'
+  tunnel diode, 0.09 s each, against 0.7 s for a whole solve), so it was
+  not done. The heat itself is found, for every heated solve, by
+  iterating the temperature and the currents (with Anderson
+  acceleration), not inside Newton's method.
 - Temperature: with `temperature_model="full"` the lattice temperature
   sets kT, the densities of states, the gap (Varshni's form, with your
   split of the change between the bands), trap emission, the Richardson
@@ -461,8 +472,12 @@ The limits of each part of the package, in detail. The
   (half-full cells round up at the end), and the surface is still a
   staircase of cells; since 0.35.0 a mask that flows or is elastic
   rides on it (the oxide flowing into the mask lifts its column, one cell
-  at a time: the mask moves up, not sideways, and stays a set of whole
-  cells), a rigid mask stays where it is, and `oxidation_balance` says
+  at a time, and since 0.38.0 the oxide flowing into its side pushes its
+  row sideways, one cell at a time, up to the first gas cell; each column
+  and row of the mask moves on its own, so a mask that should move as one
+  piece is sheared by a cell here and there, and it stays a set of whole
+  cells; where there is no gas to push into, the oxide goes under the
+  mask instead), a rigid mask stays where it is, and `oxidation_balance` says
   where the oxide went (the oxide made is kept to rounding; only the end's
   rounding of half cells adds or drops part of a cell per surface cell).
   Since 0.33.0 `shear_modulus`

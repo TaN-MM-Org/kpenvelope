@@ -38,7 +38,8 @@ change subband and scatter; 74 springy oxide and a mask that bends; 75
 negative ions in a plasma; 76 phonons of a stack with a thin spacer; 77
 oxide that goes where it flows; 78 an alloy barrier and the air above it;
 79 a mask that rides on the flowing oxide; 80 electrons that give energy to
-the crystal; 81 GaN's vibrations along and across its axis.
+the crystal; 81 GaN's vibrations along and across its axis; 82 tunneling
+and self-heating in one solve; 83 a mask pushed sideways by the oxide.
 
 ### 1. Energy levels and what they are made of
 
@@ -3672,7 +3673,7 @@ for label, kw in (("rigid mask  ", dict(viscosity={"SiO2": 1e12})),
 ```
 rigid mask  : mask lifted at x = 41, 45, 49, 60, 80 nm by 0, 0, 0, 0, 0 nm; oxide made 1826.5 nm^2, 1632 in whole cells + 194.5 in parts
 flowing mask: mask lifted at x = 41, 45, 49, 60, 80 nm by 6, 4, 4, 0, 0 nm; oxide made 1940.7 nm^2, 1744 in whole cells + 196.7 in parts
-elastic mask: mask lifted at x = 41, 45, 49, 60, 80 nm by 4, 4, 2, 0, 0 nm; oxide made 1934.9 nm^2, 1696 in whole cells + 238.9 in parts
+elastic mask: mask lifted at x = 41, 45, 49, 60, 80 nm by 4, 4, 2, 0, 0 nm; oxide made 1940.6 nm^2, 1712 in whole cells + 228.6 in parts
 ```
 
 With `shape="flow"`, a mask that flows or bends now moves with the oxide
@@ -3809,6 +3810,108 @@ thin layer of electrons feels those vibrations, so the mobility is about
 difference between the two directions couples, holds under half a
 percent of the weight. A test checks the bins against the exact poles of
 isotropic layers, the exact potential of bulk GaN and the sum rule.
+
+### 82. Tunneling and self-heating in one solve (new in 0.38.0)
+
+```python
+import numpy as np
+from kpenvelope import StackLayer, gan
+from kpenvelope.nitride import gap_shift
+from kpenvelope.device import BandToBand, Device, Electrode, Mobility, Surface
+from kpenvelope.thermal import ThermalLayer, ThermalMaterial, ThermalModel
+
+# the p+/n+ junction of example 39, now with a gap that shrinks as it
+# warms (the cited Varshni numbers of GaN) and an illustrative path for
+# the heat
+g = gan(polarization="hse-dreyer2016")
+layers = [StackLayer(g, 40.0, acceptors=5e-2, name="p+"), StackLayer(g, 40.0, donors=5e-2, name="n+")]
+el = [Electrode("top", "ohmic", 0, 20), Electrode("bot", "ohmic", 0, 20, face="bottom")]
+dev = Device(layers, 20.0, el, Mobility(300.0, "illustrative", temperature_exponent=1.5),
+             Surface("pinned", barrier=1.0), hole_mass=1.0,
+             hole_mobility=Mobility(20.0, "illustrative"), statistics="boltzmann",
+             grid=dict(x=np.array([0.0, 10.0, 20.0]), z=np.linspace(0, 80, 401)),
+             band_to_band=BandToBand("Kane's formula as in arXiv:2108.09328, Eq. 13; "
+                                     "reduced mass from m_e and the illustrative m_h = 1"),
+             temperature_model="full", band_gap_temperature=gap_shift("GaN"))
+heat = ThermalModel(ThermalMaterial("junction", 10.0, 0.0, "illustrative"),
+                    substrate=(ThermalLayer("base", 1e4, ThermalMaterial("base", 5.0, 0.0,
+                                                                         "illustrative")),))
+for V in (6.0, 7.0, 8.0, 9.0):
+    cold = dev.solve({"top": V})
+    try:
+        hot = dev.solve({"top": V}, thermal=heat)
+    except RuntimeError:
+        print(f"{V:4.1f} V reverse: {abs(cold.current['top']):.3e} A/mm without heat; "
+              "self-heated, no steady state (thermal runaway)")
+        continue
+    print(f"{V:4.1f} V reverse: {abs(cold.current['top']):.3e} A/mm without heat, "
+          f"{abs(hot.current['top']):.3e} A/mm self-heated, hottest {hot.temperature.max():.1f} K")
+```
+
+```
+6.0 V reverse: 4.869e-06 A/mm without heat, 4.907e-06 A/mm self-heated, hottest 302.9 K
+ 7.0 V reverse: 1.309e-05 A/mm without heat, 1.341e-05 A/mm self-heated, hottest 309.4 K
+ 8.0 V reverse: 3.108e-05 A/mm without heat, 3.327e-05 A/mm self-heated, hottest 326.7 K
+ 9.0 V reverse: 6.678e-05 A/mm without heat, 8.055e-05 A/mm self-heated, hottest 372.6 K
+```
+
+As the junction warms, GaN's gap shrinks and the electrons tunnel more
+easily, so the self-heated current is above the one without heat, by
+under 1 percent at 6 V and by 21 percent at 9 V; a little above that the
+heat and the current no longer settle (the solve says so). The tunneling
+here is the local model, which since 0.38.0 is part of the Newton solve
+itself, with its exact derivatives, once it has been switched on without
+heat: the self-heated point is one heated solve. Before, the whole heated
+solve was repeated with the tunneling held fixed between rounds; on this
+junction those rounds do not settle at 8 and 9 V, while the new solve
+does, and a test checks that its result is a fixed point (solved again at
+its own temperature it gives its current, and its heat gives its
+temperature).
+
+### 83. A mask pushed sideways by the oxide (new in 0.38.0)
+
+```python
+import numpy as np
+from kpenvelope.process import Structure
+
+# a trench in silicon with a thin oxide on its walls, and a block of
+# nitride on its floor, against the left wall; then oxidation at 1000 C
+# with the rates of example 77 (illustrative viscosities, as there)
+def trench(nitride_flows):
+    wafer = Structure(120.0, 0.0, 160.0, 2.0, "Si", 100.0)
+    wafer.etch({"Si": 1.0}, 40.0, mode="directional", window=(60, 120))
+    wafer.deposit("SiO2", 4.0, mode="conformal")
+    wafer.deposit("Si3N4", 20.0, mode="directional", window=(64, 84))
+    visc = {"SiO2": 1e12, "Si3N4": 1e13} if nitride_flows else {"SiO2": 1e12}
+    wafer.oxidize("Si", "SiO2", 0.5, 0.05, 1500.0, 0.44, "illustrative", mode="2d",
+                  shape="flow", viscosity=visc)
+    return wafer
+
+for flows in (False, True):
+    w = trench(flows)
+    cells = np.argwhere(w.mat == "Si3N4")
+    x0, x1 = cells[:, 0].min() * w.h, (cells[:, 0].max() + 1) * w.h
+    z0, z1 = cells[:, 1].min() * w.h, (cells[:, 1].max() + 1) * w.h
+    b = w.oxidation_balance
+    print(f"{'nitride flows' if flows else 'rigid nitride'}: block now x = {x0:.0f} to {x1:.0f} nm, "
+          f"z = {z0:.0f} to {z1:.0f} nm ({len(cells)} cells); oxide made {b['made_nm2']:.0f} nm^2, "
+          f"in whole cells {b['whole_cells_nm2']:.0f}, in parts of cells {b['parts_nm2']:.0f}")
+```
+
+```
+rigid nitride: block now x = 64 to 84 nm, z = 64 to 84 nm (100 cells); oxide made 2458 nm^2, in whole cells 2200, in parts of cells 258
+nitride flows: block now x = 64 to 88 nm, z = 64 to 88 nm (100 cells); oxide made 2550 nm^2, in whole cells 2256, in parts of cells 294
+```
+
+The oxide that grows on the trench's wall has nowhere to go but into the
+block. A rigid block stays where it is (the oxide flows out to the
+open gas instead). A block that flows is pushed: since 0.38.0 the oxide that
+flows into a movable solid's side moves its row away, one cell at a
+time, up to the first gas cell, as the oxide that flows into its bottom
+lifts its column. Each row and column moves on its own, so the block is
+sheared by a cell here and there rather than moved as one piece, and it
+keeps its 100 cells. What was made still equals what is in whole cells
+plus what is in parts of cells. Numbers illustrative.
 
 ## Tutorials
 

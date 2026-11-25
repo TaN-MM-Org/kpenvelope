@@ -634,6 +634,21 @@ example) gives its inputs, units and conventions.
   temperature model, Peltier heat, thermionic emission over the barrier
   step, and hot electrons together with self-heating.
 
+**Tunneling and heat in one solve, masks pushed sideways (new in 0.38.0)**
+
+- `Device.solve(..., thermal=, energy_relaxation=, lattice_temperature=)`
+  with the local `BandToBand` model: the rate is found without heat
+  first (rounds of solves with the rate held fixed, as before), then goes
+  inside Newton's method with its exact derivatives, so the heated (or
+  hot-electron) solve runs once instead of once per round (example 82).
+  If that fails, the rounds of 0.23.0 take over. Without heat, and with
+  the nonlocal model, nothing changes.
+- `Structure.oxidize(shape="flow")`: the oxide that flows into the side
+  of a mask that flows or is elastic pushes the mask's row sideways, one
+  cell at a time, up to the first gas cell; where there is none, the
+  oxide goes under the mask (example 83). `oxidation_balance` counts the
+  oxide still on its way into a side among the parts of cells.
+
 **Wurtzite layers in the phonons (new in 0.37.0)**
 
 - `Subbands.layered_phonons` and `scattering.layer_modes` take a uniaxial
