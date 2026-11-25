@@ -360,7 +360,8 @@ the tests use:
   solves of 0.23.0 took 518 with current NumPy and SciPy and did not
   settle with the oldest ones); a set lattice temperature equal to the device's changes nothing
   (1e-10), and hot electrons that relax at once change the current by
-  less than 1e-5 (measured 3.5e-6).
+  less than 5e-5 (measured 3.5e-6, and 1.04e-5 on CI with the oldest
+  NumPy and SciPy).
 - A block of nitride against the oxide on a trench's wall: the oxide
   made equals what is in whole cells plus what is in parts of cells
   (1e-9); the end's rounding is smaller than the parts; the result is
