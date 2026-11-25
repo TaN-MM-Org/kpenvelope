@@ -1585,6 +1585,12 @@ class Structure:
         # column by one cell and puts oxide under it
         movable = (set(viscosity or ()) | set(shear_modulus or ())) - {oxide, material}
         push = np.zeros((nx, nz))
+        # and (new in 0.38.0) the oxide that flows into the side of such a
+        # solid pushes its row sideways: side[0] collects what pushes toward
+        # +x (at the solid's left end cell), side[1] toward -x (at its right
+        # end); a whole cell of it moves the row by one cell, up to the
+        # first gas cell, and puts oxide behind it
+        side = np.zeros((2, nx, nz))
         made = 0.0                          # oxide area made so far (nm^2)
         ox0 = float((self.mat == oxide).sum()) * h * h
 
@@ -1771,9 +1777,9 @@ class Structure:
                     # in its column, which only moves up
                     into = np.zeros((nx, nz))
                     m_ = isox[:-1] & mov[1:]
-                    into[1:][m_] += fx[1:-1][m_]
+                    side[0, 1:][m_] += fx[1:-1][m_]
                     m_ = isox[1:] & mov[:-1]
-                    into[:-1][m_] -= fx[1:-1][m_]
+                    side[1, :-1][m_] -= fx[1:-1][m_]
                     m_ = isox[:, :-1] & mov[:, 1:]
                     into[:, 1:][m_] += fz[:, 1:-1][m_]
                     m_ = isox[:, 1:] & mov[:, :-1]
@@ -1804,6 +1810,32 @@ class Structure:
                             self._push_oxide(i, k - 1, (0, 1), oxide)
                             k += 1
                             push[i, k] = rest
+                    for q in (0, 1):
+                        s_ = 1 if q == 0 else -1
+                        for i, k in zip(*np.nonzero(side[q] >= h * h * (1 - 1e-12))):
+                            while side[q, i, k] >= h * h * (1 - 1e-12):
+                                b = self._side_run(i, k, s_, movable, oxide)
+                                if b is None:
+                                    # nothing to push into (the domain's edge
+                                    # or a fixed solid): the oxide goes under
+                                    # the solid, which rides up instead
+                                    kb = k
+                                    while kb > 0 and self.mat[i, kb - 1] in movable:
+                                        kb -= 1
+                                    push[i, kb] += side[q, i, k]
+                                    side[q, i, k] = 0.0
+                                    break
+                                rest = side[q, i, k] - h * h
+                                src = np.arange(i, b, s_)
+                                for arr in (push, side[0], side[1]):
+                                    arr[src + s_, k] = arr[src, k]
+                                    arr[i, k] = 0.0
+                                if 0 <= b + s_ < nx:
+                                    fill[b + s_, k] += fill[b, k]
+                                    fill[b, k] = 0.0
+                                self._push_side(i, k, s_, b, oxide)
+                                i += s_
+                                side[q, i, k] = rest
             acc += rate * dt
             lift += extra * dt
             made += float(v.sum()) * h * dt
@@ -1832,7 +1864,7 @@ class Structure:
                     self._push_oxide(i, k, dirs[q], oxide)
                     lift[q, i, k] -= h * h
             if flow_shape:
-                self._carry_parts(fill, push, movable)
+                self._carry_parts(fill, push, movable, side)
             t += dt
             steps += 1
             if steps > 200000:
@@ -1840,7 +1872,7 @@ class Structure:
         # the oxide's balance (new in 0.35.0): what was made, what is in
         # whole cells, and what was still in parts of cells at the end
         part = float(acc[self.mat == material].sum() + lift.sum() + push.sum()
-                     + fill[self.mat == None].sum())  # noqa: E711
+                     + side.sum() + fill[self.mat == None].sum())  # noqa: E711
         whole = float((self.mat == oxide).sum()) * h * h - ox0
         # a cell more than half consumed at the end turns to oxide, and half a
         # cell of new volume or more is put in (the front passed the center)
@@ -1861,6 +1893,13 @@ class Structure:
             for i, k in zip(*np.nonzero(push >= 0.5 * h * h)):
                 if self.mat[i, k] in movable and k > 0 and self.mat[i, k - 1] == oxide:
                     self._push_oxide(i, k - 1, (0, 1), oxide)
+            for q, i, k in zip(*np.nonzero(side >= 0.5 * h * h)):
+                s_ = 1 if q == 0 else -1
+                if self.mat[i, k] in movable and 0 <= i - s_ < nx \
+                        and self.mat[i - s_, k] == oxide:
+                    b = self._side_run(i, k, s_, movable, oxide)
+                    if b is not None:
+                        self._push_side(i, k, s_, b, oxide)
         if viscosity is not None and q_prev is not None and not (flow_shape and shear_modulus):
             # the flow and stress of the final shape (with the last growth;
             # a springy oxide shaped by its flow keeps the stress of its last
@@ -1876,17 +1915,23 @@ class Structure:
             top[i] = float(np.sum(self.mat[i] == oxide) * h)
         return top
 
-    def _carry_parts(self, fill, push, movable):
+    def _carry_parts(self, fill, push, movable, side=None):
         """shape="flow": a part of a cell's oxide that sits on a cell which
         has meanwhile changed (a gas cell taken by oxide put in by the
         simple rule, or lifted into by a mask; a solid's cell that moved)
         goes on to where it belongs, so that no oxide is lost: a gas cell's
-        fill to the nearest open gas cell, a solid's push to the bottom of
-        the movable solid above it in its column, else to the open gas"""
+        fill to the nearest open gas cell, a solid's push (up or sideways)
+        to the bottom of the movable solid above it in its column, else to
+        the open gas"""
         from scipy import ndimage
         nx, nz = self.mat.shape
         gas = self._gas_open()
         mov = np.isin(self.mat, list(movable)) if movable else np.zeros_like(gas)
+        if side is not None:
+            for q in (0, 1):
+                bad = (side[q] != 0.0) & ~mov
+                push[bad] += side[q][bad]
+                side[q][bad] = 0.0
         bad_f = (fill != 0.0) & ~gas
         bad_p = (push != 0.0) & ~mov
         if not (bad_f.any() or bad_p.any()):
@@ -1957,6 +2002,37 @@ class Structure:
         self.mat[a0, b0] = oxide
         self.donors[a0, b0] = self.acceptors[a0, b0] = 0.0
         self._hist_new_cell(a0, b0)
+
+    def _side_run(self, i, k, s, movable, oxide):
+        """The first gas cell in row k from the solid's end cell (i, k) in
+        direction s (+1 or -1), if every cell on the way is a movable solid
+        or oxide; else None."""
+        nx = self.mat.shape[0]
+        b = i
+        while 0 <= b < nx and self.mat[b, k] is not None:
+            if self.mat[b, k] != oxide and self.mat[b, k] not in movable:
+                return None
+            b += s
+        return b if 0 <= b < nx else None
+
+    def _push_side(self, i, k, s, b, oxide):
+        """One cell of new oxide at (i, k): the cells from (i, k) up to the
+        gas cell (b, k) move by one cell in direction s (new in 0.38.0)."""
+        src = np.arange(i, b, s)
+        for arr in (self.mat, self.donors, self.acceptors):
+            arr[src + s, k] = arr[src, k]
+        H = getattr(self, "_vehist", None)
+        if H is not None:
+            # the moved cells take their stress with them (txz sits on the
+            # cells' corners)
+            for key in ("txx", "tzz"):
+                H[key][src + s, k] = H[key][src, k]
+            c = np.arange(i, b + s, s) + (1 if s < 0 else 0)
+            for kk in (k, k + 1):
+                H["txz"][c + s, kk] = H["txz"][c, kk]
+        self.mat[i, k] = oxide
+        self.donors[i, k] = self.acceptors[i, k] = 0.0
+        self._hist_new_cell(i, k)
 
     def _hist_new_cell(self, i, k):
         """new oxide starts without stress (viscoelastic memory, 0.33.0)"""

@@ -2147,6 +2147,39 @@ class Device:
         G, _ = BandToBand.rate(F, self._eg_real(), bt["mr"])
         phi = 1.0 if spread is None else -np.expm1(-abs(spread) / self.kT)
         return G * self.vol * 1e-21 * bt["mask"] * phi
+
+    def _set_bt_spread(self, bias):
+        """The spread of the electrode voltages (V) that scales the local
+        band-to-band rate inside Newton's method (see `_band_to_band_nodes`)"""
+        if self._bt_live:
+            v = [float(bias.get(e.name, 0.0)) for e in self.electrodes]
+            self._bt_dv = max(v) - min(v)
+
+    def _band_to_band_jacobian(self, psi, nv):
+        """Rows, columns and values of the derivative of -G (the local
+        band-to-band pairs per node, rate times volume) in the electron and
+        hole rows with respect to the potential: G follows the size of the
+        node field, which is a weighted mean of the fields of the edges at
+        the node, so it depends on the node and its neighbors."""
+        bt = self._bt
+        Ecomp = self._node_field(psi)
+        F = np.sqrt(np.sum(Ecomp ** 2, axis=1))
+        _, dG = BandToBand.rate(F, self._eg_real(), bt["mr"])
+        phi = -np.expm1(-abs(self._bt_dv) / self.kT)
+        c = self.vol * 1e-21 * bt["mask"] * phi * dG                 # per V/cm
+        m, e, ax = bt["m"], bt["e"], bt["ax"]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            unit = np.where(F[m] > 0, Ecomp[m, ax] / np.where(F[m] > 0, F[m], 1.0), 0.0)
+        # d(node field)/d psi_i = +w 1e7 / (eh W), d/d psi_j the opposite
+        d = c[m] * unit * bt["w"] / bt["W"][m, ax] * 1e7 / self.eh[e]
+        ei, ej = self.ei[e], self.ej[e]
+        rows, cols, vals = [], [], []
+        for v in (1, 2) if self.holes else (1,):
+            rows += [m * nv + v, m * nv + v]
+            cols += [ei * nv, ej * nv]
+            vals += [-d, d]
+        return np.concatenate(rows), np.concatenate(cols), np.concatenate(vals)
+
     def _map_edge_cells(self, cshape, cell_semi, cell_prod):
         """For every edge, the cells around it with their (semiconductor)
         quarter-face weights: arrays (edge, cell, weight)."""
@@ -2372,6 +2405,8 @@ class Device:
     _transient = False
     _lat = None
     _Gx = None
+    _bt_live = False
+    _bt_dv = 0.0
     heat_model = "joule"
     _density_update = True
     _qf_margin = 0.0
@@ -2485,6 +2520,8 @@ class Device:
         Gnode = self.vol * self.Gopt
         if self.ionization is not None:
             Gnode = Gnode + self._ionization_nodes(psi, Gn, Gp)
+        if self._bt_live:
+            Gnode = Gnode + self._band_to_band_nodes(psi, self._bt_dv)
         rN -= Gnode
         rQ -= Gnode
         if self._Gx is not None:
@@ -2536,6 +2573,7 @@ class Device:
 
     def _residual(self, x, bias, Tn, dt=None, old=None):
         self._set_lattice(Tn)
+        self._set_bt_spread(bias)
         b = self._balances(x, Tn, dt, old)
         rP, rN, rQ = b["rP"].copy(), b["rN"].copy(), b["rQ"].copy()
         psi, fn, fp, n, p = b["psi"], b["fn"], b["fp"], b["n"], b["p"]
@@ -2976,6 +3014,7 @@ class Device:
         boundary rows."""
         import scipy.sparse as sp
         self._set_lattice(Tn)
+        self._set_bt_spread(bias)
         nv, N = self.nv, self.N
         psi, fn, fp, _ = self._unpack(x)
         i, j = self.ei, self.ej
@@ -3032,6 +3071,8 @@ class Device:
             lr, lc, lv = self._link_jacobian(psi, fn, nv)
             for r_, c_, v_ in zip(lr, lc, lv):
                 add(r_, c_, v_)
+        if self._bt_live:
+            add(*self._band_to_band_jacobian(psi, nv))
         # local terms
         nodes = np.arange(N)
         for v in range(nv):
@@ -3226,6 +3267,8 @@ class Device:
         if self.ionization is not None:
             Gn, Gp = self._fluxes(psi, fn, fp, n, p, lnn, lnp, Tn)
             G = G + self._ionization_nodes(psi, Gn, Gp)
+        if self._bt_live:
+            G = G + self._band_to_band_nodes(psi, self._bt_dv)
         quiet = G < 1e-30
         out = []
         dn = np.flatnonzero((n < 1e-30 * self.floor) & quiet)
@@ -3451,6 +3494,7 @@ class Device:
     # --------------------------------------------------------- outputs
     def _state(self, x, bias, Tn, conv, it, dt=None, old=None, time=0.0,
                old_charge=None, internal=None):
+        self._set_bt_spread(internal if internal is not None else bias)
         b = self._balances(x, Tn, dt, old)
         psi, fn, fp = b["psi"], b["fn"], b["fp"]
         scale_I = QE * (1e6 if self.dim == 2 else 1.0)      # A/mm or A
@@ -4331,6 +4375,54 @@ class Device:
             self.Gopt = G_user
             self._bt_inner = False
 
+    def _solve_local_live(self, bias, guess, thermal, tau, TLf, max_bias_step, tol,
+                          thermal_tol, max_thermal_iter):
+        """The local band-to-band model with self-heating, hot electrons or
+        a set lattice temperature (new in 0.38.0): the generation is found
+        without the heat first (rounds of solves with the rate held fixed,
+        `_solve_band_to_band`), then the rate goes inside Newton's method,
+        where it follows the field of every step with its exact
+        derivatives, and the heated (or hot-electron) solve runs once from
+        there, instead of being repeated for every round. (Switching the
+        rate on inside Newton's method from a state without it is much
+        harder for Newton's method than the rounds: the rate changes by
+        orders of magnitude over one step of the potential.) If Newton's
+        method fails, the rounds of heated solves of 0.23.0 take over."""
+        kw = dict(thermal=thermal, energy_relaxation=tau, lattice_temperature=TLf,
+                  max_bias_step=max_bias_step, tol=tol, thermal_tol=thermal_tol,
+                  max_thermal_iter=max_thermal_iter)
+        try:
+            cold = self._solve_band_to_band(bias, guess, None, max_bias_step, tol, thermal_tol,
+                                            max_thermal_iter, None)
+        except RuntimeError:
+            cold = None
+        live_err = None
+        if cold is not None:
+            self._bt_inner = True
+            self._bt_live = True
+            try:
+                st = self.solve(bias, guess=cold, **kw)
+                self._set_bt_spread(st.internal or st.bias)
+                self._set_lattice(st.temperature.ravel())
+                psi = st._x.reshape(self.N, self.nv)[:, 0]
+                st.band_to_band_iterations = getattr(cold, "band_to_band_iterations", 1)
+                st.band_to_band_pairs = float(np.sum(self._band_to_band_nodes(psi,
+                                                                              self._bt_dv)))
+                return st
+            except RuntimeError as err:
+                live_err = err
+            finally:
+                self._bt_live = False
+                self._bt_inner = False
+        try:
+            return self._solve_bt_coupled(bias, guess, thermal, tau, TLf, max_bias_step, tol,
+                                          thermal_tol, max_thermal_iter)
+        except RuntimeError:
+            if live_err is not None:
+                # the heated solve's own reason (thermal runaway, say)
+                raise live_err from None
+            raise
+
     def _solve_nonlocal(self, bias, guess, max_bias_step, tol, rtol=1e-6, max_outer=300):
         """Nonlocal band-to-band tunneling: solve with the electron and hole
         generation of the present bands held fixed, recompute it from the
@@ -4667,6 +4759,11 @@ class Device:
         else:
             TLf = None
         if self._bt is not None and not getattr(self, "_bt_inner", False):
+            if not self._bt.get("nonlocal_") and (thermal is not None or TLf is not None
+                                                 or energy_relaxation is not None):
+                return self._solve_local_live(bias, guess, thermal, energy_relaxation, TLf,
+                                              max_bias_step, tol, thermal_tol,
+                                              max_thermal_iter)
             if thermal is not None or energy_relaxation is not None or TLf is not None:
                 return self._solve_bt_coupled(bias, guess, thermal, energy_relaxation, TLf,
                                               max_bias_step, tol, thermal_tol,
